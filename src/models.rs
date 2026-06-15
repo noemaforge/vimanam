@@ -30,6 +30,12 @@ pub struct OpenApiSpec {
     #[serde(flatten)]
     pub extensions: HashMap<String, serde_json::Value>,
 }
+#[derive(Debug, Deserialize, Serialize, Clone)]
+#[serde(untagged)]
+pub enum AdditionalProperties {
+    Bool(bool),
+    Schema(Box<Schema>),
+}
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct Info {
@@ -96,10 +102,37 @@ pub struct Parameter {
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct Schema {
+    #[serde(rename = "title", skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(rename = "description", skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
     #[serde(rename = "type", skip_serializing_if = "Option::is_none")]
     pub schema_type: Option<String>,
+    #[serde(rename = "format", skip_serializing_if = "Option::is_none")]
+    pub format: Option<String>,
     #[serde(rename = "$ref", skip_serializing_if = "Option::is_none")]
     pub reference: Option<String>,
+    #[serde(rename = "properties", skip_serializing_if = "Option::is_none")]
+    pub properties: Option<IndexMap<String, Schema>>,
+    #[serde(rename = "items", skip_serializing_if = "Option::is_none")]
+    pub items: Option<Box<Schema>>,
+    #[serde(rename = "required", skip_serializing_if = "Option::is_none")]
+    pub required: Option<Vec<String>>,
+    #[serde(rename = "allOf", skip_serializing_if = "Option::is_none")]
+    pub all_of: Option<Vec<Schema>>,
+    #[serde(rename = "oneOf", skip_serializing_if = "Option::is_none")]
+    pub one_of: Option<Vec<Schema>>,
+    #[serde(rename = "anyOf", skip_serializing_if = "Option::is_none")]
+    pub any_of: Option<Vec<Schema>>,
+    #[serde(rename = "enum", skip_serializing_if = "Option::is_none")]
+    pub enum_values: Option<Vec<serde_json::Value>>,
+    #[serde(rename = "nullable", skip_serializing_if = "Option::is_none")]
+    pub nullable: Option<bool>,
+    #[serde(
+        rename = "additionalProperties",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub additional_properties: Option<AdditionalProperties>,
     #[serde(flatten)]
     pub extensions: HashMap<String, serde_json::Value>,
 }
@@ -133,7 +166,7 @@ pub struct ServerVariable {
 // Components definition for OpenAPI 3.0+
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct Components {
-    pub schemas: Option<HashMap<String, Schema>>,
+    pub schemas: Option<IndexMap<String, Schema>>,
     pub responses: Option<HashMap<String, Response>>,
     pub parameters: Option<HashMap<String, Parameter>>,
     pub examples: Option<HashMap<String, Example>>,
@@ -322,4 +355,5 @@ pub struct ApiDocumentation {
     pub endpoints: Vec<Endpoint>,
     pub servers: Vec<String>,
     pub security_schemes: HashMap<String, String>,
+    pub schemas: IndexMap<String, Schema>,
 }

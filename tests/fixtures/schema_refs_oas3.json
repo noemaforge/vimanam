@@ -1,0 +1,113 @@
+{
+  "openapi": "3.0.0",
+  "info": {
+    "title": "Schema Ref API",
+    "version": "1.0.0"
+  },
+  "tags": [
+    { "name": "Pets", "description": "Pet operations" },
+    { "name": "Nodes", "description": "Node operations" }
+  ],
+  "paths": {
+    "/pets": {
+      "post": {
+        "tags": ["Pets"],
+        "summary": "Create pet",
+        "operationId": "Pets_CreatePet",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/CreatePetRequest" }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Pet" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/nodes/{nodeId}": {
+      "get": {
+        "tags": ["Nodes"],
+        "summary": "Get node",
+        "operationId": "Nodes_GetNode",
+        "parameters": [
+          {
+            "name": "nodeId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Node payload",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Node" }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "CreatePetRequest": {
+        "type": "object",
+        "required": ["name", "category"],
+        "properties": {
+          "name": { "type": "string", "description": "Pet name" },
+          "age": { "type": "integer", "format": "int32" },
+          "category": { "$ref": "#/components/schemas/Category" },
+          "variant": {
+            "oneOf": [
+              { "type": "string", "description": "Variant as string" },
+              { "type": "integer", "description": "Variant as integer" }
+            ]
+          }
+        }
+      },
+      "Category": {
+        "type": "object",
+        "required": ["id"],
+        "properties": {
+          "id": { "type": "string", "description": "Category identifier" },
+          "label": { "type": "string" }
+        }
+      },
+      "Pet": {
+        "allOf": [
+          { "$ref": "#/components/schemas/CreatePetRequest" },
+          {
+            "type": "object",
+            "required": ["id"],
+            "properties": {
+              "id": { "type": "string", "description": "Pet identifier" },
+              "friends": {
+                "type": "array",
+                "items": { "$ref": "#/components/schemas/Pet" }
+              }
+            }
+          }
+        ]
+      },
+      "Node": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "next": { "$ref": "#/components/schemas/Node" }
+        }
+      }
+    }
+  }
+}

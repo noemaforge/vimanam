@@ -6,7 +6,9 @@ use std::fs::File;
 use std::io::{BufReader, Read, Seek, SeekFrom};
 use std::path::Path;
 
-use crate::models::{ApiDocumentation, Endpoint, OpenApiSpec, Parameter, Response, Service};
+use crate::models::{
+    ApiDocumentation, Endpoint, OpenApiSpec, Parameter, Response, Schema, Service,
+};
 use crate::utils::{
     extract_security_schemes, extract_servers, resolve_parameter_ref, resolve_response_ref,
 };
@@ -39,6 +41,8 @@ pub fn parse_openapi<P: AsRef<Path>>(path: P) -> Result<ApiDocumentation> {
 
             let endpoints = extract_endpoints(&spec, &services);
             debug!("Extracted {} endpoints", endpoints.len());
+            let schemas = extract_schemas(&spec);
+            debug!("Extracted {} reusable schemas", schemas.len());
 
             Ok(ApiDocumentation {
                 title: spec.info.title,
@@ -48,6 +52,7 @@ pub fn parse_openapi<P: AsRef<Path>>(path: P) -> Result<ApiDocumentation> {
                 endpoints,
                 servers,
                 security_schemes,
+                schemas,
             })
         }
         Err(err) => {
@@ -304,4 +309,36 @@ fn extract_endpoints(spec: &OpenApiSpec, services: &[Service]) -> Vec<Endpoint> 
     }
 
     endpoints
+}
+
+/// Collects reusable schemas from OpenAPI 3 `components.schemas` and
+/// OpenAPI 2 `definitions` into a deterministic registry.
+fn extract_schemas(spec: &OpenApiSpec) -> IndexMap<String, Schema> {
+    let mut schemas = IndexMap::new();
+
+    if let Some(components) = &spec.components {
+        if let Some(component_schemas) = &components.schemas {
+            for (name, schema) in component_schemas {
+                schemas.insert(name.clone(), schema.clone());
+            }
+        }
+    }
+
+    if let Some(definitions) = spec
+        .extensions
+        .get("definitions")
+        .and_then(|v| v.as_object())
+    {
+        for (name, raw_schema) in definitions {
+            if schemas.contains_key(name) {
+                continue;
+            }
+
+            if let Ok(schema) = serde_json::from_value::<Schema>(raw_schema.clone()) {
+                schemas.insert(name.clone(), schema);
+            }
+        }
+    }
+
+    schemas
 }
