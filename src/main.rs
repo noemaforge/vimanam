@@ -10,7 +10,7 @@ use std::process;
 
 use anyhow::{Context, Result};
 use clap::Parser;
-use log::{error, info};
+use log::info;
 
 use crate::config::{build_config, Cli};
 use crate::markdown::generate_markdown;
@@ -56,7 +56,7 @@ fn run() -> Result<()> {
 
 fn main() {
     if let Err(err) = run() {
-        error!("Error: {:#}", err);
+        eprintln!("Error: {:#}", err);
         process::exit(1);
     }
 }
