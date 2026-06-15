@@ -334,8 +334,16 @@ fn extract_schemas(spec: &OpenApiSpec) -> IndexMap<String, Schema> {
                 continue;
             }
 
-            if let Ok(schema) = serde_json::from_value::<Schema>(raw_schema.clone()) {
-                schemas.insert(name.clone(), schema);
+            match serde_json::from_value::<Schema>(raw_schema.clone()) {
+                Ok(schema) => {
+                    schemas.insert(name.clone(), schema);
+                }
+                Err(err) => {
+                    warn!(
+                        "Skipping definition '{}': failed to parse schema: {}",
+                        name, err
+                    );
+                }
             }
         }
     }

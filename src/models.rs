@@ -177,6 +177,8 @@ pub struct Components {
     pub security_schemes: Option<HashMap<String, SecurityScheme>>,
     pub links: Option<HashMap<String, Link>>,
     pub callbacks: Option<HashMap<String, Callback>>,
+    #[serde(flatten)]
+    pub extensions: HashMap<String, serde_json::Value>,
 }
 
 // Example struct
