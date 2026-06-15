@@ -4,6 +4,7 @@ use std::io::Write;
 
 const OAS3: &str = "tests/fixtures/petstore_oas3.json";
 const OAS2: &str = "tests/fixtures/petstore_oas2.json";
+const OAS3_SCHEMA_REFS: &str = "tests/fixtures/schema_refs_oas3.json";
 
 fn vimanam() -> Command {
     Command::cargo_bin("vimanam").unwrap()
@@ -207,4 +208,36 @@ fn output_is_deterministic() {
     for _ in 0..4 {
         assert_eq!(first, run(), "output differed between identical runs");
     }
+}
+
+#[test]
+fn full_detail_expands_schema_refs_into_tables() {
+    vimanam()
+        .arg(OAS3_SCHEMA_REFS)
+        .args(["--detail", "full", "--include-schemas"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("#### Request Schema"))
+        .stdout(predicate::str::contains(
+            "| `request.name` | string | Yes | Pet name |",
+        ))
+        .stdout(predicate::str::contains(
+            "| `request.category.id` | string | Yes | Category identifier |",
+        ))
+        .stdout(predicate::str::contains(
+            "| `response.allOf[2].id` | string | Yes | Pet identifier |",
+        ))
+        .stdout(predicate::str::contains("request.variant.oneOf[1]"));
+}
+
+#[test]
+fn full_detail_schema_expansion_detects_ref_cycles() {
+    vimanam()
+        .arg(OAS3_SCHEMA_REFS)
+        .args(["--detail", "full", "--include-schemas"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "Cycle detected while expanding schema reference",
+        ));
 }

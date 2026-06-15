@@ -15,7 +15,7 @@ Besides producing documentation for humans, Vimanam is built for **feeding API s
 - Group endpoints by service or HTTP method, or list them flat
 - Filter by service, path, or method
 - Multiple detail levels (summary, basic, standard, full)
-- Reference resolution to follow JSON references (`$ref`) in specifications
+- Schema expansion at `--detail full --include-schemas`: resolves `$ref`s (with cycle detection) and renders request/response schemas as nested field tables
 - Server URL information extraction and documentation
 - Authentication and security schemes documentation
 - Proper content type detection for responses

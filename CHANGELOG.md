@@ -5,6 +5,25 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-06-15
+
+### Added
+
+- Schema expansion at `--detail full --include-schemas` (#5): the `Schema` model
+  now captures `title`, `description`, `format`, `properties`, `items`,
+  `required`, `allOf`/`oneOf`/`anyOf`, `enum`, `nullable`, and
+  `additionalProperties`, and request/response schemas are rendered as nested
+  field tables instead of a one-line type or reference name. `$ref`s are
+  resolved against `components.schemas` (OpenAPI 3) and `definitions`
+  (OpenAPI 2), with cycle detection and a depth guard so self-referential
+  schemas terminate cleanly
+
+### Changed
+
+- `--detail full --include-schemas` output format: request/response schemas now
+  render as `| Field | Type | Required | Description |` tables instead of the
+  previous single-line `// Schema type:` / `// Reference:` comment
+
 ## [0.2.2] - 2026-06-11
 
 ### Added
@@ -65,6 +84,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Initial release: OpenAPI 2.0 (Swagger) JSON to Markdown with grouping,
   filtering, sorting, and detail levels
 
+[0.3.0]: https://github.com/nrynss/vimanam/compare/v0.2.2...v0.3.0
 [0.2.2]: https://github.com/nrynss/vimanam/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/nrynss/vimanam/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/nrynss/vimanam/compare/v0.1.1...v0.2.0
