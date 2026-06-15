@@ -173,7 +173,11 @@ fn invalid_json_fails() {
     let mut file = tempfile::NamedTempFile::new().unwrap();
     write!(file, "this is not json").unwrap();
 
-    vimanam().arg(file.path()).assert().failure();
+    vimanam()
+        .arg(file.path())
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("Error:"));
 }
 
 #[test]
@@ -181,7 +185,11 @@ fn json_without_openapi_fields_fails() {
     let mut file = tempfile::NamedTempFile::new().unwrap();
     write!(file, "{{\"hello\": \"world\"}}").unwrap();
 
-    vimanam().arg(file.path()).assert().failure();
+    vimanam()
+        .arg(file.path())
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("Error:"));
 }
 
 // Output must be byte-identical across runs, even with sorting disabled.
