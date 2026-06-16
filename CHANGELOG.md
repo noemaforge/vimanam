@@ -19,7 +19,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   dash, so anchor IDs derived from inputs like `a///b` are clean (#15)
 - The `## Authentication` section is now emitted in spec order and is
   deterministic across runs; `security_schemes` switched from `HashMap` to
-  `IndexMap` (#16)
+  `IndexMap`, and `serde_json`'s `preserve_order` feature keeps OpenAPI 2.0
+  `securityDefinitions` in declaration order rather than alphabetical (#16)
 - The table of contents and body sections now share one endpoint ordering in
   every view, so TOC anchor links always point to the corresponding section in
   document order (#18)
@@ -119,6 +120,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Initial release: OpenAPI 2.0 (Swagger) JSON to Markdown with grouping,
   filtering, sorting, and detail levels
 
+[0.4.0]: https://github.com/nrynss/vimanam/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/nrynss/vimanam/compare/v0.2.2...v0.3.0
 [0.2.2]: https://github.com/nrynss/vimanam/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/nrynss/vimanam/compare/v0.2.0...v0.2.1

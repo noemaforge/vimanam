@@ -6,6 +6,7 @@ const OAS3: &str = "tests/fixtures/petstore_oas3.json";
 const OAS2: &str = "tests/fixtures/petstore_oas2.json";
 const OAS3_SCHEMA_REFS: &str = "tests/fixtures/schema_refs_oas3.json";
 const OAS3_MULTI_AUTH: &str = "tests/fixtures/multi_auth_oas3.json";
+const OAS2_MULTI_AUTH: &str = "tests/fixtures/multi_auth_oas2.json";
 
 fn vimanam() -> Command {
     Command::cargo_bin("vimanam").unwrap()
@@ -297,6 +298,32 @@ fn multiple_security_schemes_preserve_spec_order() {
     for _ in 0..4 {
         assert_eq!(output, run(), "authentication order differed between runs");
     }
+}
+
+// Companion to #16 for OpenAPI 2.0: `securityDefinitions` are read through the
+// extensions map, so they only preserve spec order with serde_json's
+// `preserve_order` feature (otherwise they sort alphabetically). The schemes
+// are declared zebra/apiKey/middle, which is not alphabetical.
+#[test]
+fn oas2_security_schemes_preserve_spec_order() {
+    let output = String::from_utf8(
+        vimanam()
+            .arg(OAS2_MULTI_AUTH)
+            .arg("--include-auth")
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .unwrap();
+
+    let zebra = output.find("zebraAuth").expect("zebraAuth missing");
+    let api_key = output.find("apiKey").expect("apiKey missing");
+    let middle = output.find("middleAuth").expect("middleAuth missing");
+
+    assert!(
+        zebra < api_key && api_key < middle,
+        "OAS2 security schemes not in spec order: {output}"
+    );
 }
 
 // Regression test for #20: `--group-by method` must behave like `--method`,
