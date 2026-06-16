@@ -21,7 +21,7 @@ pub struct Cli {
 
     /// Grouping method for endpoints
     #[arg(long, value_enum, default_value = "service")]
-    pub group_by: Option<GroupByArg>,
+    pub group_by: GroupByArg,
 
     /// Generate a flat list without hierarchical structure
     #[arg(long)]
@@ -126,22 +126,27 @@ impl From<SortArg> for SortMethod {
 /// Converts parsed CLI arguments into the internal [`DocConfig`].
 /// Grouping precedence: `--flat` > `--method` > `--group-by` > default (service).
 pub fn build_config(cli: &Cli) -> DocConfig {
-    // Determine grouping method
+    // Determine grouping method.
+    // `--group-by` always has a value (clap default), so it serves as the
+    // base; `--flat` and `--method` are higher-precedence overrides.
     let group_by = if cli.flat {
         GroupBy::Flat
     } else if cli.method {
         GroupBy::Method
-    } else if let Some(group_by) = cli.group_by {
-        group_by.into()
     } else {
-        GroupBy::Service
+        cli.group_by.into()
     };
 
     DocConfig {
         group_by,
         service_filter: cli.service_filter.clone(),
         path_filter: cli.path_filter.clone(),
-        method_filter: cli.method_filter.clone(),
+        // HTTP methods are stored uppercase on each endpoint, so normalize the
+        // filter values too — otherwise `--method-filter get` matches nothing.
+        method_filter: cli
+            .method_filter
+            .as_ref()
+            .map(|methods| methods.iter().map(|m| m.to_uppercase()).collect()),
         exclude_deprecated: cli.exclude_deprecated,
         required_only: cli.required_only,
         detail_level: cli.detail.into(),

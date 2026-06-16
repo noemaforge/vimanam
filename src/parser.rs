@@ -39,7 +39,12 @@ pub fn parse_openapi<P: AsRef<Path>>(path: P) -> Result<ApiDocumentation> {
             let security_schemes = extract_security_schemes(&spec);
             debug!("Extracted {} security schemes", security_schemes.len());
 
-            let endpoints = extract_endpoints(&spec, &services);
+            // Serialize the spec to JSON once so `$ref` resolution can navigate
+            // it without re-serializing the (potentially multi-MB) spec per ref.
+            let spec_json = serde_json::to_value(&spec)
+                .context("Failed to serialize OpenAPI spec for reference resolution")?;
+
+            let endpoints = extract_endpoints(&spec, &spec_json, &services);
             debug!("Extracted {} endpoints", endpoints.len());
             let schemas = extract_schemas(&spec);
             debug!("Extracted {} reusable schemas", schemas.len());
@@ -196,7 +201,11 @@ fn extract_services(spec: &OpenApiSpec) -> Vec<Service> {
 /// Flattens every operation under `paths` into an [`Endpoint`], merging
 /// path-level and operation-level parameters, resolving `$ref`s, and
 /// representing an OpenAPI 3.0 `requestBody` as a synthetic `body` parameter.
-fn extract_endpoints(spec: &OpenApiSpec, services: &[Service]) -> Vec<Endpoint> {
+fn extract_endpoints(
+    spec: &OpenApiSpec,
+    spec_json: &serde_json::Value,
+    services: &[Service],
+) -> Vec<Endpoint> {
     let mut endpoints = Vec::new();
 
     // A map of service names to ensure all endpoints are associated with valid services
@@ -221,7 +230,7 @@ fn extract_endpoints(spec: &OpenApiSpec, services: &[Service]) -> Vec<Endpoint> 
             .map(|params| {
                 params
                     .iter()
-                    .filter_map(|p| resolve_parameter_ref(spec, p))
+                    .filter_map(|p| resolve_parameter_ref(spec_json, p))
                     .collect::<Vec<_>>()
             })
             .unwrap_or_default();
@@ -261,7 +270,7 @@ fn extract_endpoints(spec: &OpenApiSpec, services: &[Service]) -> Vec<Endpoint> 
 
                 if let Some(op_params) = &operation.parameters {
                     for param in op_params {
-                        if let Some(resolved_param) = resolve_parameter_ref(spec, param) {
+                        if let Some(resolved_param) = resolve_parameter_ref(spec_json, param) {
                             parameters.push(resolved_param);
                         }
                     }
@@ -287,7 +296,7 @@ fn extract_endpoints(spec: &OpenApiSpec, services: &[Service]) -> Vec<Endpoint> 
                     .responses
                     .iter()
                     .map(|(status_code, response)| {
-                        let resolved = resolve_response_ref(spec, response)
+                        let resolved = resolve_response_ref(spec_json, response)
                             .unwrap_or_else(|| response.clone());
                         (status_code.clone(), resolved)
                     })

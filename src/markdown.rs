@@ -4,9 +4,34 @@ use std::io::Write;
 use anyhow::Result;
 
 use crate::models::{
-    ApiDocumentation, DetailLevel, DocConfig, Endpoint, GroupBy, Response, Schema,
+    ApiDocumentation, DetailLevel, DocConfig, Endpoint, GroupBy, Response, Schema, SortMethod,
 };
 use crate::utils::{clean_for_id, extract_content_type};
+
+/// Sorts endpoints in place using the configured method.
+///
+/// Every view sorts through this single function so that, within a document,
+/// the table of contents and the body sections always share one ordering
+/// (otherwise TOC anchor links can point to a different sequence than the
+/// sections themselves).
+fn sort_endpoints(endpoints: &mut [&Endpoint], sort_method: &SortMethod) {
+    match sort_method {
+        SortMethod::Alphabetical => {
+            endpoints.sort_by(|a, b| a.path.cmp(&b.path).then(a.method.cmp(&b.method)));
+        }
+        SortMethod::PathLength => {
+            endpoints.sort_by_key(|a| a.path.len());
+        }
+        SortMethod::None => {}
+    }
+}
+
+/// Case-insensitive membership test for `--service-filter` against a service
+/// (tag) name. Mirrors the case-insensitivity of `--method-filter` so that a
+/// case mismatch doesn't silently produce empty output.
+fn service_matches_filter(name: &str, filter: &[String]) -> bool {
+    filter.iter().any(|entry| entry.eq_ignore_ascii_case(name))
+}
 
 /// Renders the documentation to `writer`, dispatching on detail level and grouping mode.
 pub fn generate_markdown<W: Write>(
@@ -58,12 +83,11 @@ fn generate_summary<W: Write>(
         writeln!(writer)?;
     }
 
-    // Filter services if needed
+    // Filter services if needed (case-insensitive)
     let services = if let Some(filter) = &config.service_filter {
-        let filter_set: HashSet<_> = filter.iter().collect();
         doc.services
             .iter()
-            .filter(|s| filter_set.contains(&s.name))
+            .filter(|s| service_matches_filter(&s.name, filter))
             .collect::<Vec<_>>()
     } else {
         doc.services.iter().collect()
@@ -108,20 +132,7 @@ fn generate_summary<W: Write>(
         // Add operation links under each service
         if let Some(endpoints) = service_endpoints.get(&service.name as &str) {
             let mut sorted_ops = endpoints.clone();
-            match config.sort_method {
-                crate::models::SortMethod::Alphabetical => {
-                    sorted_ops.sort_by(|a, b| {
-                        a.operation_id
-                            .clone()
-                            .unwrap_or_default()
-                            .cmp(&b.operation_id.clone().unwrap_or_default())
-                    });
-                }
-                crate::models::SortMethod::PathLength => {
-                    sorted_ops.sort_by_key(|a| a.path.len());
-                }
-                crate::models::SortMethod::None => {}
-            }
+            sort_endpoints(&mut sorted_ops, &config.sort_method);
 
             for endpoint in sorted_ops {
                 let op_name = if let Some(operation_id) = &endpoint.operation_id {
@@ -176,12 +187,11 @@ fn generate_by_service<W: Write>(
         writeln!(writer)?;
     }
 
-    // Filter services if needed
+    // Filter services if needed (case-insensitive)
     let services = if let Some(filter) = &config.service_filter {
-        let filter_set: HashSet<_> = filter.iter().collect();
         doc.services
             .iter()
-            .filter(|s| filter_set.contains(&s.name))
+            .filter(|s| service_matches_filter(&s.name, filter))
             .collect::<Vec<_>>()
     } else {
         doc.services.iter().collect()
@@ -227,20 +237,7 @@ fn generate_by_service<W: Write>(
             // Add operation links under each service
             if let Some(endpoints) = service_endpoints.get(&service.name as &str) {
                 let mut sorted_ops = endpoints.clone();
-                match config.sort_method {
-                    crate::models::SortMethod::Alphabetical => {
-                        sorted_ops.sort_by(|a, b| {
-                            a.summary
-                                .clone()
-                                .unwrap_or_default()
-                                .cmp(&b.summary.clone().unwrap_or_default())
-                        });
-                    }
-                    crate::models::SortMethod::PathLength => {
-                        sorted_ops.sort_by_key(|a| a.path.len());
-                    }
-                    crate::models::SortMethod::None => {}
-                }
+                sort_endpoints(&mut sorted_ops, &config.sort_method);
 
                 for endpoint in sorted_ops {
                     // Extract a shorter title for the TOC entry
@@ -267,15 +264,7 @@ fn generate_by_service<W: Write>(
         if let Some(endpoints) = service_endpoints.get(&service.name as &str) {
             // Sort endpoints as configured
             let mut sorted_endpoints = endpoints.clone();
-            match config.sort_method {
-                crate::models::SortMethod::Alphabetical => {
-                    sorted_endpoints.sort_by(|a, b| a.path.cmp(&b.path));
-                }
-                crate::models::SortMethod::PathLength => {
-                    sorted_endpoints.sort_by_key(|a| a.path.len());
-                }
-                crate::models::SortMethod::None => {}
-            }
+            sort_endpoints(&mut sorted_endpoints, &config.sort_method);
 
             for endpoint in sorted_endpoints {
                 write_endpoint(writer, endpoint, doc, config, true)?;
@@ -327,9 +316,13 @@ fn generate_by_method<W: Write>(
             continue;
         }
 
-        // Apply service filter if configured
+        // Apply service filter if configured (case-insensitive)
         if let Some(services) = &config.service_filter {
-            if !endpoint.services.iter().any(|s| services.contains(s)) {
+            if !endpoint
+                .services
+                .iter()
+                .any(|s| service_matches_filter(s, services))
+            {
                 continue;
             }
         }
@@ -381,15 +374,7 @@ fn generate_by_method<W: Write>(
 
                 // Sort endpoints as configured
                 let mut sorted_endpoints = endpoints.clone();
-                match config.sort_method {
-                    crate::models::SortMethod::Alphabetical => {
-                        sorted_endpoints.sort_by(|a, b| a.path.cmp(&b.path));
-                    }
-                    crate::models::SortMethod::PathLength => {
-                        sorted_endpoints.sort_by_key(|a| a.path.len());
-                    }
-                    crate::models::SortMethod::None => {}
-                }
+                sort_endpoints(&mut sorted_endpoints, &config.sort_method);
 
                 for endpoint in sorted_endpoints {
                     write_endpoint(writer, endpoint, doc, config, true)?;
@@ -441,7 +426,11 @@ fn generate_flat<W: Write>(
                 return false;
             }
             if let Some(services) = &config.service_filter {
-                if !endpoint.services.iter().any(|s| services.contains(s)) {
+                if !endpoint
+                    .services
+                    .iter()
+                    .any(|s| service_matches_filter(s, services))
+                {
                     return false;
                 }
             }
@@ -459,15 +448,7 @@ fn generate_flat<W: Write>(
         })
         .collect();
 
-    match config.sort_method {
-        crate::models::SortMethod::Alphabetical => {
-            endpoints.sort_by(|a, b| a.path.cmp(&b.path).then(a.method.cmp(&b.method)));
-        }
-        crate::models::SortMethod::PathLength => {
-            endpoints.sort_by_key(|a| a.path.len());
-        }
-        crate::models::SortMethod::None => {}
-    }
+    sort_endpoints(&mut endpoints, &config.sort_method);
 
     writeln!(writer, "## Endpoints\n")?;
     for endpoint in endpoints {
@@ -768,7 +749,7 @@ fn collect_schema_rows(
 
     if let Some(all_of) = &schema.all_of {
         for (index, variant) in all_of.iter().enumerate() {
-            let variant_field = format!("{}.allOf[{}]", field, index + 1);
+            let variant_field = format!("{}.allOf[{}]", field, index);
             collect_schema_rows(
                 variant,
                 doc,
@@ -783,7 +764,7 @@ fn collect_schema_rows(
 
     if let Some(one_of) = &schema.one_of {
         for (index, variant) in one_of.iter().enumerate() {
-            let variant_field = format!("{}.oneOf[{}]", field, index + 1);
+            let variant_field = format!("{}.oneOf[{}]", field, index);
             collect_schema_rows(
                 variant,
                 doc,
@@ -798,7 +779,7 @@ fn collect_schema_rows(
 
     if let Some(any_of) = &schema.any_of {
         for (index, variant) in any_of.iter().enumerate() {
-            let variant_field = format!("{}.anyOf[{}]", field, index + 1);
+            let variant_field = format!("{}.anyOf[{}]", field, index);
             collect_schema_rows(
                 variant,
                 doc,

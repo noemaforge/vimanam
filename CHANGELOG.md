@@ -5,6 +5,42 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-06-16
+
+### Fixed
+
+- Fatal errors are now printed to stderr regardless of the `RUST_LOG` setting,
+  instead of being silently swallowed when logging was not enabled (#14)
+- `--method-filter` is now case-insensitive; methods are stored uppercase, so a
+  lowercase value such as `--method-filter get` previously matched nothing and
+  silently produced empty output (#13)
+- `--service-filter` is now case-insensitive, for the same reason (#19)
+- `clean_for_id` now collapses runs of 3+ consecutive separators into a single
+  dash, so anchor IDs derived from inputs like `a///b` are clean (#15)
+- The `## Authentication` section is now emitted in spec order and is
+  deterministic across runs; `security_schemes` switched from `HashMap` to
+  `IndexMap`, and `serde_json`'s `preserve_order` feature keeps OpenAPI 2.0
+  `securityDefinitions` in declaration order rather than alphabetical (#16)
+- The table of contents and body sections now share one endpoint ordering in
+  every view, so TOC anchor links always point to the corresponding section in
+  document order (#18)
+
+### Changed
+
+- Schema composition variant indices (`allOf`/`oneOf`/`anyOf`) are now 0-based
+  (`allOf[0]`, `allOf[1]`, ...) to match JSON Pointer/jq conventions (#21)
+
+### Performance
+
+- `$ref` resolution no longer re-serializes the entire spec on every reference;
+  the spec is serialized to JSON once per parse, making `$ref`-heavy large specs
+  significantly faster (#17)
+
+### Internal
+
+- `--group-by` is no longer wrapped in a misleading `Option` (it always has a
+  clap default), removing an unreachable fallback branch (#20)
+
 ## [0.3.0] - 2026-06-15
 
 ### Added
@@ -84,6 +120,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Initial release: OpenAPI 2.0 (Swagger) JSON to Markdown with grouping,
   filtering, sorting, and detail levels
 
+[0.4.0]: https://github.com/nrynss/vimanam/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/nrynss/vimanam/compare/v0.2.2...v0.3.0
 [0.2.2]: https://github.com/nrynss/vimanam/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/nrynss/vimanam/compare/v0.2.0...v0.2.1
