@@ -1,9 +1,13 @@
-use std::collections::HashMap;
+use indexmap::IndexMap;
 
 use crate::models::{OpenApiSpec, Parameter, Response};
 
-/// Resolves a JSON reference within the OpenAPI specification
-pub fn resolve_ref(spec: &OpenApiSpec, reference: &str) -> Option<serde_json::Value> {
+/// Resolves a JSON reference within a pre-serialized OpenAPI specification.
+///
+/// `spec_json` is the spec serialized to a [`serde_json::Value`] once by the
+/// caller (see [`parse_openapi`](crate::parser::parse_openapi)); resolution
+/// only navigates it, so it never re-serializes the spec per `$ref`.
+pub fn resolve_ref(spec_json: &serde_json::Value, reference: &str) -> Option<serde_json::Value> {
     if !reference.starts_with("#/") {
         return None; // We only support internal references for now
     }
@@ -12,11 +16,8 @@ pub fn resolve_ref(spec: &OpenApiSpec, reference: &str) -> Option<serde_json::Va
     let path = &reference[2..];
     let components = path.split('/');
 
-    // Start with the spec as a JSON value
-    let spec_json = serde_json::to_value(spec).ok()?;
-
     // Navigate the path
-    let mut current = &spec_json;
+    let mut current = spec_json;
     for component in components {
         // Handle escaped JSON pointer components
         let unescaped = component.replace("~1", "/").replace("~0", "~");
@@ -46,10 +47,13 @@ pub fn resolve_ref(spec: &OpenApiSpec, reference: &str) -> Option<serde_json::Va
 }
 
 /// Resolves a parameter reference to a concrete parameter
-pub fn resolve_parameter_ref(spec: &OpenApiSpec, parameter: &Parameter) -> Option<Parameter> {
+pub fn resolve_parameter_ref(
+    spec_json: &serde_json::Value,
+    parameter: &Parameter,
+) -> Option<Parameter> {
     if let Some(extensions) = parameter.extensions.get("$ref") {
         if let Some(reference) = extensions.as_str() {
-            if let Some(resolved) = resolve_ref(spec, reference) {
+            if let Some(resolved) = resolve_ref(spec_json, reference) {
                 return serde_json::from_value(resolved).ok();
             }
         }
@@ -58,10 +62,13 @@ pub fn resolve_parameter_ref(spec: &OpenApiSpec, parameter: &Parameter) -> Optio
 }
 
 /// Resolves a response reference to a concrete response
-pub fn resolve_response_ref(spec: &OpenApiSpec, response: &Response) -> Option<Response> {
+pub fn resolve_response_ref(
+    spec_json: &serde_json::Value,
+    response: &Response,
+) -> Option<Response> {
     if let Some(extensions) = response.extensions.get("$ref") {
         if let Some(reference) = extensions.as_str() {
-            if let Some(resolved) = resolve_ref(spec, reference) {
+            if let Some(resolved) = resolve_ref(spec_json, reference) {
                 return serde_json::from_value(resolved).ok();
             }
         }
@@ -110,9 +117,12 @@ pub fn extract_servers(spec: &OpenApiSpec) -> Vec<String> {
     servers
 }
 
-/// Extracts security schemes from the OpenAPI spec
-pub fn extract_security_schemes(spec: &OpenApiSpec) -> HashMap<String, String> {
-    let mut schemes = HashMap::new();
+/// Extracts security schemes from the OpenAPI spec.
+///
+/// Returns an [`IndexMap`] so the `## Authentication` section is emitted in a
+/// stable order, preserving the output-determinism invariant.
+pub fn extract_security_schemes(spec: &OpenApiSpec) -> IndexMap<String, String> {
+    let mut schemes = IndexMap::new();
 
     // OpenAPI 3.0+: components.securitySchemes
     if let Some(components) = &spec.components {
@@ -152,14 +162,29 @@ pub fn extract_security_schemes(spec: &OpenApiSpec) -> HashMap<String, String> {
     schemes
 }
 
-/// Cleans a string for use as an ID or anchor in Markdown
+/// Cleans a string for use as an ID or anchor in Markdown.
+///
+/// Lowercases, maps every run of non-`[alphanumeric-_]` characters to a single
+/// dash, and trims leading/trailing dashes. A single `.replace("--", "-")` only
+/// collapses pairs, so runs of 3+ dashes (e.g. from `"a///b"`) would survive;
+/// folding character-by-character collapses any-length runs in one pass.
 pub fn clean_for_id(input: &str) -> String {
-    input
-        .to_lowercase()
-        .replace(|c: char| !c.is_alphanumeric() && c != '-' && c != '_', "-")
-        .replace("--", "-")
-        .trim_matches('-')
-        .to_string()
+    let mut result = String::with_capacity(input.len());
+    let mut last_was_dash = false;
+
+    for c in input.to_lowercase().chars() {
+        if c.is_alphanumeric() || c == '_' {
+            result.push(c);
+            last_was_dash = false;
+        } else if !last_was_dash {
+            // Any disallowed character (including a literal '-') folds into a
+            // single separating dash, collapsing consecutive runs.
+            result.push('-');
+            last_was_dash = true;
+        }
+    }
+
+    result.trim_matches('-').to_string()
 }
 
 /// Extracts the primary content type from responses
@@ -176,4 +201,31 @@ pub fn extract_content_type(response: &Response) -> Option<String> {
     }
 
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::clean_for_id;
+
+    #[test]
+    fn clean_for_id_basic_cases() {
+        assert_eq!(clean_for_id("Pets_ListPets"), "pets_listpets");
+        assert_eq!(clean_for_id("GET /pets"), "get-pets");
+        assert_eq!(clean_for_id("list-pets"), "list-pets");
+    }
+
+    // Regression test for #15: a single `.replace("--", "-")` left runs of 3+
+    // dashes intact; folding must collapse any-length runs to one dash.
+    #[test]
+    fn clean_for_id_collapses_long_dash_runs() {
+        assert_eq!(clean_for_id("a///b"), "a-b");
+        assert_eq!(clean_for_id("a / / b"), "a-b");
+        assert_eq!(clean_for_id("foo----bar"), "foo-bar");
+    }
+
+    #[test]
+    fn clean_for_id_trims_edge_dashes() {
+        assert_eq!(clean_for_id("/pets/"), "pets");
+        assert_eq!(clean_for_id("**bold**"), "bold");
+    }
 }

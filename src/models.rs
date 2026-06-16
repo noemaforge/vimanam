@@ -173,8 +173,9 @@ pub struct Components {
     #[serde(rename = "requestBodies")]
     pub request_bodies: Option<HashMap<String, RequestBody>>,
     pub headers: Option<HashMap<String, Header>>,
+    // IndexMap preserves spec order so the Authentication section is deterministic
     #[serde(rename = "securitySchemes")]
-    pub security_schemes: Option<HashMap<String, SecurityScheme>>,
+    pub security_schemes: Option<IndexMap<String, SecurityScheme>>,
     pub links: Option<HashMap<String, Link>>,
     pub callbacks: Option<HashMap<String, Callback>>,
     #[serde(flatten)]
@@ -356,6 +357,6 @@ pub struct ApiDocumentation {
     pub services: Vec<Service>,
     pub endpoints: Vec<Endpoint>,
     pub servers: Vec<String>,
-    pub security_schemes: HashMap<String, String>,
+    pub security_schemes: IndexMap<String, String>,
     pub schemas: IndexMap<String, Schema>,
 }
