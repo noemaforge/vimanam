@@ -26,12 +26,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `HashMap` to `IndexMap`, so rendered examples preserve spec order and keep the
   output-determinism guarantee
 
+### Fixed
+
+- `--required-only` now also drops parameters whose `required` is unspecified,
+  not only those explicitly marked `required: false`
+
 ### Internal
 
 - The ~1200-line `markdown.rs` was split into a `markdown/` module (`views`,
   `endpoint`, `schema`, `examples`) behind the unchanged `generate_markdown`
   entry point, and shared preamble, endpoint-filter, HTTP-method-list, and
   JSON-pointer helpers were de-duplicated. No behavior change.
+- `Example` and `MediaType` gained `#[serde(flatten)]` extension maps, so
+  unknown vendor (`x-*`) fields are preserved rather than dropped, matching the
+  other model structs.
 
 ## [0.4.0] - 2026-06-16
 

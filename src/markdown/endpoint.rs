@@ -61,19 +61,14 @@ pub(super) fn write_endpoint<W: Write>(
             writeln!(writer, "|------|----|---------:|-------------|")?;
 
             for param in &endpoint.parameters {
-                // Skip non-required parameters if required_only is enabled
-                if let Some(required) = param.required {
-                    if !required && config.required_only {
-                        continue;
-                    }
+                // Skip non-required parameters when --required-only is set,
+                // treating an unspecified `required` as not required.
+                if config.required_only && !param.required.unwrap_or(false) {
+                    continue;
                 }
 
-                let required_str = if let Some(req) = param.required {
-                    if req {
-                        "Yes"
-                    } else {
-                        "No"
-                    }
+                let required_str = if param.required.unwrap_or(false) {
+                    "Yes"
                 } else {
                     "No"
                 };

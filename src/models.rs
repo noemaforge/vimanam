@@ -219,6 +219,8 @@ pub struct Example {
     pub value: Option<serde_json::Value>,
     #[serde(rename = "externalValue", skip_serializing_if = "Option::is_none")]
     pub external_value: Option<String>,
+    #[serde(flatten)]
+    pub extensions: HashMap<String, serde_json::Value>,
 }
 
 // RequestBody struct
@@ -237,6 +239,8 @@ pub struct MediaType {
     // IndexMap preserves spec order so rendered examples are deterministic.
     pub examples: Option<IndexMap<String, Example>>,
     pub encoding: Option<HashMap<String, Encoding>>,
+    #[serde(flatten)]
+    pub extensions: HashMap<String, serde_json::Value>,
 }
 
 // Encoding struct

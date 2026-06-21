@@ -61,6 +61,21 @@ fn optional_request_body_is_documented() {
         ));
 }
 
+// `--required-only` drops parameters that are not required (explicit
+// `required: false` or unspecified), keeping required ones.
+#[test]
+fn required_only_excludes_non_required_parameters() {
+    vimanam()
+        .arg(OAS3)
+        .args(["--detail", "standard", "--required-only"])
+        .assert()
+        .success()
+        // Required path parameter is kept.
+        .stdout(predicate::str::contains("| `petId` | path | Yes |"))
+        // Optional query parameter is dropped.
+        .stdout(predicate::str::contains("| `limit` |").not());
+}
+
 #[test]
 fn required_path_param_is_documented() {
     vimanam()
