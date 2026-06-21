@@ -12,10 +12,12 @@ Besides producing documentation for humans, Vimanam is built for **feeding API s
 
 - Convert OpenAPI JSON files to Markdown documentation
 - Supports both OpenAPI 2.0 (Swagger) and OpenAPI 3.0 specifications
-- Group endpoints by service or HTTP method, or list them flat
+- Group endpoints by service, HTTP method, or path, or list them flat
 - Filter by service, path, or method
 - Multiple detail levels (summary, basic, standard, full)
+- Token-budget-aware output (`--max-tokens`): steps the detail level down until the rendering fits, and reports what was trimmed on stderr
 - Schema expansion at `--detail full --include-schemas`: resolves `$ref`s (with cycle detection) and renders request/response schemas as nested field tables
+- Example rendering at `--detail full --include-examples`: emits request/response examples as fenced JSON blocks, resolving `$ref`s into `components/examples`
 - Server URL information extraction and documentation
 - Authentication and security schemes documentation
 - Proper content type detection for responses
@@ -65,8 +67,14 @@ vimanam input.json -o output.md
 # Group by HTTP method
 vimanam input.json --method -o output.md
 
+# Group by path (one section per path, methods listed underneath)
+vimanam input.json --group-by path -o output.md
+
 # Generate summary only
 vimanam input.json --detail summary -o output.md
+
+# Fit the output to a token budget, stepping detail down as needed
+vimanam input.json --detail full --max-tokens 8000 -o output.md
 
 # Filter by specific services
 vimanam input.json --service-filter Auth,Users -o output.md
@@ -95,7 +103,7 @@ Arguments:
 Options:
   -o, --output <FILE>                      Output file path
       --method                             Group endpoints by HTTP method instead of by service
-      --group-by <service|method>          Grouping method for endpoints
+      --group-by <service|method|path>     Grouping method for endpoints
       --flat                               Generate a flat list without hierarchical structure
       --service-filter <SERVICE[,...]>     Include only specific services (comma-separated)
       --path-filter <PATTERN>              Filter endpoints by path pattern
@@ -108,6 +116,7 @@ Options:
       --include-auth                       Show authentication requirements and server URLs
       --no-toc                             Skip table of contents
       --sort <alpha|path-length|none>      Sorting method [default: alpha]
+      --max-tokens <N>                     Fit output to a token budget, stepping detail down as needed
   -h, --help                               Print help
 ```
 
@@ -127,7 +136,14 @@ vimanam openapi.json --service-filter Findings --detail standard -o findings-api
 # Slice by path or method instead
 vimanam openapi.json --path-filter /v1/scans --detail standard -o scans-api.md
 vimanam openapi.json --method-filter GET --detail basic -o read-api.md
+
+# Or let Vimanam pick the detail level: ask for as much of a service as fits a
+# token budget. It starts at --detail full and steps down until it fits,
+# reporting any reduction on stderr.
+vimanam openapi.json --service-filter Findings --detail full --max-tokens 8000 -o findings-api.md
 ```
+
+`--max-tokens` uses a chars/4 token estimate — close enough to choose a detail level, but treat it as approximate rather than an exact cap.
 
 A workflow that works well with coding agents: generate the `--detail summary` map once and reference it from the project's agent instructions (e.g. `CLAUDE.md`); have the agent regenerate a `--service-filter ... --detail standard` slice on demand when a task involves specific endpoints.
 

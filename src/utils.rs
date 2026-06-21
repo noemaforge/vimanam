@@ -2,6 +2,13 @@ use indexmap::IndexMap;
 
 use crate::models::{OpenApiSpec, Parameter, Response};
 
+/// Decodes the escape sequences in a JSON Pointer reference token: `~1` → `/`
+/// and `~0` → `~` (RFC 6901). The order matters — `~1` must be decoded before
+/// `~0` so that an encoded `~1` is not corrupted.
+pub fn decode_json_pointer_token(token: &str) -> String {
+    token.replace("~1", "/").replace("~0", "~")
+}
+
 /// Resolves a JSON reference within a pre-serialized OpenAPI specification.
 ///
 /// `spec_json` is the spec serialized to a [`serde_json::Value`] once by the
@@ -20,7 +27,7 @@ pub fn resolve_ref(spec_json: &serde_json::Value, reference: &str) -> Option<ser
     let mut current = spec_json;
     for component in components {
         // Handle escaped JSON pointer components
-        let unescaped = component.replace("~1", "/").replace("~0", "~");
+        let unescaped = decode_json_pointer_token(component);
 
         if let Some(obj) = current.as_object() {
             if let Some(value) = obj.get(&unescaped) {

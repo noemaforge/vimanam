@@ -5,6 +5,34 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- `--include-examples` is now implemented: at `--detail full` it renders request
+  and response examples as fenced JSON blocks, pulling from media-type `example`
+  and `examples` and resolving `$ref`s into `components/examples`. It previously
+  printed only a placeholder (#6)
+- `--group-by path` groups endpoints by path, emitting one section per path with
+  its methods listed underneath, in spec order (#8)
+- `--max-tokens <N>` fits output to a token budget: it renders at the requested
+  `--detail` level and, if the estimated token count (a chars/4 heuristic) is
+  over budget, steps the detail level down (full → standard → basic → summary)
+  until it fits, reporting any reduction on stderr (#7)
+
+### Changed
+
+- The `examples` maps on media types and `components.examples` switched from
+  `HashMap` to `IndexMap`, so rendered examples preserve spec order and keep the
+  output-determinism guarantee
+
+### Internal
+
+- The ~1200-line `markdown.rs` was split into a `markdown/` module (`views`,
+  `endpoint`, `schema`, `examples`) behind the unchanged `generate_markdown`
+  entry point, and shared preamble, endpoint-filter, HTTP-method-list, and
+  JSON-pointer helpers were de-duplicated. No behavior change.
+
 ## [0.4.0] - 2026-06-16
 
 ### Fixed

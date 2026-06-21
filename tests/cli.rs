@@ -7,6 +7,7 @@ const OAS2: &str = "tests/fixtures/petstore_oas2.json";
 const OAS3_SCHEMA_REFS: &str = "tests/fixtures/schema_refs_oas3.json";
 const OAS3_MULTI_AUTH: &str = "tests/fixtures/multi_auth_oas3.json";
 const OAS2_MULTI_AUTH: &str = "tests/fixtures/multi_auth_oas2.json";
+const OAS3_EXAMPLES: &str = "tests/fixtures/examples_oas3.json";
 
 fn vimanam() -> Command {
     Command::cargo_bin("vimanam").unwrap()
@@ -371,6 +372,84 @@ fn toc_order_matches_body_order() {
 
     assert!(toc_list < toc_create, "TOC order unexpected: {output}");
     assert!(body_list < body_create, "body order unexpected: {output}");
+}
+
+// #6: `--include-examples` at `--detail full` renders the request body's inline
+// example and the response example resolved from a `$ref` into
+// `components/examples`.
+#[test]
+fn include_examples_renders_request_and_response() {
+    vimanam()
+        .arg(OAS3_EXAMPLES)
+        .args(["--detail", "full", "--include-examples"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("#### Examples"))
+        // Inline request body example.
+        .stdout(predicate::str::contains("**Request**"))
+        .stdout(predicate::str::contains("\"name\": \"Fluffy\""))
+        // Response example resolved through #/components/examples/CreatedPet.
+        .stdout(predicate::str::contains("Response `201`"))
+        .stdout(predicate::str::contains("\"id\": 7"));
+}
+
+// Examples only render at `--detail full`, matching `--include-schemas`.
+#[test]
+fn include_examples_only_at_full_detail() {
+    vimanam()
+        .arg(OAS3_EXAMPLES)
+        .args(["--detail", "standard", "--include-examples"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("#### Examples").not());
+}
+
+// #8: `--group-by path` produces one section per path with its operations
+// underneath.
+#[test]
+fn group_by_path_groups_by_path() {
+    vimanam()
+        .arg(OAS3)
+        .args(["--detail", "basic", "--group-by", "path"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("## Paths"))
+        .stdout(predicate::str::contains("## /pets/{petId}"))
+        .stdout(predicate::str::contains("## /store/orders"))
+        .stdout(predicate::str::contains("### Pets_ListPets"))
+        .stdout(predicate::str::contains("### Pets_CreatePet"));
+}
+
+// #7: a tiny `--max-tokens` budget forces a full-detail request down to a lower
+// detail level and reports the reduction on stderr.
+#[test]
+fn max_tokens_steps_down_detail_level() {
+    vimanam()
+        .arg(OAS3)
+        .args([
+            "--detail",
+            "full",
+            "--include-schemas",
+            "--max-tokens",
+            "40",
+        ])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("token budget"))
+        .stderr(predicate::str::contains("--detail summary"));
+}
+
+// A generous `--max-tokens` budget leaves the requested detail untouched and
+// emits no stderr note.
+#[test]
+fn max_tokens_keeps_detail_when_it_fits() {
+    vimanam()
+        .arg(OAS3)
+        .args(["--detail", "basic", "--max-tokens", "100000"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("### Pets_ListPets"))
+        .stderr(predicate::str::is_empty());
 }
 
 #[test]
