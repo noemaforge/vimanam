@@ -72,6 +72,23 @@ pub struct PathItem {
     pub parameters: Option<Vec<Parameter>>,
 }
 
+impl PathItem {
+    /// The eight HTTP operations paired with their lowercase method name, in a
+    /// stable order. Centralizes the method list so callers don't repeat it.
+    pub fn operations(&self) -> [(&'static str, &Option<Operation>); 8] {
+        [
+            ("get", &self.get),
+            ("post", &self.post),
+            ("put", &self.put),
+            ("delete", &self.delete),
+            ("options", &self.options),
+            ("head", &self.head),
+            ("patch", &self.patch),
+            ("trace", &self.trace),
+        ]
+    }
+}
+
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct Operation {
     pub tags: Option<Vec<String>>,
@@ -96,6 +113,13 @@ pub struct Parameter {
     pub parameter_in: String,
     pub required: Option<bool>,
     pub schema: Option<Schema>,
+    // Example carriers. Real OpenAPI 3 parameters may define these directly; the
+    // parser also reuses them to ferry a request body's media-type examples into
+    // the synthetic `body` parameter so the generator can render them.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub example: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub examples: Option<IndexMap<String, Example>>,
     #[serde(flatten)]
     pub extensions: HashMap<String, serde_json::Value>,
 }
@@ -169,7 +193,8 @@ pub struct Components {
     pub schemas: Option<IndexMap<String, Schema>>,
     pub responses: Option<HashMap<String, Response>>,
     pub parameters: Option<HashMap<String, Parameter>>,
-    pub examples: Option<HashMap<String, Example>>,
+    // IndexMap so example references resolve to a deterministically ordered set.
+    pub examples: Option<IndexMap<String, Example>>,
     #[serde(rename = "requestBodies")]
     pub request_bodies: Option<HashMap<String, RequestBody>>,
     pub headers: Option<HashMap<String, Header>>,
@@ -185,17 +210,29 @@ pub struct Components {
 // Example struct
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct Example {
+    // A media-type `examples` entry may be a `$ref` into `components/examples`;
+    // capture it so the generator can resolve the reference.
+    #[serde(rename = "$ref", skip_serializing_if = "Option::is_none")]
+    pub reference: Option<String>,
     pub summary: Option<String>,
     pub description: Option<String>,
     pub value: Option<serde_json::Value>,
-    #[serde(rename = "externalValue")]
+    #[serde(rename = "externalValue", skip_serializing_if = "Option::is_none")]
     pub external_value: Option<String>,
+    #[serde(flatten)]
+    pub extensions: HashMap<String, serde_json::Value>,
 }
 
 // RequestBody struct
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct RequestBody {
+    // A `requestBody` may itself be a `$ref` into `components/requestBodies`;
+    // capture it so the parser can resolve the reference before use. `content`
+    // defaults to empty so the `$ref` form (which omits it) still deserializes.
+    #[serde(rename = "$ref", skip_serializing_if = "Option::is_none")]
+    pub reference: Option<String>,
     pub description: Option<String>,
+    #[serde(default)]
     pub content: IndexMap<String, MediaType>,
     pub required: Option<bool>,
 }
@@ -205,8 +242,11 @@ pub struct RequestBody {
 pub struct MediaType {
     pub schema: Option<Schema>,
     pub example: Option<serde_json::Value>,
-    pub examples: Option<HashMap<String, Example>>,
+    // IndexMap preserves spec order so rendered examples are deterministic.
+    pub examples: Option<IndexMap<String, Example>>,
     pub encoding: Option<HashMap<String, Encoding>>,
+    #[serde(flatten)]
+    pub extensions: HashMap<String, serde_json::Value>,
 }
 
 // Encoding struct
@@ -324,12 +364,16 @@ pub struct DocConfig {
     pub include_auth: bool,
     pub include_toc: bool,
     pub sort_method: SortMethod,
+    // When set, the generator renders at progressively lower detail until the
+    // estimated token count fits this budget (`--max-tokens`).
+    pub max_tokens: Option<usize>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum GroupBy {
     Service,
     Method,
+    Path,
     Flat,
 }
 
@@ -359,4 +403,6 @@ pub struct ApiDocumentation {
     pub servers: Vec<String>,
     pub security_schemes: IndexMap<String, String>,
     pub schemas: IndexMap<String, Schema>,
+    // Reusable examples (`components/examples`), keyed by name for `$ref` lookups.
+    pub examples: IndexMap<String, Example>,
 }

@@ -1,0 +1,58 @@
+{
+  "openapi": "3.0.0",
+  "info": {
+    "title": "Examples API",
+    "version": "1.0.0",
+    "description": "A spec exercising request and response examples."
+  },
+  "tags": [{ "name": "Pets", "description": "Pet operations" }],
+  "paths": {
+    "/pets": {
+      "post": {
+        "tags": ["Pets"],
+        "summary": "Create a pet",
+        "operationId": "Pets_CreatePet",
+        "requestBody": {
+          "description": "Pet to add",
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/Pet" },
+              "example": { "name": "Fluffy", "tag": "cat" }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Pet created",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Pet" },
+                "examples": {
+                  "created": { "$ref": "#/components/examples/CreatedPet" }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Pet": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string", "description": "Pet name" },
+          "tag": { "type": "string", "description": "Pet tag" }
+        },
+        "required": ["name"]
+      }
+    },
+    "examples": {
+      "CreatedPet": {
+        "summary": "A freshly created pet",
+        "value": { "id": 7, "name": "Fluffy", "tag": "cat" }
+      }
+    }
+  }
+}

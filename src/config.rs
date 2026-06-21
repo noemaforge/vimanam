@@ -70,12 +70,18 @@ pub struct Cli {
     /// Sorting method
     #[arg(long, value_enum, default_value = "alpha")]
     pub sort: SortArg,
+
+    /// Fit output to a token budget, stepping detail down (full → summary) as
+    /// needed; what was trimmed is reported on stderr
+    #[arg(long, value_name = "N")]
+    pub max_tokens: Option<usize>,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum, Debug)]
 pub enum GroupByArg {
     Service,
     Method,
+    Path,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum, Debug)]
@@ -98,6 +104,7 @@ impl From<GroupByArg> for GroupBy {
         match arg {
             GroupByArg::Service => GroupBy::Service,
             GroupByArg::Method => GroupBy::Method,
+            GroupByArg::Path => GroupBy::Path,
         }
     }
 }
@@ -155,5 +162,6 @@ pub fn build_config(cli: &Cli) -> DocConfig {
         include_auth: cli.include_auth,
         include_toc: !cli.no_toc,
         sort_method: cli.sort.into(),
+        max_tokens: cli.max_tokens,
     }
 }

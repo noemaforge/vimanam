@@ -5,6 +5,45 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-06-22
+
+### Added
+
+- `--include-examples` is now implemented: at `--detail full` it renders request
+  and response examples as fenced JSON blocks, pulling from media-type `example`
+  and `examples` and resolving `$ref`s into `components/examples`. It previously
+  printed only a placeholder (#6)
+- `--group-by path` groups endpoints by path, emitting one section per path with
+  its methods listed underneath, in spec order (#8)
+- `--max-tokens <N>` fits output to a token budget: it renders at the requested
+  `--detail` level and, if the estimated token count (a chars/4 heuristic) is
+  over budget, steps the detail level down (full → standard → basic → summary)
+  until it fits, reporting any reduction on stderr (#7)
+
+### Changed
+
+- The `examples` maps on media types and `components.examples` switched from
+  `HashMap` to `IndexMap`, so rendered examples preserve spec order and keep the
+  output-determinism guarantee
+
+### Fixed
+
+- `--required-only` now also drops parameters whose `required` is unspecified,
+  not only those explicitly marked `required: false`
+- A `requestBody` given as a `$ref` (`#/components/requestBodies/...`) is now
+  resolved during parsing; previously such specs failed to parse entirely
+  because the referenced body carries no inline `content`
+
+### Internal
+
+- The ~1200-line `markdown.rs` was split into a `markdown/` module (`views`,
+  `endpoint`, `schema`, `examples`) behind the unchanged `generate_markdown`
+  entry point, and shared preamble, endpoint-filter, HTTP-method-list, and
+  JSON-pointer helpers were de-duplicated. No behavior change.
+- `Example` and `MediaType` gained `#[serde(flatten)]` extension maps, so
+  unknown vendor (`x-*`) fields are preserved rather than dropped, matching the
+  other model structs.
+
 ## [0.4.0] - 2026-06-16
 
 ### Fixed
@@ -120,6 +159,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Initial release: OpenAPI 2.0 (Swagger) JSON to Markdown with grouping,
   filtering, sorting, and detail levels
 
+[0.5.0]: https://github.com/nrynss/vimanam/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/nrynss/vimanam/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/nrynss/vimanam/compare/v0.2.2...v0.3.0
 [0.2.2]: https://github.com/nrynss/vimanam/compare/v0.2.1...v0.2.2

@@ -7,10 +7,11 @@ use std::io::{BufReader, Read, Seek, SeekFrom};
 use std::path::Path;
 
 use crate::models::{
-    ApiDocumentation, Endpoint, OpenApiSpec, Parameter, Response, Schema, Service,
+    ApiDocumentation, Endpoint, Example, OpenApiSpec, Parameter, Response, Schema, Service,
 };
 use crate::utils::{
-    extract_security_schemes, extract_servers, resolve_parameter_ref, resolve_response_ref,
+    extract_security_schemes, extract_servers, resolve_parameter_ref, resolve_request_body_ref,
+    resolve_response_ref,
 };
 
 /// Parses an OpenAPI 2.0/3.0 JSON file into the spec-version-agnostic
@@ -48,6 +49,8 @@ pub fn parse_openapi<P: AsRef<Path>>(path: P) -> Result<ApiDocumentation> {
             debug!("Extracted {} endpoints", endpoints.len());
             let schemas = extract_schemas(&spec);
             debug!("Extracted {} reusable schemas", schemas.len());
+            let examples = extract_examples(&spec);
+            debug!("Extracted {} reusable examples", examples.len());
 
             Ok(ApiDocumentation {
                 title: spec.info.title,
@@ -58,6 +61,7 @@ pub fn parse_openapi<P: AsRef<Path>>(path: P) -> Result<ApiDocumentation> {
                 servers,
                 security_schemes,
                 schemas,
+                examples,
             })
         }
         Err(err) => {
@@ -160,18 +164,10 @@ fn extract_services(spec: &OpenApiSpec) -> Vec<Service> {
         let mut service_names = IndexSet::new();
 
         for (_, path_item) in &spec.paths {
-            for op in [
-                &path_item.get,
-                &path_item.post,
-                &path_item.put,
-                &path_item.delete,
-                &path_item.options,
-                &path_item.head,
-                &path_item.patch,
-                &path_item.trace,
-            ]
-            .into_iter()
-            .flatten()
+            for op in path_item
+                .operations()
+                .into_iter()
+                .filter_map(|(_, op)| op.as_ref())
             {
                 if let Some(tags) = &op.tags {
                     for tag in tags {
@@ -198,6 +194,15 @@ fn extract_services(spec: &OpenApiSpec) -> Vec<Service> {
     services
 }
 
+/// The service an endpoint is attributed to when its operation declares no
+/// (known) tags: the first declared service, or `"API"` if there are none.
+fn default_service(services: &[Service]) -> String {
+    services
+        .first()
+        .map(|s| s.name.clone())
+        .unwrap_or_else(|| "API".to_string())
+}
+
 /// Flattens every operation under `paths` into an [`Endpoint`], merging
 /// path-level and operation-level parameters, resolving `$ref`s, and
 /// representing an OpenAPI 3.0 `requestBody` as a synthetic `body` parameter.
@@ -212,17 +217,6 @@ fn extract_endpoints(
     let service_map: HashSet<String> = services.iter().map(|s| s.name.clone()).collect();
 
     for (path, path_item) in &spec.paths {
-        let operations = [
-            ("get", &path_item.get),
-            ("post", &path_item.post),
-            ("put", &path_item.put),
-            ("delete", &path_item.delete),
-            ("options", &path_item.options),
-            ("head", &path_item.head),
-            ("patch", &path_item.patch),
-            ("trace", &path_item.trace),
-        ];
-
         // Get parameters defined at the path level and resolve any references
         let path_parameters = path_item
             .parameters
@@ -235,35 +229,21 @@ fn extract_endpoints(
             })
             .unwrap_or_default();
 
-        for (method, operation_opt) in operations {
+        for (method, operation_opt) in path_item.operations() {
             if let Some(operation) = operation_opt {
-                // Extract service tags with fallback
-                let service_tags = if let Some(tags) = &operation.tags {
-                    // Filter to only include valid services
-                    let filtered_tags: Vec<String> = tags
-                        .iter()
-                        .filter(|tag| service_map.contains(*tag))
-                        .cloned()
-                        .collect();
-
-                    // If all tags were filtered out, use fallback
-                    if filtered_tags.is_empty() {
-                        if !service_map.is_empty() {
-                            vec![services[0].name.clone()]
-                        } else {
-                            vec!["API".to_string()]
-                        }
-                    } else {
-                        filtered_tags
-                    }
-                } else {
-                    // If no tags, use the first service or "API"
-                    if !service_map.is_empty() {
-                        vec![services[0].name.clone()]
-                    } else {
-                        vec!["API".to_string()]
-                    }
-                };
+                // Service tags filtered to known services, falling back to the
+                // default service when an operation has none (or only unknown ones).
+                let service_tags = operation
+                    .tags
+                    .as_ref()
+                    .map(|tags| {
+                        tags.iter()
+                            .filter(|tag| service_map.contains(*tag))
+                            .cloned()
+                            .collect::<Vec<_>>()
+                    })
+                    .filter(|filtered| !filtered.is_empty())
+                    .unwrap_or_else(|| vec![default_service(services)]);
 
                 // Combine path-level and operation-level parameters with reference resolution
                 let mut parameters = path_parameters.clone();
@@ -279,6 +259,10 @@ fn extract_endpoints(
                 // Handle request body as a parameter (for OpenAPI 3.0).
                 // Bodies are optional unless the spec says required: true.
                 if let Some(req_body) = &operation.request_body {
+                    // A `requestBody` may be a `$ref`; resolve it before reading
+                    // its content, otherwise the synthetic body is dropped.
+                    let req_body = resolve_request_body_ref(spec_json, req_body)
+                        .unwrap_or_else(|| req_body.clone());
                     if let Some((_, media_type)) = req_body.content.first() {
                         parameters.push(Parameter {
                             name: "requestBody".to_string(),
@@ -286,6 +270,10 @@ fn extract_endpoints(
                             parameter_in: "body".to_string(),
                             required: Some(req_body.required.unwrap_or(false)),
                             schema: media_type.schema.clone(),
+                            // Ferry the request body's examples through so the
+                            // generator can render them at `--detail full`.
+                            example: media_type.example.clone(),
+                            examples: media_type.examples.clone(),
                             extensions: HashMap::new(),
                         });
                     }
@@ -358,4 +346,21 @@ fn extract_schemas(spec: &OpenApiSpec) -> IndexMap<String, Schema> {
     }
 
     schemas
+}
+
+/// Collects reusable examples from OpenAPI 3 `components.examples` into a
+/// deterministic registry, so media-type `examples` entries that are `$ref`s
+/// (`#/components/examples/...`) can be resolved during rendering.
+fn extract_examples(spec: &OpenApiSpec) -> IndexMap<String, Example> {
+    let mut examples = IndexMap::new();
+
+    if let Some(components) = &spec.components {
+        if let Some(component_examples) = &components.examples {
+            for (name, example) in component_examples {
+                examples.insert(name.clone(), example.clone());
+            }
+        }
+    }
+
+    examples
 }

@@ -1,0 +1,44 @@
+{
+  "openapi": "3.0.0",
+  "info": {
+    "title": "Ref Body API",
+    "version": "1.0.0",
+    "description": "A spec whose operation references a shared requestBody."
+  },
+  "tags": [{ "name": "Pets", "description": "Pet operations" }],
+  "paths": {
+    "/pets": {
+      "post": {
+        "tags": ["Pets"],
+        "summary": "Create a pet",
+        "operationId": "Pets_CreatePet",
+        "requestBody": { "$ref": "#/components/requestBodies/PetBody" },
+        "responses": {
+          "201": { "description": "Pet created" }
+        }
+      }
+    }
+  },
+  "components": {
+    "requestBodies": {
+      "PetBody": {
+        "description": "Pet to add",
+        "required": true,
+        "content": {
+          "application/json": {
+            "schema": { "$ref": "#/components/schemas/Pet" }
+          }
+        }
+      }
+    },
+    "schemas": {
+      "Pet": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string", "description": "Pet name" }
+        },
+        "required": ["name"]
+      }
+    }
+  }
+}
