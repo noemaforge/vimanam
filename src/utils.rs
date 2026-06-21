@@ -1,6 +1,6 @@
 use indexmap::IndexMap;
 
-use crate::models::{OpenApiSpec, Parameter, Response};
+use crate::models::{OpenApiSpec, Parameter, RequestBody, Response};
 
 /// Decodes the escape sequences in a JSON Pointer reference token: `~1` → `/`
 /// and `~0` → `~` (RFC 6901). The order matters — `~1` must be decoded before
@@ -81,6 +81,22 @@ pub fn resolve_response_ref(
         }
     }
     Some(response.clone())
+}
+
+/// Resolves a request body that may itself be a `$ref` into
+/// `components/requestBodies`, returning the concrete request body. A bare
+/// `requestBody: { "$ref": ... }` carries no `content`, so without this the
+/// synthetic body parameter would be dropped (or the spec would fail to parse).
+pub fn resolve_request_body_ref(
+    spec_json: &serde_json::Value,
+    request_body: &RequestBody,
+) -> Option<RequestBody> {
+    if let Some(reference) = &request_body.reference {
+        if let Some(resolved) = resolve_ref(spec_json, reference) {
+            return serde_json::from_value(resolved).ok();
+        }
+    }
+    Some(request_body.clone())
 }
 
 /// Extracts servers from the OpenAPI spec

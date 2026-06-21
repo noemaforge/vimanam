@@ -30,6 +30,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `--required-only` now also drops parameters whose `required` is unspecified,
   not only those explicitly marked `required: false`
+- A `requestBody` given as a `$ref` (`#/components/requestBodies/...`) is now
+  resolved during parsing; previously such specs failed to parse entirely
+  because the referenced body carries no inline `content`
 
 ### Internal
 

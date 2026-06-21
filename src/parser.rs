@@ -10,7 +10,8 @@ use crate::models::{
     ApiDocumentation, Endpoint, Example, OpenApiSpec, Parameter, Response, Schema, Service,
 };
 use crate::utils::{
-    extract_security_schemes, extract_servers, resolve_parameter_ref, resolve_response_ref,
+    extract_security_schemes, extract_servers, resolve_parameter_ref, resolve_request_body_ref,
+    resolve_response_ref,
 };
 
 /// Parses an OpenAPI 2.0/3.0 JSON file into the spec-version-agnostic
@@ -258,6 +259,10 @@ fn extract_endpoints(
                 // Handle request body as a parameter (for OpenAPI 3.0).
                 // Bodies are optional unless the spec says required: true.
                 if let Some(req_body) = &operation.request_body {
+                    // A `requestBody` may be a `$ref`; resolve it before reading
+                    // its content, otherwise the synthetic body is dropped.
+                    let req_body = resolve_request_body_ref(spec_json, req_body)
+                        .unwrap_or_else(|| req_body.clone());
                     if let Some((_, media_type)) = req_body.content.first() {
                         parameters.push(Parameter {
                             name: "requestBody".to_string(),

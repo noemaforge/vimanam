@@ -8,6 +8,7 @@ const OAS3_SCHEMA_REFS: &str = "tests/fixtures/schema_refs_oas3.json";
 const OAS3_MULTI_AUTH: &str = "tests/fixtures/multi_auth_oas3.json";
 const OAS2_MULTI_AUTH: &str = "tests/fixtures/multi_auth_oas2.json";
 const OAS3_EXAMPLES: &str = "tests/fixtures/examples_oas3.json";
+const OAS3_REF_BODY: &str = "tests/fixtures/ref_request_body_oas3.json";
 
 fn vimanam() -> Command {
     Command::cargo_bin("vimanam").unwrap()
@@ -417,6 +418,31 @@ fn include_examples_only_at_full_detail() {
         .assert()
         .success()
         .stdout(predicate::str::contains("#### Examples").not());
+}
+
+// A `requestBody` given as a `$ref` into `components/requestBodies` is resolved
+// during parsing: its description/required surface in the parameter table, and
+// at `--detail full` its referenced schema expands. Before resolution such a
+// spec failed to parse at all.
+#[test]
+fn ref_request_body_is_resolved() {
+    vimanam()
+        .arg(OAS3_REF_BODY)
+        .args(["--detail", "standard"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "| `requestBody` | body | Yes | Pet to add |",
+        ));
+
+    vimanam()
+        .arg(OAS3_REF_BODY)
+        .args(["--detail", "full", "--include-schemas"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "| `request.name` | string | Yes | Pet name |",
+        ));
 }
 
 // #8: `--group-by path` produces one section per path with its operations

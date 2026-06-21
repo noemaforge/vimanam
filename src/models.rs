@@ -226,7 +226,13 @@ pub struct Example {
 // RequestBody struct
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct RequestBody {
+    // A `requestBody` may itself be a `$ref` into `components/requestBodies`;
+    // capture it so the parser can resolve the reference before use. `content`
+    // defaults to empty so the `$ref` form (which omits it) still deserializes.
+    #[serde(rename = "$ref", skip_serializing_if = "Option::is_none")]
+    pub reference: Option<String>,
     pub description: Option<String>,
+    #[serde(default)]
     pub content: IndexMap<String, MediaType>,
     pub required: Option<bool>,
 }
