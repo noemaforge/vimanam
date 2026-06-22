@@ -5,6 +5,17 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- Release artifacts are now compressed archives instead of bare binaries:
+  `.tar.gz` for Linux/macOS and `.zip` for Windows, named
+  `vimanam-<version>-<target-triple>` (cargo-binstall-friendly) and bundling the
+  binary, `README.md`, and `LICENSE`. Each archive ships with a matching
+  `.sha256` checksum, which downstream package managers need to verify
+  downloads (#24)
+
 ## [0.5.0] - 2026-06-22
 
 ### Added
