@@ -25,6 +25,10 @@ output.md
 !README.md
 !CLAUDE.md
 !CHANGELOG.md
+!SECURITY.md
+!CONTRIBUTING.md
+!CODE_OF_CONDUCT.md
+!.github/**/*.md
 examples/*.md
 tests/output/
 openapi*.json

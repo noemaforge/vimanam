@@ -35,8 +35,11 @@ cargo install vimanam
 
 ### Prebuilt binaries
 
-Download the binary for your platform (Linux, macOS Intel/ARM64, Windows) from the
+Download the archive for your platform (Linux, macOS Intel/ARM64, Windows) from the
 [latest release](https://github.com/nrynss/vimanam/releases/latest) — no Rust toolchain needed.
+Archives are named `vimanam-<version>-<target-triple>.tar.gz` (`.zip` on Windows) and ship with
+a matching `.sha256` checksum; each bundles the binary, `README.md`, and `LICENSE`. Extract it and
+put the `vimanam` binary on your `PATH`.
 
 ### From source
 

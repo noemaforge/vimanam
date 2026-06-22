@@ -1,0 +1,22 @@
+version: 2
+updates:
+  # Rust crate dependencies
+  - package-ecosystem: cargo
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      # Roll minor/patch bumps into a single PR to cut review noise.
+      cargo-minor-patch:
+        update-types:
+          - minor
+          - patch
+
+  # Pinned GitHub Actions in ci.yml / release.yml (kept SHA-pinned; Dependabot
+  # updates the SHA and the trailing `# vX.Y.Z` version comment together).
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
