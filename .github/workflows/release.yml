@@ -150,4 +150,4 @@ jobs:
             shasum -a 256 "$ARCHIVE" > "${ARCHIVE}.sha256"
           fi
 
-          gh release upload "${{ github.ref_name }}" "$ARCHIVE" "${ARCHIVE}.sha256" --clobber
+          gh release upload "$GITHUB_REF_NAME" "$ARCHIVE" "${ARCHIVE}.sha256" --clobber
