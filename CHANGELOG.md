@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-06-24
+
+### Fixed
+
+- Parameters given as a `$ref` (`#/components/parameters/...`) are now resolved
+  during parsing; previously such specs failed to parse entirely because the
+  bare `$ref` parameter carries no `name`/`in` (#48)
+- Path items given as a `$ref` (`#/components/pathItems/...`) now contribute
+  their operations instead of being silently dropped; an unresolvable path-item
+  reference is logged and skipped (#50)
+- OpenAPI 3.1 `type` arrays (e.g. `["string", "null"]`) now parse instead of
+  failing; multiple non-null members render as a pipe-separated union such as
+  `string | integer` (#51)
+- Operations missing a `responses` object no longer abort the entire parse (#56)
+- An operation-level parameter now overrides a path-level one of the same
+  `(name, in)` instead of both rendering as duplicate rows (#54)
+- Operations tagged with a value not in the declared `tags` list now get their
+  own service section instead of being silently reassigned to the first service;
+  service extraction is also `$ref`-aware so tags inside referenced path items
+  are seen (#60)
+
 ### Changed
 
 - Release artifacts are now compressed archives instead of bare binaries:
@@ -170,6 +191,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Initial release: OpenAPI 2.0 (Swagger) JSON to Markdown with grouping,
   filtering, sorting, and detail levels
 
+[0.5.1]: https://github.com/nrynss/vimanam/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/nrynss/vimanam/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/nrynss/vimanam/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/nrynss/vimanam/compare/v0.2.2...v0.3.0
