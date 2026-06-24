@@ -37,6 +37,34 @@ pub enum AdditionalProperties {
     Schema(Box<Schema>),
 }
 
+/// Deserializes an OpenAPI `type` as either a string (2.0/3.0) or an array of
+/// strings (3.1, e.g. `["string", "null"]`), preserving all non-`"null"` types
+/// as a pipe-separated string so union schemas are represented in full.
+fn deserialize_optional_type<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum TypeField {
+        Single(String),
+        Multi(Vec<String>),
+    }
+
+    Ok(match Option::<TypeField>::deserialize(deserializer)? {
+        None => None,
+        Some(TypeField::Single(s)) => Some(s),
+        Some(TypeField::Multi(types)) => {
+            let non_null_types: Vec<String> = types.into_iter().filter(|t| t != "null").collect();
+            if non_null_types.is_empty() {
+                None
+            } else {
+                Some(non_null_types.join(" | "))
+            }
+        }
+    })
+}
+
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct Info {
     pub title: String,
@@ -70,6 +98,10 @@ pub struct PathItem {
     pub trace: Option<Operation>,
     #[serde(rename = "parameters", skip_serializing_if = "Option::is_none")]
     pub parameters: Option<Vec<Parameter>>,
+    // A path item may itself be a `$ref` into `components/pathItems`; capture it
+    // so the parser can resolve it instead of silently dropping the operations.
+    #[serde(rename = "$ref", skip_serializing_if = "Option::is_none")]
+    pub reference: Option<String>,
 }
 
 impl PathItem {
@@ -99,6 +131,8 @@ pub struct Operation {
     pub parameters: Option<Vec<Parameter>>,
     #[serde(rename = "requestBody", skip_serializing_if = "Option::is_none")]
     pub request_body: Option<RequestBody>,
+    // Defaulted so an operation missing `responses` doesn't fail the whole parse.
+    #[serde(default)]
     pub responses: IndexMap<String, Response>,
     pub deprecated: Option<bool>,
     #[serde(rename = "security", skip_serializing_if = "Option::is_none")]
@@ -107,9 +141,15 @@ pub struct Operation {
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct Parameter {
+    // A parameter may be a `$ref` into `components/parameters`; capture it so the
+    // parser can resolve it. `name`/`in` default to empty so the bare `$ref` form
+    // (which omits them) still deserializes — they come from the resolved target.
+    #[serde(rename = "$ref", skip_serializing_if = "Option::is_none")]
+    pub reference: Option<String>,
+    #[serde(default)]
     pub name: String,
     pub description: Option<String>,
-    #[serde(rename = "in")]
+    #[serde(rename = "in", default)]
     pub parameter_in: String,
     pub required: Option<bool>,
     pub schema: Option<Schema>,
@@ -130,7 +170,12 @@ pub struct Schema {
     pub title: Option<String>,
     #[serde(rename = "description", skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
-    #[serde(rename = "type", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "type",
+        default,
+        deserialize_with = "deserialize_optional_type",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub schema_type: Option<String>,
     #[serde(rename = "format", skip_serializing_if = "Option::is_none")]
     pub format: Option<String>,

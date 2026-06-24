@@ -10,6 +10,14 @@ const OAS2_MULTI_AUTH: &str = "tests/fixtures/multi_auth_oas2.json";
 const OAS3_EXAMPLES: &str = "tests/fixtures/examples_oas3.json";
 const OAS3_REF_BODY: &str = "tests/fixtures/ref_request_body_oas3.json";
 
+// Parse-layer correctness cluster (issues #48, #50, #51, #54, #56, #60).
+const REF_PARAMETER: &str = "tests/fixtures/ref_parameter.json";
+const REF_PATH_ITEM: &str = "tests/fixtures/ref_path_item.json";
+const TYPE_ARRAY: &str = "tests/fixtures/type_array_nullable.json";
+const MISSING_RESPONSES: &str = "tests/fixtures/missing_responses.json";
+const OVERRIDE_PARAM: &str = "tests/fixtures/override_param.json";
+const UNKNOWN_TAG: &str = "tests/fixtures/unknown_tag.json";
+
 fn vimanam() -> Command {
     Command::cargo_bin("vimanam").unwrap()
 }
@@ -502,5 +510,97 @@ fn full_detail_schema_expansion_detects_ref_cycles() {
         .success()
         .stdout(predicate::str::contains(
             "Cycle detected while expanding schema reference",
+        ));
+}
+
+// #48: a parameter declared as a component `$ref` is resolved instead of
+// failing the whole parse (a bare `$ref` param used to crash on `missing field name`).
+#[test]
+fn ref_parameter_is_resolved() {
+    vimanam()
+        .arg(REF_PARAMETER)
+        .args(["--detail", "standard"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "| `limit` | query | No | Max results |",
+        ));
+}
+
+// #50: a path item declared as a `$ref` yields its operation instead of being
+// silently dropped.
+#[test]
+fn path_item_ref_yields_operation() {
+    vimanam()
+        .arg(REF_PATH_ITEM)
+        .args(["--detail", "basic"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Things_ListThings"))
+        .stdout(predicate::str::contains("**Operation:** GET /things"));
+}
+
+// #51: OpenAPI 3.1 `type` arrays (e.g. ["string","null"]) parse instead of
+// failing on "invalid type: sequence".
+#[test]
+fn type_array_parameter_parses() {
+    vimanam()
+        .arg(TYPE_ARRAY)
+        .args(["--detail", "standard"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "| `q` | query | No | Search term |",
+        ));
+}
+
+// #56: an operation missing its `responses` block no longer fails the whole
+// document; both operations are still rendered.
+#[test]
+fn operation_missing_responses_still_parses() {
+    vimanam()
+        .arg(MISSING_RESPONSES)
+        .args(["--detail", "basic"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("A_NoResponses"))
+        .stdout(predicate::str::contains("B_HasResponses"));
+}
+
+// #54: an operation-level parameter overrides a path-level one of the same
+// (name, in) — it should appear exactly once.
+#[test]
+fn duplicate_parameter_is_deduplicated() {
+    let output = vimanam()
+        .arg(OVERRIDE_PARAM)
+        .args(["--detail", "standard"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let text = String::from_utf8(output).unwrap();
+    let id_rows = text.matches("| `id` | path |").count();
+    assert_eq!(id_rows, 1, "expected a single `id` row, got {id_rows}");
+    // The operation-level definition wins.
+    assert!(text.contains("Operation-level id wins"));
+}
+
+// #60: an operation tagged with a value not in the declared `tags` list gets its
+// own service section instead of being silently reassigned to the first service.
+#[test]
+fn unknown_operation_tag_keeps_its_own_service() {
+    vimanam()
+        .arg(UNKNOWN_TAG)
+        .args(["--detail", "basic"])
+        .assert()
+        .success()
+        // The undeclared tag Gamma becomes its own service section (under the
+        // bug it would not exist — the endpoint was dumped under Alpha)...
+        .stdout(predicate::str::contains("## Gamma"))
+        .stdout(predicate::str::contains("W_Get"))
+        // ...and the first declared service ends up with no endpoints.
+        .stdout(predicate::str::contains(
+            "## Alpha {#alpha}\n\nNo endpoints found for this service.",
         ));
 }

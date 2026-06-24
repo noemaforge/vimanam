@@ -1,0 +1,19 @@
+{
+  "openapi": "3.1.0",
+  "info": { "title": "Ref Path API", "version": "1.0" },
+  "paths": {
+    "/things": { "$ref": "#/components/pathItems/Shared" }
+  },
+  "components": {
+    "pathItems": {
+      "Shared": {
+        "get": {
+          "tags": ["Things"],
+          "operationId": "Things_ListThings",
+          "summary": "List things",
+          "responses": { "200": { "description": "ok" } }
+        }
+      }
+    }
+  }
+}

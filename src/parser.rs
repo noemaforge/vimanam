@@ -10,8 +10,8 @@ use crate::models::{
     ApiDocumentation, Endpoint, Example, OpenApiSpec, Parameter, Response, Schema, Service,
 };
 use crate::utils::{
-    extract_security_schemes, extract_servers, resolve_parameter_ref, resolve_request_body_ref,
-    resolve_response_ref,
+    extract_security_schemes, extract_servers, resolve_parameter_ref, resolve_path_item_ref,
+    resolve_request_body_ref, resolve_response_ref,
 };
 
 /// Parses an OpenAPI 2.0/3.0 JSON file into the spec-version-agnostic
@@ -28,8 +28,13 @@ pub fn parse_openapi<P: AsRef<Path>>(path: P) -> Result<ApiDocumentation> {
             // Validate the parsed spec
             validate_openapi(&spec, path_ref)?;
 
-            // Extract services and endpoints
-            let services = extract_services(&spec);
+            // Serialize the spec to JSON once so `$ref` resolution can navigate
+            // it without re-serializing the (potentially multi-MB) spec per ref.
+            let spec_json = serde_json::to_value(&spec)
+                .context("Failed to serialize OpenAPI spec for reference resolution")?;
+
+            // Extract services (ref-aware: tags inside `$ref` path items count too)
+            let services = extract_services(&spec, &spec_json);
             debug!("Extracted {} services", services.len());
 
             // Extract servers information
@@ -39,11 +44,6 @@ pub fn parse_openapi<P: AsRef<Path>>(path: P) -> Result<ApiDocumentation> {
             // Extract security schemes
             let security_schemes = extract_security_schemes(&spec);
             debug!("Extracted {} security schemes", security_schemes.len());
-
-            // Serialize the spec to JSON once so `$ref` resolution can navigate
-            // it without re-serializing the (potentially multi-MB) spec per ref.
-            let spec_json = serde_json::to_value(&spec)
-                .context("Failed to serialize OpenAPI spec for reference resolution")?;
 
             let endpoints = extract_endpoints(&spec, &spec_json, &services);
             debug!("Extracted {} endpoints", endpoints.len());
@@ -145,62 +145,89 @@ fn validate_openapi(spec: &OpenApiSpec, path: &Path) -> Result<()> {
 
 /// Derives "services" from spec-level tags, falling back to per-operation
 /// tags, then to a single default `"API"` service.
-fn extract_services(spec: &OpenApiSpec) -> Vec<Service> {
-    // Extract services from tags
+fn extract_services(spec: &OpenApiSpec, spec_json: &serde_json::Value) -> Vec<Service> {
     let mut services = Vec::new();
+    // Names already added, so declared tags and operation tags don't duplicate;
+    // first-appearance order keeps output deterministic.
+    let mut seen: IndexSet<String> = IndexSet::new();
 
+    // Declared tags first, preserving their descriptions and order.
     if let Some(tags) = &spec.tags {
         for tag in tags {
-            services.push(Service {
-                name: tag.name.clone(),
-                description: tag.description.clone(),
-            });
+            if seen.insert(tag.name.clone()) {
+                services.push(Service {
+                    name: tag.name.clone(),
+                    description: tag.description.clone(),
+                });
+            }
         }
     }
 
-    // If no tags, try to infer services from endpoint tags.
-    // IndexSet keeps first-appearance order so output is deterministic.
-    if services.is_empty() {
-        let mut service_names = IndexSet::new();
+    // Union with every tag actually used by an operation — including operations
+    // inside `$ref` path items — so an operation tagged with an undeclared tag
+    // gets its own service instead of being silently reassigned to the first one.
+    for (_, path_item) in &spec.paths {
+        let resolved_path_item;
+        let path_item = if path_item.reference.is_some() {
+            match resolve_path_item_ref(spec_json, path_item) {
+                Some(item) => {
+                    resolved_path_item = item;
+                    &resolved_path_item
+                }
+                None => continue,
+            }
+        } else {
+            path_item
+        };
 
-        for (_, path_item) in &spec.paths {
-            for op in path_item
-                .operations()
-                .into_iter()
-                .filter_map(|(_, op)| op.as_ref())
-            {
-                if let Some(tags) = &op.tags {
-                    for tag in tags {
-                        service_names.insert(tag.clone());
+        for op in path_item
+            .operations()
+            .into_iter()
+            .filter_map(|(_, op)| op.as_ref())
+        {
+            if let Some(tags) = &op.tags {
+                for tag in tags {
+                    if seen.insert(tag.clone()) {
+                        services.push(Service {
+                            name: tag.clone(),
+                            description: None,
+                        });
                     }
                 }
             }
         }
+    }
 
-        // If still no services found, add an "API" default service
-        if service_names.is_empty() {
-            service_names.insert("API".to_string());
-        }
-
-        // Convert IndexSet to Vec of Services
-        for name in service_names {
-            services.push(Service {
-                name,
-                description: None,
-            });
-        }
+    // Fall back to a single default service if the spec declares no tags at all.
+    if services.is_empty() {
+        services.push(Service {
+            name: "API".to_string(),
+            description: None,
+        });
     }
 
     services
 }
 
-/// The service an endpoint is attributed to when its operation declares no
-/// (known) tags: the first declared service, or `"API"` if there are none.
+/// The service an endpoint is attributed to when its operation declares no tags
+/// at all: the first declared service, or `"API"` if there are none.
 fn default_service(services: &[Service]) -> String {
     services
         .first()
         .map(|s| s.name.clone())
         .unwrap_or_else(|| "API".to_string())
+}
+
+/// De-duplicates parameters on `(name, in)`, keeping the last occurrence so an
+/// operation-level parameter overrides a path-level one of the same name and
+/// location (OpenAPI's override rule). First-seen position is preserved.
+fn dedup_parameters(parameters: Vec<Parameter>) -> Vec<Parameter> {
+    let mut by_key: IndexMap<(String, String), Parameter> = IndexMap::new();
+    for parameter in parameters {
+        let key = (parameter.name.clone(), parameter.parameter_in.clone());
+        by_key.insert(key, parameter);
+    }
+    by_key.into_values().collect()
 }
 
 /// Flattens every operation under `paths` into an [`Endpoint`], merging
@@ -217,6 +244,24 @@ fn extract_endpoints(
     let service_map: HashSet<String> = services.iter().map(|s| s.name.clone()).collect();
 
     for (path, path_item) in &spec.paths {
+        // A path item may itself be a `$ref`; resolve it (warn + skip when it
+        // can't be resolved) so its operations aren't silently dropped.
+        let resolved_path_item;
+        let path_item = if path_item.reference.is_some() {
+            match resolve_path_item_ref(spec_json, path_item) {
+                Some(item) => {
+                    resolved_path_item = item;
+                    &resolved_path_item
+                }
+                None => {
+                    warn!("Unresolved $ref for path '{}'; skipping", path);
+                    continue;
+                }
+            }
+        } else {
+            path_item
+        };
+
         // Get parameters defined at the path level and resolve any references
         let path_parameters = path_item
             .parameters
@@ -256,6 +301,10 @@ fn extract_endpoints(
                     }
                 }
 
+                // De-duplicate on (name, in): an operation-level parameter
+                // overrides a path-level one with the same name and location.
+                let mut parameters = dedup_parameters(parameters);
+
                 // Handle request body as a parameter (for OpenAPI 3.0).
                 // Bodies are optional unless the spec says required: true.
                 if let Some(req_body) = &operation.request_body {
@@ -265,6 +314,7 @@ fn extract_endpoints(
                         .unwrap_or_else(|| req_body.clone());
                     if let Some((_, media_type)) = req_body.content.first() {
                         parameters.push(Parameter {
+                            reference: None,
                             name: "requestBody".to_string(),
                             description: req_body.description.clone(),
                             parameter_in: "body".to_string(),

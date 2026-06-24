@@ -1,6 +1,6 @@
 use indexmap::IndexMap;
 
-use crate::models::{OpenApiSpec, Parameter, RequestBody, Response};
+use crate::models::{OpenApiSpec, Parameter, PathItem, RequestBody, Response};
 
 /// Decodes the escape sequences in a JSON Pointer reference token: `~1` → `/`
 /// and `~0` → `~` (RFC 6901). The order matters — `~1` must be decoded before
@@ -53,19 +53,18 @@ pub fn resolve_ref(spec_json: &serde_json::Value, reference: &str) -> Option<ser
     Some(current.clone())
 }
 
-/// Resolves a parameter reference to a concrete parameter
+/// Resolves a parameter that may be a `$ref` into `components/parameters`,
+/// returning the parameter unchanged when it carries no reference. Returns
+/// `None` when a `$ref` is present but cannot be resolved.
 pub fn resolve_parameter_ref(
     spec_json: &serde_json::Value,
     parameter: &Parameter,
 ) -> Option<Parameter> {
-    if let Some(extensions) = parameter.extensions.get("$ref") {
-        if let Some(reference) = extensions.as_str() {
-            if let Some(resolved) = resolve_ref(spec_json, reference) {
-                return serde_json::from_value(resolved).ok();
-            }
-        }
+    if let Some(reference) = &parameter.reference {
+        resolve_ref(spec_json, reference).and_then(|resolved| serde_json::from_value(resolved).ok())
+    } else {
+        Some(parameter.clone())
     }
-    Some(parameter.clone())
 }
 
 /// Resolves a response reference to a concrete response
@@ -97,6 +96,22 @@ pub fn resolve_request_body_ref(
         }
     }
     Some(request_body.clone())
+}
+
+/// Resolves a path item that may be a `$ref` into `components/pathItems`.
+///
+/// Returns `Some(item)` for an inline item (no `$ref`) or a successfully resolved
+/// reference, and `None` only when a `$ref` is present but cannot be resolved — so
+/// the caller can warn and skip rather than silently emitting an empty path item.
+pub fn resolve_path_item_ref(
+    spec_json: &serde_json::Value,
+    path_item: &PathItem,
+) -> Option<PathItem> {
+    match &path_item.reference {
+        None => Some(path_item.clone()),
+        Some(reference) => resolve_ref(spec_json, reference)
+            .and_then(|resolved| serde_json::from_value(resolved).ok()),
+    }
 }
 
 /// Extracts servers from the OpenAPI spec

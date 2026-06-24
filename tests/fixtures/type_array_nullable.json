@@ -1,0 +1,21 @@
+{
+  "openapi": "3.1.0",
+  "info": { "title": "Nullable Type API", "version": "1.0" },
+  "paths": {
+    "/search": {
+      "get": {
+        "tags": ["Search"],
+        "operationId": "Search_Query",
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "description": "Search term",
+            "schema": { "type": ["string", "null"] }
+          }
+        ],
+        "responses": { "200": { "description": "ok" } }
+      }
+    }
+  }
+}
