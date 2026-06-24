@@ -1,0 +1,14 @@
+{
+  "openapi": "3.0.0",
+  "info": { "title": "Unknown Tag API", "version": "1.0" },
+  "tags": [{ "name": "Alpha" }, { "name": "Beta" }],
+  "paths": {
+    "/w": {
+      "get": {
+        "tags": ["Gamma"],
+        "operationId": "W_Get",
+        "responses": { "200": { "description": "ok" } }
+      }
+    }
+  }
+}
