@@ -5,6 +5,13 @@ use std::io::Write;
 const OAS3: &str = "tests/fixtures/petstore_oas3.json";
 const OAS2: &str = "tests/fixtures/petstore_oas2.json";
 
+// Fixtures for ref-aware, tolerant parsing (issues #48, #50, #51, #56, #49).
+const REF_PARAM_BODY: &str = "tests/fixtures/ref_param_and_body.json";
+const REF_PATH_ITEM: &str = "tests/fixtures/ref_path_item.json";
+const TYPE_ARRAY: &str = "tests/fixtures/type_array_nullable.json";
+const MISSING_RESPONSES: &str = "tests/fixtures/missing_responses.json";
+const MULTI_AUTH: &str = "tests/fixtures/multi_auth.json";
+
 fn vimanam() -> Command {
     Command::cargo_bin("vimanam").unwrap()
 }
@@ -181,6 +188,105 @@ fn json_without_openapi_fields_fails() {
     write!(file, "{{\"hello\": \"world\"}}").unwrap();
 
     vimanam().arg(file.path()).assert().failure();
+}
+
+// #48: a parameter declared as a component `$ref` is resolved instead of
+// failing the whole parse (regression — bare `$ref` params used to crash).
+#[test]
+fn ref_parameter_is_resolved() {
+    vimanam()
+        .arg(REF_PARAM_BODY)
+        .args(["--detail", "standard"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "| `limit` | query | No | Max results |",
+        ));
+}
+
+// #48: a requestBody declared as a component `$ref` is resolved.
+#[test]
+fn ref_request_body_is_resolved() {
+    vimanam()
+        .arg(REF_PARAM_BODY)
+        .args(["--detail", "standard"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "| `requestBody` | body | No | Item payload |",
+        ));
+}
+
+// #50: a path item declared as a `$ref` yields its operations instead of being
+// silently dropped.
+#[test]
+fn path_item_ref_yields_operation() {
+    vimanam()
+        .arg(REF_PATH_ITEM)
+        .args(["--detail", "basic"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Things_ListThings"))
+        .stdout(predicate::str::contains("**Operation:** GET /things"));
+}
+
+// #51: OpenAPI 3.1 `type` arrays (e.g. ["string","null"]) parse instead of
+// failing on "invalid type: sequence".
+#[test]
+fn type_array_parameter_parses() {
+    vimanam()
+        .arg(TYPE_ARRAY)
+        .args(["--detail", "standard"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "| `q` | query | No | Search term |",
+        ));
+}
+
+// #56: an operation missing its `responses` block no longer fails the entire
+// document; both operations are still rendered.
+#[test]
+fn operation_missing_responses_still_parses() {
+    vimanam()
+        .arg(MISSING_RESPONSES)
+        .args(["--detail", "basic"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("A_NoResponses"))
+        .stdout(predicate::str::contains("B_HasResponses"));
+}
+
+// #49: all security schemes are listed.
+#[test]
+fn multi_auth_lists_all_schemes() {
+    vimanam()
+        .arg(MULTI_AUTH)
+        .arg("--include-auth")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("alphaAuth"))
+        .stdout(predicate::str::contains("middleAuth"))
+        .stdout(predicate::str::contains("zebraAuth"));
+}
+
+// #49: with multiple security schemes, the Authentication section must come out
+// in a stable order across runs (previously backed by a HashMap).
+#[test]
+fn multi_auth_order_is_deterministic() {
+    let run = || {
+        vimanam()
+            .arg(MULTI_AUTH)
+            .args(["--include-auth", "--detail", "standard"])
+            .output()
+            .unwrap()
+            .stdout
+    };
+
+    let first = run();
+    for _ in 0..4 {
+        assert_eq!(first, run(), "auth section order differed between runs");
+    }
 }
 
 // Output must be byte-identical across runs, even with sorting disabled.

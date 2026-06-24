@@ -546,7 +546,10 @@ fn write_endpoint<W: Write>(
                 writeln!(
                     writer,
                     "| `{}` | {} | {} | {} |",
-                    param.name, param.parameter_in, required_str, desc
+                    param.name(),
+                    param.location(),
+                    required_str,
+                    desc
                 )?;
             }
         }
@@ -570,7 +573,7 @@ fn write_endpoint<W: Write>(
             let body_param = endpoint
                 .parameters
                 .iter()
-                .find(|p| p.parameter_in == "body" && p.schema.is_some());
+                .find(|p| p.location() == "body" && p.schema.is_some());
 
             if let Some(param) = body_param {
                 if let Some(schema) = &param.schema {

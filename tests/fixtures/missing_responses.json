@@ -1,0 +1,20 @@
+{
+  "openapi": "3.0.0",
+  "info": { "title": "Missing Responses API", "version": "1.0" },
+  "paths": {
+    "/a": {
+      "get": {
+        "tags": ["A"],
+        "operationId": "A_NoResponses",
+        "summary": "Operation with no responses block"
+      }
+    },
+    "/b": {
+      "get": {
+        "tags": ["B"],
+        "operationId": "B_HasResponses",
+        "responses": { "200": { "description": "ok" } }
+      }
+    }
+  }
+}

@@ -1,72 +1,124 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
-use crate::models::{OpenApiSpec, Parameter, Response};
+use indexmap::IndexMap;
 
-/// Resolves a JSON reference within the OpenAPI specification
-pub fn resolve_ref(spec: &OpenApiSpec, reference: &str) -> Option<serde_json::Value> {
-    if !reference.starts_with("#/") {
-        return None; // We only support internal references for now
-    }
+use crate::models::{OpenApiSpec, Parameter, PathItem, RequestBody, Response};
 
-    // Remove the #/ prefix
-    let path = &reference[2..];
-    let components = path.split('/');
+/// Maximum `$ref` chain / nesting depth the resolver follows before giving up.
+const MAX_REF_DEPTH: usize = 64;
 
-    // Start with the spec as a JSON value
-    let spec_json = serde_json::to_value(spec).ok()?;
-
-    // Navigate the path
-    let mut current = &spec_json;
-    for component in components {
-        // Handle escaped JSON pointer components
-        let unescaped = component.replace("~1", "/").replace("~0", "~");
-
-        if let Some(obj) = current.as_object() {
-            if let Some(value) = obj.get(&unescaped) {
-                current = value;
-            } else {
-                return None; // Component not found
-            }
-        } else if let Some(arr) = current.as_array() {
-            if let Ok(index) = unescaped.parse::<usize>() {
-                if index < arr.len() {
-                    current = &arr[index];
-                } else {
-                    return None; // Index out of bounds
-                }
-            } else {
-                return None; // Invalid array index
-            }
-        } else {
-            return None; // Cannot navigate further
-        }
-    }
-
-    Some(current.clone())
+/// Resolves internal `$ref`s against a spec serialized to JSON exactly once.
+///
+/// The whole spec is serialized into a single `serde_json::Value` at construction
+/// and shared via `Arc`, so repeated resolution is cheap. (Previously every lookup
+/// re-serialized the entire spec — O(spec_size) per `$ref`.)
+#[derive(Debug, Clone)]
+pub struct Resolver {
+    root: Arc<serde_json::Value>,
 }
 
-/// Resolves a parameter reference to a concrete parameter
-pub fn resolve_parameter_ref(spec: &OpenApiSpec, parameter: &Parameter) -> Option<Parameter> {
-    if let Some(extensions) = parameter.extensions.get("$ref") {
-        if let Some(reference) = extensions.as_str() {
-            if let Some(resolved) = resolve_ref(spec, reference) {
-                return serde_json::from_value(resolved).ok();
-            }
+impl Resolver {
+    /// Serializes the spec once. If serialization somehow fails, the resolver is
+    /// inert and every lookup returns `None`.
+    pub fn new(spec: &OpenApiSpec) -> Self {
+        let root = serde_json::to_value(spec).unwrap_or(serde_json::Value::Null);
+        Resolver {
+            root: Arc::new(root),
         }
     }
-    Some(parameter.clone())
-}
 
-/// Resolves a response reference to a concrete response
-pub fn resolve_response_ref(spec: &OpenApiSpec, response: &Response) -> Option<Response> {
-    if let Some(extensions) = response.extensions.get("$ref") {
-        if let Some(reference) = extensions.as_str() {
-            if let Some(resolved) = resolve_ref(spec, reference) {
-                return serde_json::from_value(resolved).ok();
+    /// Resolves a `#/...` JSON pointer to its target, following `$ref` chains and
+    /// guarding against cycles and runaway depth.
+    pub fn resolve(&self, reference: &str) -> Option<serde_json::Value> {
+        let mut seen = HashSet::new();
+        self.resolve_inner(reference, &mut seen, 0)
+    }
+
+    fn resolve_inner(
+        &self,
+        reference: &str,
+        seen: &mut HashSet<String>,
+        depth: usize,
+    ) -> Option<serde_json::Value> {
+        // Break cycles and bound depth.
+        if depth >= MAX_REF_DEPTH || !seen.insert(reference.to_string()) {
+            return None;
+        }
+
+        let value = self.lookup(reference)?;
+
+        // Follow ref-to-ref chains (e.g. a component that is itself a `$ref`).
+        if let Some(next) = value
+            .as_object()
+            .and_then(|o| o.get("$ref"))
+            .and_then(|r| r.as_str())
+        {
+            return self.resolve_inner(next, seen, depth + 1);
+        }
+
+        Some(value)
+    }
+
+    /// One JSON-pointer navigation step (no chain following).
+    fn lookup(&self, reference: &str) -> Option<serde_json::Value> {
+        let path = reference.strip_prefix("#/")?;
+        let mut current = self.root.as_ref();
+        for component in path.split('/') {
+            // Handle escaped JSON pointer components.
+            let unescaped = component.replace("~1", "/").replace("~0", "~");
+            if let Some(obj) = current.as_object() {
+                current = obj.get(&unescaped)?;
+            } else if let Some(arr) = current.as_array() {
+                let index = unescaped.parse::<usize>().ok()?;
+                current = arr.get(index)?;
+            } else {
+                return None;
             }
         }
+        Some(current.clone())
     }
-    Some(response.clone())
+
+    /// Resolves a parameter that may be a `$ref`; returns it unchanged when inline.
+    pub fn resolve_parameter(&self, parameter: &Parameter) -> Option<Parameter> {
+        match self.ref_target(&parameter.extensions) {
+            Some(resolved) => serde_json::from_value(resolved).ok(),
+            None => Some(parameter.clone()),
+        }
+    }
+
+    /// Resolves a response that may be a `$ref`.
+    pub fn resolve_response(&self, response: &Response) -> Option<Response> {
+        match self.ref_target(&response.extensions) {
+            Some(resolved) => serde_json::from_value(resolved).ok(),
+            None => Some(response.clone()),
+        }
+    }
+
+    /// Resolves a request body that may be a `$ref`.
+    pub fn resolve_request_body(&self, body: &RequestBody) -> Option<RequestBody> {
+        match self.ref_target(&body.extensions) {
+            Some(resolved) => serde_json::from_value(resolved).ok(),
+            None => Some(body.clone()),
+        }
+    }
+
+    /// Resolves a path item that may be a `$ref`.
+    pub fn resolve_path_item(&self, item: &PathItem) -> Option<PathItem> {
+        match self.ref_target(&item.extensions) {
+            Some(resolved) => serde_json::from_value(resolved).ok(),
+            None => Some(item.clone()),
+        }
+    }
+
+    /// If an `extensions` map carries a `$ref`, resolve its target.
+    fn ref_target(
+        &self,
+        extensions: &HashMap<String, serde_json::Value>,
+    ) -> Option<serde_json::Value> {
+        let reference = extensions.get("$ref")?.as_str()?;
+        self.resolve(reference)
+    }
 }
 
 /// Extracts servers from the OpenAPI spec
@@ -110,9 +162,9 @@ pub fn extract_servers(spec: &OpenApiSpec) -> Vec<String> {
     servers
 }
 
-/// Extracts security schemes from the OpenAPI spec
-pub fn extract_security_schemes(spec: &OpenApiSpec) -> HashMap<String, String> {
-    let mut schemes = HashMap::new();
+/// Extracts security schemes from the OpenAPI spec, preserving declaration order.
+pub fn extract_security_schemes(spec: &OpenApiSpec) -> IndexMap<String, String> {
+    let mut schemes = IndexMap::new();
 
     // OpenAPI 3.0+: components.securitySchemes
     if let Some(components) = &spec.components {

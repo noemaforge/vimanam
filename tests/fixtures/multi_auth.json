@@ -1,0 +1,20 @@
+{
+  "openapi": "3.0.0",
+  "info": { "title": "Multi Auth API", "version": "1.0" },
+  "paths": {
+    "/x": {
+      "get": {
+        "tags": ["X"],
+        "operationId": "X_Get",
+        "responses": { "200": { "description": "ok" } }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "zebraAuth": { "type": "apiKey", "name": "X-Zebra", "in": "header", "description": "Zebra" },
+      "alphaAuth": { "type": "http", "scheme": "bearer", "description": "Alpha" },
+      "middleAuth": { "type": "apiKey", "name": "X-Middle", "in": "header", "description": "Middle" }
+    }
+  }
+}

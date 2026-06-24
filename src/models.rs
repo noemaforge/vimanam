@@ -64,6 +64,9 @@ pub struct PathItem {
     pub trace: Option<Operation>,
     #[serde(rename = "parameters", skip_serializing_if = "Option::is_none")]
     pub parameters: Option<Vec<Parameter>>,
+    // Captures a path-item-level `$ref` (and any extensions) so it can be resolved.
+    #[serde(flatten)]
+    pub extensions: HashMap<String, serde_json::Value>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -76,6 +79,8 @@ pub struct Operation {
     pub parameters: Option<Vec<Parameter>>,
     #[serde(rename = "requestBody", skip_serializing_if = "Option::is_none")]
     pub request_body: Option<RequestBody>,
+    // Defaulted so an operation missing `responses` doesn't fail the whole parse.
+    #[serde(default)]
     pub responses: IndexMap<String, Response>,
     pub deprecated: Option<bool>,
     #[serde(rename = "security", skip_serializing_if = "Option::is_none")]
@@ -84,24 +89,65 @@ pub struct Operation {
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct Parameter {
-    pub name: String,
+    // Optional so a bare `{"$ref": ...}` parameter deserializes; the reference
+    // lands in `extensions` and is resolved later.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
     pub description: Option<String>,
-    #[serde(rename = "in")]
-    pub parameter_in: String,
+    #[serde(rename = "in", default, skip_serializing_if = "Option::is_none")]
+    pub parameter_in: Option<String>,
     pub required: Option<bool>,
     pub schema: Option<Schema>,
     #[serde(flatten)]
     pub extensions: HashMap<String, serde_json::Value>,
 }
 
+impl Parameter {
+    /// Parameter name, or `""` when absent (e.g. an unresolved `$ref`).
+    pub fn name(&self) -> &str {
+        self.name.as_deref().unwrap_or_default()
+    }
+
+    /// Parameter location (`query`, `path`, `body`, ...), or `""` when absent.
+    pub fn location(&self) -> &str {
+        self.parameter_in.as_deref().unwrap_or_default()
+    }
+}
+
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct Schema {
-    #[serde(rename = "type", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "type",
+        default,
+        deserialize_with = "deserialize_optional_type",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub schema_type: Option<String>,
     #[serde(rename = "$ref", skip_serializing_if = "Option::is_none")]
     pub reference: Option<String>,
     #[serde(flatten)]
     pub extensions: HashMap<String, serde_json::Value>,
+}
+
+/// Deserializes an OpenAPI `type` field as either a string (2.0/3.0) or an array
+/// of strings (3.1, e.g. `["string", "null"]`), normalizing to the first
+/// non-`"null"` type so the rest of the pipeline can keep treating it as scalar.
+fn deserialize_optional_type<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum TypeField {
+        Single(String),
+        Multi(Vec<String>),
+    }
+
+    Ok(match Option::<TypeField>::deserialize(deserializer)? {
+        None => None,
+        Some(TypeField::Single(s)) => Some(s),
+        Some(TypeField::Multi(types)) => types.into_iter().find(|t| t != "null"),
+    })
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -141,9 +187,13 @@ pub struct Components {
     pub request_bodies: Option<HashMap<String, RequestBody>>,
     pub headers: Option<HashMap<String, Header>>,
     #[serde(rename = "securitySchemes")]
-    pub security_schemes: Option<HashMap<String, SecurityScheme>>,
+    pub security_schemes: Option<IndexMap<String, SecurityScheme>>,
     pub links: Option<HashMap<String, Link>>,
     pub callbacks: Option<HashMap<String, Callback>>,
+    // Capture component buckets we don't model explicitly (e.g. `pathItems`) so
+    // `$ref`s into them still resolve against the serialized spec.
+    #[serde(flatten)]
+    pub extensions: HashMap<String, serde_json::Value>,
 }
 
 // Example struct
@@ -160,8 +210,13 @@ pub struct Example {
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct RequestBody {
     pub description: Option<String>,
+    // Defaulted + `extensions` flatten so a bare `{"$ref": ...}` request body
+    // deserializes instead of failing on the missing `content` field.
+    #[serde(default)]
     pub content: IndexMap<String, MediaType>,
     pub required: Option<bool>,
+    #[serde(flatten)]
+    pub extensions: HashMap<String, serde_json::Value>,
 }
 
 // MediaType struct
@@ -190,6 +245,9 @@ pub struct Encoding {
 pub struct Header {
     pub description: Option<String>,
     pub schema: Option<Schema>,
+    // Same silent-drop shape as path items: capture a `$ref` rather than lose it.
+    #[serde(flatten)]
+    pub extensions: HashMap<String, serde_json::Value>,
 }
 
 // SecurityScheme struct
@@ -229,6 +287,7 @@ pub struct OAuthFlow {
     pub token_url: Option<String>,
     #[serde(rename = "refreshUrl")]
     pub refresh_url: Option<String>,
+    #[serde(default)]
     pub scopes: HashMap<String, String>,
 }
 
@@ -321,5 +380,5 @@ pub struct ApiDocumentation {
     pub services: Vec<Service>,
     pub endpoints: Vec<Endpoint>,
     pub servers: Vec<String>,
-    pub security_schemes: HashMap<String, String>,
+    pub security_schemes: IndexMap<String, String>,
 }

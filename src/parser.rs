@@ -7,9 +7,7 @@ use std::io::{BufReader, Read, Seek, SeekFrom};
 use std::path::Path;
 
 use crate::models::{ApiDocumentation, Endpoint, OpenApiSpec, Parameter, Response, Service};
-use crate::utils::{
-    extract_security_schemes, extract_servers, resolve_parameter_ref, resolve_response_ref,
-};
+use crate::utils::{extract_security_schemes, extract_servers, Resolver};
 
 /// Parses an OpenAPI 2.0/3.0 JSON file into the spec-version-agnostic
 /// [`ApiDocumentation`] intermediate representation. On deserialization
@@ -37,7 +35,10 @@ pub fn parse_openapi<P: AsRef<Path>>(path: P) -> Result<ApiDocumentation> {
             let security_schemes = extract_security_schemes(&spec);
             debug!("Extracted {} security schemes", security_schemes.len());
 
-            let endpoints = extract_endpoints(&spec, &services);
+            // Build the reference resolver once (serializes the spec a single time).
+            let resolver = Resolver::new(&spec);
+
+            let endpoints = extract_endpoints(&spec, &services, &resolver);
             debug!("Extracted {} endpoints", endpoints.len());
 
             Ok(ApiDocumentation {
@@ -191,13 +192,35 @@ fn extract_services(spec: &OpenApiSpec) -> Vec<Service> {
 /// Flattens every operation under `paths` into an [`Endpoint`], merging
 /// path-level and operation-level parameters, resolving `$ref`s, and
 /// representing an OpenAPI 3.0 `requestBody` as a synthetic `body` parameter.
-fn extract_endpoints(spec: &OpenApiSpec, services: &[Service]) -> Vec<Endpoint> {
+fn extract_endpoints(
+    spec: &OpenApiSpec,
+    services: &[Service],
+    resolver: &Resolver,
+) -> Vec<Endpoint> {
     let mut endpoints = Vec::new();
 
     // A map of service names to ensure all endpoints are associated with valid services
     let service_map: HashSet<String> = services.iter().map(|s| s.name.clone()).collect();
 
     for (path, path_item) in &spec.paths {
+        // A path item may itself be a `$ref` to a shared definition; resolve it
+        // (otherwise its operations would be silently dropped).
+        let resolved_path_item;
+        let path_item = if path_item.extensions.contains_key("$ref") {
+            match resolver.resolve_path_item(path_item) {
+                Some(item) => {
+                    resolved_path_item = item;
+                    &resolved_path_item
+                }
+                None => {
+                    warn!("Unresolved $ref for path '{}'; skipping", path);
+                    continue;
+                }
+            }
+        } else {
+            path_item
+        };
+
         let operations = [
             ("get", &path_item.get),
             ("post", &path_item.post),
@@ -216,7 +239,7 @@ fn extract_endpoints(spec: &OpenApiSpec, services: &[Service]) -> Vec<Endpoint> 
             .map(|params| {
                 params
                     .iter()
-                    .filter_map(|p| resolve_parameter_ref(spec, p))
+                    .filter_map(|p| resolver.resolve_parameter(p))
                     .collect::<Vec<_>>()
             })
             .unwrap_or_default();
@@ -256,20 +279,34 @@ fn extract_endpoints(spec: &OpenApiSpec, services: &[Service]) -> Vec<Endpoint> 
 
                 if let Some(op_params) = &operation.parameters {
                     for param in op_params {
-                        if let Some(resolved_param) = resolve_parameter_ref(spec, param) {
+                        if let Some(resolved_param) = resolver.resolve_parameter(param) {
                             parameters.push(resolved_param);
                         }
                     }
                 }
 
                 // Handle request body as a parameter (for OpenAPI 3.0).
+                // The body may be a `$ref`; resolve it first.
                 // Bodies are optional unless the spec says required: true.
                 if let Some(req_body) = &operation.request_body {
+                    let resolved_body;
+                    let req_body = if req_body.extensions.contains_key("$ref") {
+                        match resolver.resolve_request_body(req_body) {
+                            Some(b) => {
+                                resolved_body = b;
+                                &resolved_body
+                            }
+                            None => req_body,
+                        }
+                    } else {
+                        req_body
+                    };
+
                     if let Some((_, media_type)) = req_body.content.first() {
                         parameters.push(Parameter {
-                            name: "requestBody".to_string(),
+                            name: Some("requestBody".to_string()),
                             description: req_body.description.clone(),
-                            parameter_in: "body".to_string(),
+                            parameter_in: Some("body".to_string()),
                             required: Some(req_body.required.unwrap_or(false)),
                             schema: media_type.schema.clone(),
                             extensions: HashMap::new(),
@@ -282,7 +319,8 @@ fn extract_endpoints(spec: &OpenApiSpec, services: &[Service]) -> Vec<Endpoint> 
                     .responses
                     .iter()
                     .map(|(status_code, response)| {
-                        let resolved = resolve_response_ref(spec, response)
+                        let resolved = resolver
+                            .resolve_response(response)
                             .unwrap_or_else(|| response.clone());
                         (status_code.clone(), resolved)
                     })
