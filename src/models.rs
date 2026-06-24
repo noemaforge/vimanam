@@ -38,8 +38,8 @@ pub enum AdditionalProperties {
 }
 
 /// Deserializes an OpenAPI `type` as either a string (2.0/3.0) or an array of
-/// strings (3.1, e.g. `["string", "null"]`), normalizing to the first non-`"null"`
-/// type so the rest of the pipeline can keep treating it as a scalar.
+/// strings (3.1, e.g. `["string", "null"]`), preserving all non-`"null"` types
+/// as a pipe-separated string so union schemas are represented in full.
 fn deserialize_optional_type<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
 where
     D: serde::Deserializer<'de>,
@@ -54,7 +54,14 @@ where
     Ok(match Option::<TypeField>::deserialize(deserializer)? {
         None => None,
         Some(TypeField::Single(s)) => Some(s),
-        Some(TypeField::Multi(types)) => types.into_iter().find(|t| t != "null"),
+        Some(TypeField::Multi(types)) => {
+            let non_null_types: Vec<String> = types.into_iter().filter(|t| t != "null").collect();
+            if non_null_types.is_empty() {
+                None
+            } else {
+                Some(non_null_types.join(" | "))
+            }
+        }
     })
 }
 

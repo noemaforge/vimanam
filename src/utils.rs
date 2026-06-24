@@ -54,17 +54,17 @@ pub fn resolve_ref(spec_json: &serde_json::Value, reference: &str) -> Option<ser
 }
 
 /// Resolves a parameter that may be a `$ref` into `components/parameters`,
-/// returning the parameter unchanged when it carries no reference.
+/// returning the parameter unchanged when it carries no reference. Returns
+/// `None` when a `$ref` is present but cannot be resolved.
 pub fn resolve_parameter_ref(
     spec_json: &serde_json::Value,
     parameter: &Parameter,
 ) -> Option<Parameter> {
     if let Some(reference) = &parameter.reference {
-        if let Some(resolved) = resolve_ref(spec_json, reference) {
-            return serde_json::from_value(resolved).ok();
-        }
+        resolve_ref(spec_json, reference).and_then(|resolved| serde_json::from_value(resolved).ok())
+    } else {
+        Some(parameter.clone())
     }
-    Some(parameter.clone())
 }
 
 /// Resolves a response reference to a concrete response
