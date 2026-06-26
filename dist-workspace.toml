@@ -1,3 +1,12 @@
+# NOTE — GitHub Action pinning:
+# dist emits mutable major tags (actions/checkout@v6, etc.) in the generated
+# .github/workflows/release.yml and does NOT pin to commit SHAs. We hand-pin those to full
+# commit SHAs after generation for supply-chain safety. `allow-dirty = ["ci"]` below tells dist
+# to tolerate the hand-edited workflow (otherwise `dist plan` fails it as "out of date"), and
+# the ci.yml "pin-check" job fails if any action is left unpinned.
+# IMPORTANT: `dist generate` / `dist init` still REWRITE release.yml back to tag pins. After
+# regenerating, re-pin the actions to SHAs — the pin-check job will flag it if you forget.
+
 [workspace]
 members = ["cargo:."]
 
@@ -7,6 +16,9 @@ members = ["cargo:."]
 cargo-dist-version = "0.32.0"
 # CI backends to support
 ci = "github"
+# Tolerate the hand-pinned (commit-SHA) actions in release.yml; see the note at the top of
+# this file. Without this, `dist plan` fails the workflow as out of date.
+allow-dirty = ["ci"]
 # The installers to generate for each app
 installers = ["shell", "powershell", "homebrew"]
 # Publish the Homebrew formula to a self-hosted tap on each release

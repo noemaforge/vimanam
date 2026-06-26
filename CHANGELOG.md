@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- All GitHub Actions across CI and the dist release workflow are now pinned to full commit
+  SHAs, and a `pin-check` CI job enforces it. dist does not SHA-pin its generated workflow, so
+  `release.yml` is hand-pinned after generation; re-running `dist generate` reverts the pins
+  (the `pin-check` job catches it).
+
 ## [0.6.0] - 2026-06-26
 
 ### Added

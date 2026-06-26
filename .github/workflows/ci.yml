@@ -41,3 +41,28 @@ jobs:
           toolchain: "1.85"
 
       - run: cargo build
+
+  pin-check:
+    name: Actions pinned to SHA
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Require all actions to be pinned to a full commit SHA
+        run: |
+          set -euo pipefail
+          # Every `uses:` (except local ./ actions) must be pinned to a 40-char commit SHA.
+          # dist's generated release.yml is hand-pinned post-generation; this guards against a
+          # regeneration silently reverting it to mutable tags.
+          unpinned="$(grep -rEn '^[[:space:]]*-?[[:space:]]*uses:[[:space:]]' .github/workflows \
+            | grep -vE 'uses:[[:space:]]*\./' \
+            | grep -vE 'uses:[[:space:]]*[^@]+@[0-9a-f]{40}([[:space:]]|"|$)' || true)"
+          if [ -n "$unpinned" ]; then
+            echo "::error::These actions are not pinned to a full commit SHA:"
+            echo "$unpinned"
+            echo "Pin like: uses: owner/repo@<40-char-sha> # vX"
+            exit 1
+          fi
+          echo "All workflow actions are SHA-pinned."
