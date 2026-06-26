@@ -173,6 +173,23 @@ A workflow that works well with coding agents: generate the `--detail summary` m
 
 Output is deterministic — the same spec and flags produce byte-identical Markdown — so generated context files diff cleanly in git and don't needlessly invalidate LLM prompt caches.
 
+## Continuous integration
+
+Generate your API docs in CI with the [vimanam GitHub Action](https://github.com/noemaforge/vimanam-action) — it downloads the matching prebuilt binary (no Rust toolchain on the runner), verifies its SHA256 checksum, and runs vimanam:
+
+```yaml
+- uses: noemaforge/vimanam-action@4599a14c84d9d7bce1ec34ed9f12f3036f06b518 # v1
+  with:
+    spec: openapi.json
+    output: docs/api-map.md
+    detail: summary
+
+# Output is deterministic, so this fails CI when the committed docs drift from the spec:
+- run: git diff --exit-code -- docs/api-map.md
+```
+
+Pin the action to a commit SHA, not a mutable tag — see the action's [Pinning](https://github.com/noemaforge/vimanam-action#pinning) notes. More patterns in [`examples/`](https://github.com/noemaforge/vimanam-action/tree/main/examples).
+
 ## Supported OpenAPI Versions
 
 Vimanam supports:
