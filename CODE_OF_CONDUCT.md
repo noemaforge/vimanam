@@ -33,7 +33,7 @@ discussions) and when an individual is representing the project in public spaces
 ## Enforcement
 
 Instances of unacceptable behavior may be reported privately to the project
-maintainer via a [GitHub security advisory](https://github.com/nrynss/vimanam/security/advisories/new)
+maintainer via a [GitHub security advisory](https://github.com/noemaforge/vimanam/security/advisories/new)
 or by contacting [@nrynss](https://github.com/nrynss). All reports will be
 reviewed and handled discreetly. Maintainers are responsible for clarifying
 standards and may take appropriate corrective action in response to behavior

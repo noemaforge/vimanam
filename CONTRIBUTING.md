@@ -9,7 +9,7 @@ Vimanam is a standard Rust (edition 2021) CLI. You need a Rust toolchain; the
 minimum supported version (MSRV) is **1.85**.
 
 ```bash
-git clone https://github.com/nrynss/vimanam.git
+git clone https://github.com/noemaforge/vimanam.git
 cd vimanam
 cargo build
 cargo run -- path/to/spec.json -o out.md

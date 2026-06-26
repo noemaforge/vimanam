@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-06-26
+
+### Added
+
+- Release automation via [`dist`](https://github.com/axodotdev/cargo-dist). Each `v*`
+  tag now also publishes shell + PowerShell install scripts and a Homebrew formula
+  (`brew install noemaforge/tap/vimanam`), and `cargo binstall vimanam` works against
+  the released binaries — alongside the existing crates.io publish and prebuilt
+  archives (#32, #25, #26).
+- `aarch64-unknown-linux-gnu` (ARM64 Linux) release binaries.
+
+### Changed
+
+- Release archives are now `.tar.xz` named `vimanam-<target-triple>` (dist's
+  convention) and additionally bundle `CHANGELOG.md`; previously `.tar.gz` named
+  `vimanam-<version>-<target-triple>`. Checksums (`.sha256`) and a combined
+  `sha256.sum` are still published.
+- crates.io publishing moved from the old hand-rolled release workflow to a dedicated
+  `publish-crate.yml`, since `dist` does not publish to crates.io.
+
 ## [0.5.1] - 2026-06-24
 
 ### Fixed
@@ -191,12 +211,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Initial release: OpenAPI 2.0 (Swagger) JSON to Markdown with grouping,
   filtering, sorting, and detail levels
 
-[0.5.1]: https://github.com/nrynss/vimanam/compare/v0.5.0...v0.5.1
-[0.5.0]: https://github.com/nrynss/vimanam/compare/v0.4.0...v0.5.0
-[0.4.0]: https://github.com/nrynss/vimanam/compare/v0.3.0...v0.4.0
-[0.3.0]: https://github.com/nrynss/vimanam/compare/v0.2.2...v0.3.0
-[0.2.2]: https://github.com/nrynss/vimanam/compare/v0.2.1...v0.2.2
-[0.2.1]: https://github.com/nrynss/vimanam/compare/v0.2.0...v0.2.1
-[0.2.0]: https://github.com/nrynss/vimanam/compare/v0.1.1...v0.2.0
-[0.1.1]: https://github.com/nrynss/vimanam/compare/v0.1.0...v0.1.1
-[0.1.0]: https://github.com/nrynss/vimanam/releases/tag/v0.1.0
+[0.6.0]: https://github.com/noemaforge/vimanam/compare/v0.5.1...v0.6.0
+[0.5.1]: https://github.com/noemaforge/vimanam/compare/v0.5.0...v0.5.1
+[0.5.0]: https://github.com/noemaforge/vimanam/compare/v0.4.0...v0.5.0
+[0.4.0]: https://github.com/noemaforge/vimanam/compare/v0.3.0...v0.4.0
+[0.3.0]: https://github.com/noemaforge/vimanam/compare/v0.2.2...v0.3.0
+[0.2.2]: https://github.com/noemaforge/vimanam/compare/v0.2.1...v0.2.2
+[0.2.1]: https://github.com/noemaforge/vimanam/compare/v0.2.0...v0.2.1
+[0.2.0]: https://github.com/noemaforge/vimanam/compare/v0.1.1...v0.2.0
+[0.1.1]: https://github.com/noemaforge/vimanam/compare/v0.1.0...v0.1.1
+[0.1.0]: https://github.com/noemaforge/vimanam/releases/tag/v0.1.0
