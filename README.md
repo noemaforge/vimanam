@@ -27,19 +27,40 @@ Besides producing documentation for humans, Vimanam is built for **feeding API s
 
 ## Installation
 
-### From crates.io (recommended)
+### Homebrew (macOS / Linux)
 
 ```bash
-cargo install vimanam
+brew install noemaforge/tap/vimanam
+```
+
+No Rust toolchain required. Supports macOS (Apple Silicon & Intel) and x86_64 Linux.
+
+### Install script (no toolchain)
+
+```bash
+# macOS / Linux
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/noemaforge/vimanam/releases/latest/download/vimanam-installer.sh | sh
+```
+
+```powershell
+# Windows (PowerShell)
+powershell -ExecutionPolicy ByPass -c "irm https://github.com/noemaforge/vimanam/releases/latest/download/vimanam-installer.ps1 | iex"
+```
+
+### From crates.io
+
+```bash
+cargo binstall vimanam   # prebuilt binary, no compile (needs cargo-binstall)
+cargo install vimanam    # builds from source
 ```
 
 ### Prebuilt binaries
 
 Download the archive for your platform (Linux, macOS Intel/ARM64, Windows) from the
-[latest release](https://github.com/nrynss/vimanam/releases/latest) — no Rust toolchain needed.
-Archives are named `vimanam-<version>-<target-triple>.tar.gz` (`.zip` on Windows) and ship with
-a matching `.sha256` checksum; each bundles the binary, `README.md`, and `LICENSE`. Extract it and
-put the `vimanam` binary on your `PATH`.
+[latest release](https://github.com/noemaforge/vimanam/releases/latest) — no Rust toolchain needed.
+Archives are named `vimanam-<target-triple>.tar.xz` (`.zip` on Windows) and ship with a matching
+`.sha256` checksum; each bundles the binary, `README.md`, `CHANGELOG.md`, and `LICENSE`. Extract it
+and put the `vimanam` binary on your `PATH`.
 
 ### From source
 
@@ -47,7 +68,7 @@ Requires [Rust](https://www.rust-lang.org/tools/install) 1.85.0 or later.
 
 ```bash
 # Clone repository
-git clone https://github.com/nrynss/vimanam.git
+git clone https://github.com/noemaforge/vimanam.git
 cd vimanam
 
 # Run directly without building (development)

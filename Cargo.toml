@@ -7,7 +7,8 @@ authors = ["Narayan SS <nrynss@users.noreply.github.com>"]
 description = "OpenAPI/Swagger to Markdown documentation generator with grouping, filtering, and detail levels for docs and LLM context"
 license = "Apache-2.0"
 readme = "README.md"
-repository = "https://github.com/nrynss/vimanam"
+repository = "https://github.com/noemaforge/vimanam"
+homepage = "https://github.com/noemaforge/vimanam"
 keywords = ["openapi", "swagger", "markdown", "documentation", "cli"]
 categories = ["command-line-utilities", "development-tools"]
 
@@ -37,3 +38,8 @@ env_logger = "0.11"
 assert_cmd = "2.2"
 predicates = "3.1"
 tempfile = "3.27"
+
+# The profile that 'dist' will build with
+[profile.dist]
+inherits = "release"
+lto = "thin"
