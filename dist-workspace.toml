@@ -1,3 +1,11 @@
+# NOTE — GitHub Action pinning:
+# dist does NOT pin the actions in the generated .github/workflows/release.yml to commit SHAs;
+# it emits mutable major tags (actions/checkout@v6, etc.). We hand-pin those to full commit
+# SHAs after generation for supply-chain safety, and CI (.github/workflows/ci.yml, job
+# "pin-check") fails if any action is left unpinned.
+# IMPORTANT: re-running `dist generate` / `dist init` REVERTS release.yml to tag pins. After
+# regenerating, re-pin the actions to SHAs — the pin-check job will flag it if you forget.
+
 [workspace]
 members = ["cargo:."]
 
