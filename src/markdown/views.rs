@@ -221,7 +221,8 @@ pub(super) fn generate_by_service<W: Write>(
                 for endpoint in sorted_ops {
                     // Extract a shorter title for the TOC entry
                     let op_title = get_short_title(endpoint);
-                    let op_anchor = clean_for_id(&op_title);
+                    // Use method + path for anchor to avoid collisions
+                    let op_anchor = clean_for_id(&format!("{} {}", endpoint.method, endpoint.path));
                     writeln!(writer, "  * [{}](#{op_anchor})", op_title)?;
                 }
             }
@@ -350,7 +351,8 @@ pub(super) fn generate_by_path<W: Write>(
             sort_endpoints(&mut sorted_ops, &config.sort_method);
             for endpoint in sorted_ops {
                 let op_title = get_short_title(endpoint);
-                let op_anchor = clean_for_id(&op_title);
+                // Use method + path for anchor to avoid collisions
+                let op_anchor = clean_for_id(&format!("{} {}", endpoint.method, endpoint.path));
                 writeln!(writer, "  * [{}](#{op_anchor})", op_title)?;
             }
         }
