@@ -144,7 +144,7 @@ pub fn build_config(cli: &Cli) -> DocConfig {
         cli.group_by.into()
     };
 
-    DocConfig {
+    let config = DocConfig {
         group_by,
         service_filter: cli.service_filter.clone(),
         path_filter: cli.path_filter.clone(),
@@ -163,5 +163,21 @@ pub fn build_config(cli: &Cli) -> DocConfig {
         include_toc: !cli.no_toc,
         sort_method: cli.sort.into(),
         max_tokens: cli.max_tokens,
+    };
+
+    // Warn if --include-schemas or --include-examples is set but detail is not Full
+    if config.include_schemas && config.detail_level != DetailLevel::Full {
+        eprintln!(
+            "vimanam: --include-schemas has no effect at --detail {:?}; use --detail full.",
+            cli.detail
+        );
     }
+    if config.include_examples && config.detail_level != DetailLevel::Full {
+        eprintln!(
+            "vimanam: --include-examples has no effect at --detail {:?}; use --detail full.",
+            cli.detail
+        );
+    }
+
+    config
 }
