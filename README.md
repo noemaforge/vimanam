@@ -16,7 +16,7 @@ Besides producing documentation for humans, Vimanam is built for **feeding API s
 - Filter by service, path, or method
 - Multiple detail levels (summary, basic, standard, full)
 - Token-budget-aware output (`--max-tokens`): steps the detail level down until the rendering fits, and reports what was trimmed on stderr
-- Schema expansion at `--detail full --include-schemas`: resolves `$ref`s (with cycle detection) and renders request/response schemas as nested field tables
+- Schema expansion at `--detail full --include-schemas`: renders request/response schemas as nested field tables. Shared component schemas are expanded once into a trailing "Schema Definitions" section and linked from each use site, keeping output compact when schemas are reused across endpoints; `--inline-schemas` instead expands every `$ref` inline at each use site (larger, fully self-contained, with cycle detection)
 - Example rendering at `--detail full --include-examples`: emits request/response examples as fenced JSON blocks, resolving `$ref`s into `components/examples`
 - Server URL information extraction and documentation
 - Authentication and security schemes documentation
@@ -136,6 +136,7 @@ Options:
       --required-only                      Only show required parameters
       --detail <summary|basic|standard|full> Control amount of information [default: summary]
       --include-schemas                    Include request/response schemas
+      --inline-schemas                     Fully inline every $ref schema instead of linking to a shared "Schema Definitions" section
       --include-examples                   Include request/response examples
       --include-auth                       Show authentication requirements and server URLs
       --no-toc                             Skip table of contents

@@ -1,0 +1,31 @@
+{
+  "openapi": "3.0.0",
+  "info": {
+    "title": "Multi Tag API",
+    "version": "1.0.0"
+  },
+  "tags": [
+    { "name": "Pets", "description": "Pet operations" },
+    { "name": "Admin", "description": "Administrative operations" }
+  ],
+  "paths": {
+    "/pets/{petId}": {
+      "delete": {
+        "tags": ["Pets", "Admin"],
+        "summary": "Delete a pet",
+        "operationId": "DeletePet",
+        "parameters": [
+          {
+            "name": "petId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "204": { "description": "Deleted" }
+        }
+      }
+    }
+  }
+}

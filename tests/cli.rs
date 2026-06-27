@@ -11,6 +11,7 @@ const OAS3_EXAMPLES: &str = "tests/fixtures/examples_oas3.json";
 const OAS3_REF_BODY: &str = "tests/fixtures/ref_request_body_oas3.json";
 
 // Parse-layer correctness cluster (issues #48, #50, #51, #54, #56, #60).
+const MULTI_TAG: &str = "tests/fixtures/multi_tag_oas3.json";
 const REF_PARAMETER: &str = "tests/fixtures/ref_parameter.json";
 const REF_PATH_ITEM: &str = "tests/fixtures/ref_path_item.json";
 const TYPE_ARRAY: &str = "tests/fixtures/type_array_nullable.json";
@@ -271,14 +272,89 @@ fn output_is_deterministic() {
     }
 }
 
+// By default (#58) component schemas are linked from their use site and expanded
+// once in a trailing "Schema Definitions" section, rather than re-inlined.
 #[test]
-fn full_detail_expands_schema_refs_into_tables() {
+fn full_detail_links_schema_refs_to_definitions() {
     vimanam()
         .arg(OAS3_SCHEMA_REFS)
         .args(["--detail", "full", "--include-schemas"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("#### Request Schema"))
+        // The use site is a single linked row, not a re-inlined subtree.
+        .stdout(predicate::str::contains(
+            "| `request` | [CreatePetRequest](#schema-createpetrequest) | - | - |",
+        ))
+        .stdout(predicate::str::contains(
+            "| `response` | [Pet](#schema-pet) | - | - |",
+        ))
+        // The shared schemas are expanded once in the definitions section.
+        .stdout(predicate::str::contains("## Schema Definitions"))
+        .stdout(predicate::str::contains(
+            "### CreatePetRequest {#schema-createpetrequest}",
+        ))
+        .stdout(predicate::str::contains(
+            "| `CreatePetRequest.name` | string | Yes | Pet name |",
+        ))
+        .stdout(predicate::str::contains(
+            "| `CreatePetRequest.category` | [Category](#schema-category) | Yes |",
+        ))
+        .stdout(predicate::str::contains(
+            "| `Category.id` | string | Yes | Category identifier |",
+        ))
+        .stdout(predicate::str::contains(
+            "| `Pet.allOf[1].id` | string | Yes | Pet identifier |",
+        ));
+}
+
+// CreatePetRequest is referenced from the /pets request body and again from
+// Pet's `allOf`; it must be expanded exactly once (the #58 win).
+#[test]
+fn shared_schema_is_expanded_once() {
+    let output = String::from_utf8(
+        vimanam()
+            .arg(OAS3_SCHEMA_REFS)
+            .args(["--detail", "full", "--include-schemas"])
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .unwrap();
+
+    let definitions = output
+        .matches("### CreatePetRequest {#schema-createpetrequest}")
+        .count();
+    assert_eq!(
+        definitions, 1,
+        "CreatePetRequest expanded {definitions} times"
+    );
+}
+
+// A self-referential schema (Node.next -> Node) renders once and links back to
+// itself instead of looping or printing a "cycle detected" row.
+#[test]
+fn linked_mode_handles_self_reference_with_a_link() {
+    vimanam()
+        .arg(OAS3_SCHEMA_REFS)
+        .args(["--detail", "full", "--include-schemas"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("### Node {#schema-node}"))
+        .stdout(predicate::str::contains(
+            "| `Node.next` | [Node](#schema-node) | No |",
+        ))
+        .stdout(predicate::str::contains("Cycle detected").not());
+}
+
+// `--inline-schemas` restores the fully self-contained output: every `$ref` is
+// expanded inline at each use site, with no shared definitions section.
+#[test]
+fn inline_schemas_expands_refs_at_each_use_site() {
+    vimanam()
+        .arg(OAS3_SCHEMA_REFS)
+        .args(["--detail", "full", "--include-schemas", "--inline-schemas"])
+        .assert()
+        .success()
         .stdout(predicate::str::contains(
             "| `request.name` | string | Yes | Pet name |",
         ))
@@ -288,7 +364,81 @@ fn full_detail_expands_schema_refs_into_tables() {
         .stdout(predicate::str::contains(
             "| `response.allOf[1].id` | string | Yes | Pet identifier |",
         ))
-        .stdout(predicate::str::contains("request.variant.oneOf[0]"));
+        .stdout(predicate::str::contains("request.variant.oneOf[0]"))
+        .stdout(predicate::str::contains("## Schema Definitions").not());
+}
+
+// #69 follow-up: the "no effect" warning reports the current detail level in the
+// same lowercase spelling the user types (`standard`), not the Debug-derived
+// `Standard`.
+#[test]
+fn include_schemas_warning_uses_lowercase_detail_name() {
+    vimanam()
+        .arg(OAS3)
+        .args(["--detail", "standard", "--include-schemas"])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains(
+            "--include-schemas has no effect at --detail standard; use --detail full.",
+        ));
+}
+
+// At `--detail full` the flag takes effect, so no warning is emitted.
+#[test]
+fn include_schemas_at_full_detail_emits_no_warning() {
+    vimanam()
+        .arg(OAS3)
+        .args(["--detail", "full", "--include-schemas"])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("no effect").not());
+}
+
+// `--inline-schemas` only changes how schemas render, so it warns when used
+// without `--include-schemas`.
+#[test]
+fn inline_schemas_without_include_schemas_warns() {
+    vimanam()
+        .arg(OAS3)
+        .args(["--detail", "full", "--inline-schemas"])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains(
+            "--inline-schemas has no effect without --include-schemas.",
+        ));
+}
+
+// #70 follow-up: an operation carrying multiple tags is rendered under each
+// service section, so its heading anchor must be scoped per service to stay
+// unique — and each TOC link must point at the matching copy.
+#[test]
+fn multi_tag_endpoint_gets_unique_anchors_per_service() {
+    let output = String::from_utf8(
+        vimanam()
+            .arg(MULTI_TAG)
+            .args(["--detail", "basic"])
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .unwrap();
+
+    // Distinct, service-scoped heading anchors (no duplicate `#delete-pets-petid`).
+    assert!(
+        output.contains("### DeletePet {#pets-delete-pets-petid}"),
+        "missing Pets-scoped anchor:\n{output}"
+    );
+    assert!(
+        output.contains("### DeletePet {#admin-delete-pets-petid}"),
+        "missing Admin-scoped anchor:\n{output}"
+    );
+
+    // Each TOC entry links to the copy under its own service.
+    assert!(
+        output.contains("* [DeletePet](#pets-delete-pets-petid)")
+            && output.contains("* [DeletePet](#admin-delete-pets-petid)"),
+        "TOC links do not match per-service anchors:\n{output}"
+    );
 }
 
 // Regression test for #16: the Authentication section is emitted in spec
@@ -448,8 +598,11 @@ fn ref_request_body_is_resolved() {
         .args(["--detail", "full", "--include-schemas"])
         .assert()
         .success()
+        // The resolved body schema is linked and expanded in the definitions
+        // section.
+        .stdout(predicate::str::contains("## Schema Definitions"))
         .stdout(predicate::str::contains(
-            "| `request.name` | string | Yes | Pet name |",
+            "| `Pet.name` | string | Yes | Pet name |",
         ));
 }
 
@@ -501,11 +654,13 @@ fn max_tokens_keeps_detail_when_it_fits() {
         .stderr(predicate::str::is_empty());
 }
 
+// Under `--inline-schemas` the recursive expansion still guards against `$ref`
+// cycles, breaking the chain with a "cycle detected" row.
 #[test]
-fn full_detail_schema_expansion_detects_ref_cycles() {
+fn inline_schema_expansion_detects_ref_cycles() {
     vimanam()
         .arg(OAS3_SCHEMA_REFS)
-        .args(["--detail", "full", "--include-schemas"])
+        .args(["--detail", "full", "--include-schemas", "--inline-schemas"])
         .assert()
         .success()
         .stdout(predicate::str::contains(
