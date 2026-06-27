@@ -1,10 +1,18 @@
 //! Renders request/response schemas as nested field tables at `--detail full
-//! --include-schemas`, resolving `$ref`s (with cycle detection).
+//! --include-schemas`.
+//!
+//! By default each component schema reached through a `$ref` is expanded once
+//! into a trailing "Schema Definitions" section and linked from every use site,
+//! so a schema shared across many endpoints (or referenced many times within
+//! one) is not re-inlined at each occurrence (issue #58). `--inline-schemas`
+//! restores the fully self-contained behaviour, expanding every `$ref` inline at
+//! each use site (with per-chain cycle detection).
 
 use std::collections::HashSet;
 use std::io::Write;
 
 use anyhow::Result;
+use indexmap::IndexMap;
 
 use crate::models::{ApiDocumentation, Response, Schema};
 use crate::utils::{clean_for_id, decode_json_pointer_token};
@@ -17,72 +25,60 @@ struct SchemaRow {
     description: String,
 }
 
-/// Context for schema expansion with memoization.
+/// Document-level state for schema rendering.
 ///
-/// This struct holds all the state needed for schema expansion, including:
-/// - Track expanded schema references to avoid re-expansion
-/// - Manage anchor generation for cross-references
-/// - Store configuration (depth limit, cycle detection)
-/// - Collect rows for the current table
-pub struct SchemaContext<'a> {
-    /// Document being rendered (for resolving $refs)
+/// In the default (linked) mode, each component schema reached through a `$ref`
+/// is rendered once in the trailing "Schema Definitions" section and linked from
+/// every use site. The context records which references have been seen and the
+/// stable anchor assigned to each, in first-encounter order.
+pub(super) struct SchemaContext<'a> {
     doc: &'a ApiDocumentation,
-    
-    /// Set of already-expanded schema references
-    expanded_refs: HashSet<String>,
-    
-    /// Deferred schemas to render at the end of the document
-    deferred_schemas: Vec<(String, String, Schema)>, // (anchor, name, schema)
+    /// When true, expand every `$ref` inline instead of linking (the fully
+    /// self-contained mode).
+    inline: bool,
+    /// Reference (e.g. `#/components/schemas/Pet`) -> anchor, in first-seen order.
+    anchors: IndexMap<String, String>,
+    /// Anchors already handed out, so colliding name slugs get a unique suffix.
+    used_anchors: HashSet<String>,
 }
 
 impl<'a> SchemaContext<'a> {
-    /// Create a new SchemaContext for document-level memoization
-    pub fn new(doc: &'a ApiDocumentation) -> Self {
+    pub(super) fn new(doc: &'a ApiDocumentation, inline: bool) -> Self {
         Self {
             doc,
-            expanded_refs: HashSet::new(),
-            deferred_schemas: Vec::new(),
+            inline,
+            anchors: IndexMap::new(),
+            used_anchors: HashSet::new(),
         }
     }
-    
-    /// Check if a reference has already been expanded
-    pub fn is_expanded(&self, reference: &str) -> bool {
-        self.expanded_refs.contains(reference)
+
+    /// The documentation being rendered, for callers that need it alongside the
+    /// context (e.g. example resolution).
+    pub(super) fn doc(&self) -> &'a ApiDocumentation {
+        self.doc
     }
-    
-    /// Mark a reference as expanded and add to deferred schemas
-    pub fn mark_expanded(&mut self, reference: String, schema: &Schema) {
-        if self.expanded_refs.contains(&reference) {
-            return; // Already expanded
+
+    /// Registers a component reference for deferred rendering (if not already
+    /// seen) and returns its stable, collision-free anchor.
+    fn register(&mut self, reference: &str) -> String {
+        if let Some(anchor) = self.anchors.get(reference) {
+            return anchor.clone();
         }
-        
-        self.expanded_refs.insert(reference.clone());
-        
-        // Generate anchor and name for deferred rendering
-        let name = reference.rsplit('/').next().unwrap_or(&reference);
-        let clean_name = decode_json_pointer_token(name);
-        let anchor = format!("schema-{}", clean_for_id(&clean_name));
-        
-        // Store the schema for later rendering
-        self.deferred_schemas.push((anchor, clean_name, schema.clone()));
-    }
-    
-    /// Generate a unique anchor for a schema reference
-    pub fn anchor_for_ref(&self, reference: &str) -> String {
-        let name = reference.rsplit('/').next().unwrap_or(reference);
-        let clean_name = decode_json_pointer_token(name);
-        format!("schema-{}", clean_for_id(&clean_name))
-    }
-    
-    /// Generate a display name for a schema reference
-    pub fn display_name_for_ref(&self, reference: &str) -> String {
-        let name = reference.rsplit('/').next().unwrap_or(reference);
-        decode_json_pointer_token(name)
-    }
-    
-    /// Get the deferred schemas for rendering
-    pub fn take_deferred_schemas(&mut self) -> Vec<(String, String, Schema)> {
-        std::mem::take(&mut self.deferred_schemas)
+
+        let base = format!(
+            "schema-{}",
+            clean_for_id(&short_schema_reference(reference))
+        );
+        let mut anchor = base.clone();
+        let mut suffix = 2;
+        while self.used_anchors.contains(&anchor) {
+            anchor = format!("{base}-{suffix}");
+            suffix += 1;
+        }
+
+        self.used_anchors.insert(anchor.clone());
+        self.anchors.insert(reference.to_string(), anchor.clone());
+        anchor
     }
 }
 
@@ -99,130 +95,88 @@ pub(super) fn response_schema(response: &Response) -> Option<&Schema> {
         .and_then(|content| content.values().find_map(|media| media.schema.as_ref()))
 }
 
-/// Writes a Markdown table of the fields of `schema`, expanding nested objects,
-/// arrays, and `$ref`s. `root_label` names the top-level row (e.g. `request`).
-///
-/// This is the original function without memoization, kept for backward compatibility.
+/// Writes a Markdown field table for `schema`. `root_label` names the top-level
+/// row (e.g. `request`). Component `$ref`s are linked through `ctx` (or inlined
+/// under `--inline-schemas`).
 pub(super) fn write_schema_table<W: Write>(
     writer: &mut W,
     schema: &Schema,
-    doc: &ApiDocumentation,
     root_label: &str,
+    ctx: &mut SchemaContext,
 ) -> Result<()> {
     let mut rows = Vec::new();
     let mut ref_stack = Vec::new();
-    collect_schema_rows(schema, doc, root_label, None, &mut rows, &mut ref_stack, 0);
-
-    if rows.is_empty() {
-        writeln!(writer, "*No schema fields available*")?;
-        return Ok(());
-    }
-
-    writeln!(writer, "| Field | Type | Required | Description |")?;
-    writeln!(writer, "|------|------|---------:|-------------|")?;
-    for row in rows {
-        writeln!(
-            writer,
-            "| `{}` | {} | {} | {} |",
-            row.field,
-            escape_table_cell(&row.type_name),
-            row.required,
-            escape_table_cell(&row.description)
-        )?;
-    }
-
-    Ok(())
+    collect_schema_rows(schema, root_label, None, &mut rows, &mut ref_stack, 0, ctx);
+    write_rows(writer, &rows)
 }
 
-/// Writes a Markdown table of the fields of `schema` with memoization support.
-/// Uses the provided context to track and avoid re-expanding shared schemas.
-/// `root_label` names the top-level row (e.g. `request`).
-pub(super) fn write_schema_table_with_context<W: Write>(
+/// Renders the trailing "Schema Definitions" section: every component schema
+/// linked during the document body, each expanded once. Expanding a definition
+/// may link further components, which are appended and rendered in turn. Writes
+/// nothing in `--inline-schemas` mode or when no schema was linked.
+pub(super) fn render_schema_definitions<W: Write>(
     writer: &mut W,
-    schema: &Schema,
-    doc: &ApiDocumentation,
-    root_label: &str,
-    context: &mut SchemaContext,
+    ctx: &mut SchemaContext,
 ) -> Result<()> {
-    let mut rows = Vec::new();
-    let mut ref_stack = Vec::new();
-    
-    collect_schema_rows_with_memo(
-        schema, doc, root_label, None, 
-        &mut rows, &mut ref_stack, 0, context
-    );
-
-    if rows.is_empty() {
-        writeln!(writer, "*No schema fields available*")?;
+    if ctx.inline || ctx.anchors.is_empty() {
         return Ok(());
     }
 
-    writeln!(writer, "| Field | Type | Required | Description |")?;
-    writeln!(writer, "|------|------|---------:|-------------|")?;
-    for row in rows {
-        writeln!(
-            writer,
-            "| `{}` | {} | {} | {} |",
-            row.field,
-            escape_table_cell(&row.type_name),
-            row.required,
-            escape_table_cell(&row.description)
-        )?;
-    }
-
-    Ok(())
-}
-
-/// Renders all deferred schemas at the end of the document.
-/// This should be called once at the end of the document to render all
-/// the schema definitions that were referenced via links.
-pub(super) fn render_deferred_schemas<W: Write>(
-    writer: &mut W,
-    context: &mut SchemaContext,
-) -> Result<()> {
-    let deferred_schemas = context.take_deferred_schemas();
-    
-    if deferred_schemas.is_empty() {
-        return Ok(());
-    }
-
-    writeln!(writer, "\n---\n")?;
+    let doc = ctx.doc;
     writeln!(writer, "## Schema Definitions\n")?;
 
-    for (anchor, name, schema) in deferred_schemas {
+    // The map grows while we render (a definition can link new components), so
+    // walk it by index until the tail stops moving. Insertion order keeps the
+    // section deterministic.
+    let mut index = 0;
+    while index < ctx.anchors.len() {
+        let (reference, anchor) = {
+            let (reference, anchor) = ctx.anchors.get_index(index).expect("index in range");
+            (reference.clone(), anchor.clone())
+        };
+        index += 1;
+
+        let name = short_schema_reference(&reference);
         writeln!(writer, "### {} {{#{}}}", name, anchor)?;
-        writeln!(writer)?;
-        
-        // Render this schema's table
+
         let mut rows = Vec::new();
         let mut ref_stack = Vec::new();
-        
-        // Create a temporary context for this schema to avoid cycles
-        let mut temp_context = SchemaContext::new(context.doc);
-        temp_context.expanded_refs = context.expanded_refs.clone();
-        
-        collect_schema_rows_with_memo(
-            &schema, context.doc, &name, None,
-            &mut rows, &mut ref_stack, 0, &mut temp_context
-        );
-        
-        if rows.is_empty() {
-            writeln!(writer, "*No schema fields available*")?;
-        } else {
-            writeln!(writer, "| Field | Type | Required | Description |")?;
-            writeln!(writer, "|------|------|---------:|-------------|")?;
-            for row in rows {
-                writeln!(
-                    writer,
-                    "| `{}` | {} | {} | {} |",
-                    row.field,
-                    escape_table_cell(&row.type_name),
-                    row.required,
-                    escape_table_cell(&row.description)
-                )?;
+        match resolve_schema_reference(&reference, doc) {
+            Some(resolved) => {
+                collect_schema_rows(resolved, &name, None, &mut rows, &mut ref_stack, 0, ctx)
             }
+            None => rows.push(SchemaRow {
+                field: name.clone(),
+                type_name: "unknown".to_string(),
+                required: "-".to_string(),
+                description: format!("Unresolved schema reference: {reference}"),
+            }),
         }
+
+        write_rows(writer, &rows)?;
         writeln!(writer)?;
+    }
+
+    Ok(())
+}
+
+fn write_rows<W: Write>(writer: &mut W, rows: &[SchemaRow]) -> Result<()> {
+    if rows.is_empty() {
+        writeln!(writer, "*No schema fields available*")?;
+        return Ok(());
+    }
+
+    writeln!(writer, "| Field | Type | Required | Description |")?;
+    writeln!(writer, "|------|------|---------:|-------------|")?;
+    for row in rows {
+        writeln!(
+            writer,
+            "| `{}` | {} | {} | {} |",
+            row.field,
+            escape_table_cell(&row.type_name),
+            row.required,
+            escape_table_cell(&row.description)
+        )?;
     }
 
     Ok(())
@@ -230,12 +184,12 @@ pub(super) fn render_deferred_schemas<W: Write>(
 
 fn collect_schema_rows(
     schema: &Schema,
-    doc: &ApiDocumentation,
     field: &str,
     required: Option<bool>,
     rows: &mut Vec<SchemaRow>,
     ref_stack: &mut Vec<String>,
     depth: usize,
+    ctx: &mut SchemaContext,
 ) {
     const MAX_DEPTH: usize = 24;
 
@@ -250,28 +204,52 @@ fn collect_schema_rows(
     }
 
     if let Some(reference) = &schema.reference {
-        if ref_stack.contains(reference) {
+        let doc = ctx.doc;
+
+        if ctx.inline {
+            // Fully self-contained mode: expand inline, guarding against cycles
+            // on the current expansion chain.
+            if ref_stack.contains(reference) {
+                rows.push(SchemaRow {
+                    field: field.to_string(),
+                    type_name: format!("ref {}", short_schema_reference(reference)),
+                    required: required_to_string(required).to_string(),
+                    description: "Cycle detected while expanding schema reference".to_string(),
+                });
+                return;
+            }
+
+            if let Some(resolved) = resolve_schema_reference(reference, doc) {
+                ref_stack.push(reference.clone());
+                collect_schema_rows(resolved, field, required, rows, ref_stack, depth + 1, ctx);
+                ref_stack.pop();
+                return;
+            }
+        } else if let Some(resolved) = resolve_schema_reference(reference, doc) {
+            // Linked mode: emit one row pointing at the shared definition and
+            // register it for rendering. Self- and mutual references resolve to
+            // a link, so there is no cycle to guard against.
+            let name = short_schema_reference(reference);
+            let description = resolved
+                .description
+                .clone()
+                .unwrap_or_else(|| "-".to_string());
+            let anchor = ctx.register(reference);
             rows.push(SchemaRow {
                 field: field.to_string(),
-                type_name: format!("ref {}", short_schema_reference(reference)),
+                type_name: format!("[{name}](#{anchor})"),
                 required: required_to_string(required).to_string(),
-                description: "Cycle detected while expanding schema reference".to_string(),
+                description,
             });
             return;
         }
 
-        if let Some(resolved) = resolve_schema_reference(reference, doc) {
-            ref_stack.push(reference.clone());
-            collect_schema_rows(resolved, doc, field, required, rows, ref_stack, depth + 1);
-            ref_stack.pop();
-            return;
-        }
-
+        // Unresolved reference (either mode).
         rows.push(SchemaRow {
             field: field.to_string(),
             type_name: format!("ref {}", short_schema_reference(reference)),
             required: required_to_string(required).to_string(),
-            description: format!("Unresolved schema reference: {}", reference),
+            description: format!("Unresolved schema reference: {reference}"),
         });
         return;
     }
@@ -295,19 +273,19 @@ fn collect_schema_rows(
             let child_field = format_field(field, name);
             collect_schema_rows(
                 child_schema,
-                doc,
                 &child_field,
                 Some(required_fields.contains(name.as_str())),
                 rows,
                 ref_stack,
                 depth + 1,
+                ctx,
             );
         }
     }
 
     if let Some(items) = &schema.items {
         let item_field = format!("{}[]", field);
-        collect_schema_rows(items, doc, &item_field, None, rows, ref_stack, depth + 1);
+        collect_schema_rows(items, &item_field, None, rows, ref_stack, depth + 1, ctx);
     }
 
     if let Some(all_of) = &schema.all_of {
@@ -315,12 +293,12 @@ fn collect_schema_rows(
             let variant_field = format!("{}.allOf[{}]", field, index);
             collect_schema_rows(
                 variant,
-                doc,
                 &variant_field,
                 required,
                 rows,
                 ref_stack,
                 depth + 1,
+                ctx,
             );
         }
     }
@@ -330,12 +308,12 @@ fn collect_schema_rows(
             let variant_field = format!("{}.oneOf[{}]", field, index);
             collect_schema_rows(
                 variant,
-                doc,
                 &variant_field,
                 required,
                 rows,
                 ref_stack,
                 depth + 1,
+                ctx,
             );
         }
     }
@@ -345,156 +323,12 @@ fn collect_schema_rows(
             let variant_field = format!("{}.anyOf[{}]", field, index);
             collect_schema_rows(
                 variant,
-                doc,
                 &variant_field,
                 required,
                 rows,
                 ref_stack,
                 depth + 1,
-            );
-        }
-    }
-}
-
-fn collect_schema_rows_with_memo(
-    schema: &Schema,
-    doc: &ApiDocumentation,
-    field: &str,
-    required: Option<bool>,
-    rows: &mut Vec<SchemaRow>,
-    ref_stack: &mut Vec<String>,
-    depth: usize,
-    context: &mut SchemaContext,
-) {
-    const MAX_DEPTH: usize = 24;
-
-    if depth >= MAX_DEPTH {
-        rows.push(SchemaRow {
-            field: field.to_string(),
-            type_name: "truncated".to_string(),
-            required: required_to_string(required).to_string(),
-            description: "Maximum schema depth reached; nested expansion stopped".to_string(),
-        });
-        return;
-    }
-
-    if let Some(reference) = &schema.reference {
-        if ref_stack.contains(reference) {
-            // Cycle detected - create a link to the schema if it's been expanded
-            let anchor = context.anchor_for_ref(reference);
-            let display_name = context.display_name_for_ref(reference);
-            
-            if context.is_expanded(reference) {
-                rows.push(SchemaRow {
-                    field: field.to_string(),
-                    type_name: format!("[{}](#{})", display_name, anchor),
-                    required: required_to_string(required).to_string(),
-                    description: format!("See [{}](#{})", display_name, anchor),
-                });
-            } else {
-                rows.push(SchemaRow {
-                    field: field.to_string(),
-                    type_name: format!("ref {}", display_name),
-                    required: required_to_string(required).to_string(),
-                    description: "Cycle detected while expanding schema reference".to_string(),
-                });
-            }
-            return;
-        }
-
-        // Check if this schema has already been expanded
-        if context.is_expanded(reference) {
-            let anchor = context.anchor_for_ref(reference);
-            let display_name = context.display_name_for_ref(reference);
-            
-            rows.push(SchemaRow {
-                field: field.to_string(),
-                type_name: format!("[{}](#{})", display_name, anchor),
-                required: required_to_string(required).to_string(),
-                description: format!("See [{}](#{})", display_name, anchor),
-            });
-            return;
-        }
-
-        if let Some(resolved) = resolve_schema_reference(reference, doc) {
-            // Mark this reference as expanded before recursing
-            context.mark_expanded(reference.clone(), resolved);
-            
-            ref_stack.push(reference.clone());
-            collect_schema_rows_with_memo(
-                resolved, doc, field, required, rows, ref_stack, depth + 1, context
-            );
-            ref_stack.pop();
-            return;
-        }
-
-        rows.push(SchemaRow {
-            field: field.to_string(),
-            type_name: format!("ref {}", context.display_name_for_ref(reference)),
-            required: required_to_string(required).to_string(),
-            description: format!("Unresolved schema reference: {}", reference),
-        });
-        return;
-    }
-
-    let description = schema.description.as_deref().unwrap_or("-");
-    rows.push(SchemaRow {
-        field: field.to_string(),
-        type_name: schema_type_label(schema),
-        required: required_to_string(required).to_string(),
-        description: description.to_string(),
-    });
-
-    if let Some(properties) = &schema.properties {
-        let required_fields: HashSet<&str> = schema
-            .required
-            .as_ref()
-            .map(|items| items.iter().map(String::as_str).collect())
-            .unwrap_or_default();
-
-        for (name, child_schema) in properties {
-            let child_field = format_field(field, name);
-            collect_schema_rows_with_memo(
-                child_schema,
-                doc,
-                &child_field,
-                Some(required_fields.contains(name.as_str())),
-                rows,
-                ref_stack,
-                depth + 1,
-                context,
-            );
-        }
-    }
-
-    if let Some(items) = &schema.items {
-        let item_field = format!("{}[]", field);
-        collect_schema_rows_with_memo(items, doc, &item_field, None, rows, ref_stack, depth + 1, context);
-    }
-
-    if let Some(all_of) = &schema.all_of {
-        for (index, variant) in all_of.iter().enumerate() {
-            let variant_field = format!("{}.allOf[{}]", field, index);
-            collect_schema_rows_with_memo(
-                variant, doc, &variant_field, required, rows, ref_stack, depth + 1, context
-            );
-        }
-    }
-
-    if let Some(one_of) = &schema.one_of {
-        for (index, variant) in one_of.iter().enumerate() {
-            let variant_field = format!("{}.oneOf[{}]", field, index);
-            collect_schema_rows_with_memo(
-                variant, doc, &variant_field, required, rows, ref_stack, depth + 1, context
-            );
-        }
-    }
-
-    if let Some(any_of) = &schema.any_of {
-        for (index, variant) in any_of.iter().enumerate() {
-            let variant_field = format!("{}.anyOf[{}]", field, index);
-            collect_schema_rows_with_memo(
-                variant, doc, &variant_field, required, rows, ref_stack, depth + 1, context
+                ctx,
             );
         }
     }

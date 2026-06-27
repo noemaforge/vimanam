@@ -55,6 +55,11 @@ pub struct Cli {
     #[arg(long)]
     pub include_schemas: bool,
 
+    /// Fully inline every `$ref` schema at each use site instead of linking to a
+    /// shared "Schema Definitions" section (larger, self-contained output)
+    #[arg(long)]
+    pub inline_schemas: bool,
+
     /// Include request/response examples
     #[arg(long)]
     pub include_examples: bool,
@@ -158,6 +163,7 @@ pub fn build_config(cli: &Cli) -> DocConfig {
         required_only: cli.required_only,
         detail_level: cli.detail.into(),
         include_schemas: cli.include_schemas,
+        inline_schemas: cli.inline_schemas,
         include_examples: cli.include_examples,
         include_auth: cli.include_auth,
         include_toc: !cli.no_toc,
@@ -165,19 +171,36 @@ pub fn build_config(cli: &Cli) -> DocConfig {
         max_tokens: cli.max_tokens,
     };
 
-    // Warn if --include-schemas or --include-examples is set but detail is not Full
+    // Warn if --include-schemas or --include-examples is set but detail is not
+    // Full. The current level is reported in the same lowercase spelling the
+    // user types (`--detail standard`), not the Debug-derived `Standard`.
+    let detail_name = detail_arg_name(cli.detail);
     if config.include_schemas && config.detail_level != DetailLevel::Full {
         eprintln!(
-            "vimanam: --include-schemas has no effect at --detail {:?}; use --detail full.",
-            cli.detail
+            "vimanam: --include-schemas has no effect at --detail {detail_name}; use --detail full."
         );
     }
     if config.include_examples && config.detail_level != DetailLevel::Full {
         eprintln!(
-            "vimanam: --include-examples has no effect at --detail {:?}; use --detail full.",
-            cli.detail
+            "vimanam: --include-examples has no effect at --detail {detail_name}; use --detail full."
         );
+    }
+    // --inline-schemas only changes how schemas render, so it does nothing
+    // without --include-schemas.
+    if config.inline_schemas && !config.include_schemas {
+        eprintln!("vimanam: --inline-schemas has no effect without --include-schemas.");
     }
 
     config
+}
+
+/// The `--detail` value name as the user spells it (e.g. `standard`), for stderr
+/// messages. Matches the kebab-case names clap derives for [`DetailLevelArg`].
+fn detail_arg_name(detail: DetailLevelArg) -> &'static str {
+    match detail {
+        DetailLevelArg::Summary => "summary",
+        DetailLevelArg::Basic => "basic",
+        DetailLevelArg::Standard => "standard",
+        DetailLevelArg::Full => "full",
+    }
 }

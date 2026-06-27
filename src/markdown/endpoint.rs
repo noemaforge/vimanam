@@ -4,28 +4,30 @@ use std::io::Write;
 
 use anyhow::Result;
 
-use crate::models::{ApiDocumentation, DetailLevel, DocConfig, Endpoint};
-use crate::utils::{clean_for_id, extract_content_type};
+use crate::models::{DetailLevel, DocConfig, Endpoint};
+use crate::utils::extract_content_type;
 
 use super::examples::write_examples;
-use super::schema::{response_schema, write_schema_table};
+use super::schema::{response_schema, write_schema_table, SchemaContext};
 
 /// Writes a single endpoint section; the amount of detail depends on `config.detail_level`.
+///
+/// `anchor` is the heading's explicit id (the caller computes it so the table of
+/// contents and the body agree); when `None`, the endpoint is written as a bold
+/// label without a heading anchor. `ctx` carries the document-level schema
+/// memoization shared across every endpoint.
 pub(super) fn write_endpoint<W: Write>(
     writer: &mut W,
     endpoint: &Endpoint,
-    doc: &ApiDocumentation,
     config: &DocConfig,
-    include_heading: bool,
+    anchor: Option<&str>,
+    ctx: &mut SchemaContext,
 ) -> Result<()> {
     let title = get_short_title(endpoint);
 
-    if include_heading {
-        // Include method and path in anchor to avoid collisions
-        let anchor = clean_for_id(&format!("{} {}", endpoint.method, endpoint.path));
-        writeln!(writer, "### {} {{#{}}}", title, anchor)?;
-    } else {
-        writeln!(writer, "**{}**", title)?;
+    match anchor {
+        Some(anchor) => writeln!(writer, "### {} {{#{}}}", title, anchor)?,
+        None => writeln!(writer, "**{}**", title)?,
     }
 
     // Operation line (method + path)
@@ -106,7 +108,7 @@ pub(super) fn write_endpoint<W: Write>(
 
             if let Some(param) = body_param {
                 if let Some(schema) = &param.schema {
-                    write_schema_table(writer, schema, doc, "request")?;
+                    write_schema_table(writer, schema, "request", ctx)?;
                 } else {
                     writeln!(writer, "*No request schema available*")?;
                 }
@@ -121,7 +123,7 @@ pub(super) fn write_endpoint<W: Write>(
                 .find(|(code, _)| code.starts_with('2'))
             {
                 if let Some(schema) = response_schema(response) {
-                    write_schema_table(writer, schema, doc, "response")?;
+                    write_schema_table(writer, schema, "response", ctx)?;
                 } else {
                     writeln!(writer, "*No response schema available*")?;
                 }
@@ -132,7 +134,7 @@ pub(super) fn write_endpoint<W: Write>(
 
         // Add examples if configured
         if config.include_examples && config.detail_level == DetailLevel::Full {
-            write_examples(writer, endpoint, doc)?;
+            write_examples(writer, endpoint, ctx.doc())?;
         }
     }
 

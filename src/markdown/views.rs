@@ -13,6 +13,21 @@ use crate::models::{ApiDocumentation, DocConfig, Endpoint, SortMethod};
 use crate::utils::clean_for_id;
 
 use super::endpoint::{get_short_title, write_endpoint};
+use super::schema::{render_schema_definitions, SchemaContext};
+
+/// The in-document anchor for an endpoint heading. `prefix` (a service name)
+/// scopes it so the same endpoint rendered under several services—as the
+/// service-grouped view does for an operation carrying multiple tags—gets a
+/// distinct anchor each time, keeping the table of contents unambiguous.
+///
+/// `method` + `path` already uniquely identify an endpoint, so the unscoped form
+/// is collision-free for the views that render each endpoint once.
+fn endpoint_anchor(prefix: Option<&str>, endpoint: &Endpoint) -> String {
+    match prefix {
+        Some(prefix) => clean_for_id(&format!("{} {} {}", prefix, endpoint.method, endpoint.path)),
+        None => clean_for_id(&format!("{} {}", endpoint.method, endpoint.path)),
+    }
+}
 
 /// Sorts endpoints in place using the configured method.
 ///
@@ -221,8 +236,7 @@ pub(super) fn generate_by_service<W: Write>(
                 for endpoint in sorted_ops {
                     // Extract a shorter title for the TOC entry
                     let op_title = get_short_title(endpoint);
-                    // Use method + path for anchor to avoid collisions
-                    let op_anchor = clean_for_id(&format!("{} {}", endpoint.method, endpoint.path));
+                    let op_anchor = endpoint_anchor(Some(&service.name), endpoint);
                     writeln!(writer, "  * [{}](#{op_anchor})", op_title)?;
                 }
             }
@@ -231,6 +245,7 @@ pub(super) fn generate_by_service<W: Write>(
     }
 
     // Write each service section
+    let mut schema_ctx = SchemaContext::new(doc, config.inline_schemas);
     for service in &services {
         // Create anchor but use it directly in the writeln! call
         let anchor = clean_for_id(&service.name);
@@ -247,12 +262,15 @@ pub(super) fn generate_by_service<W: Write>(
             sort_endpoints(&mut sorted_endpoints, &config.sort_method);
 
             for endpoint in sorted_endpoints {
-                write_endpoint(writer, endpoint, doc, config, true)?;
+                let anchor = endpoint_anchor(Some(&service.name), endpoint);
+                write_endpoint(writer, endpoint, config, Some(&anchor), &mut schema_ctx)?;
             }
         } else {
             writeln!(writer, "\nNo endpoints found for this service.\n")?;
         }
     }
+
+    render_schema_definitions(writer, &mut schema_ctx)?;
 
     Ok(())
 }
@@ -295,6 +313,7 @@ pub(super) fn generate_by_method<W: Write>(
     }
 
     // Write each method section
+    let mut schema_ctx = SchemaContext::new(doc, config.inline_schemas);
     for method in [
         "GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD", "TRACE",
     ] {
@@ -308,11 +327,14 @@ pub(super) fn generate_by_method<W: Write>(
                 sort_endpoints(&mut sorted_endpoints, &config.sort_method);
 
                 for endpoint in sorted_endpoints {
-                    write_endpoint(writer, endpoint, doc, config, true)?;
+                    let anchor = endpoint_anchor(None, endpoint);
+                    write_endpoint(writer, endpoint, config, Some(&anchor), &mut schema_ctx)?;
                 }
             }
         }
     }
+
+    render_schema_definitions(writer, &mut schema_ctx)?;
 
     Ok(())
 }
@@ -351,8 +373,7 @@ pub(super) fn generate_by_path<W: Write>(
             sort_endpoints(&mut sorted_ops, &config.sort_method);
             for endpoint in sorted_ops {
                 let op_title = get_short_title(endpoint);
-                // Use method + path for anchor to avoid collisions
-                let op_anchor = clean_for_id(&format!("{} {}", endpoint.method, endpoint.path));
+                let op_anchor = endpoint_anchor(None, endpoint);
                 writeln!(writer, "  * [{}](#{op_anchor})", op_title)?;
             }
         }
@@ -360,6 +381,7 @@ pub(super) fn generate_by_path<W: Write>(
     }
 
     // Write each path section
+    let mut schema_ctx = SchemaContext::new(doc, config.inline_schemas);
     for (path, endpoints) in &path_endpoints {
         let anchor = clean_for_id(path);
         writeln!(writer, "## {} {{#{}}}", path, anchor)?;
@@ -367,9 +389,12 @@ pub(super) fn generate_by_path<W: Write>(
         let mut sorted_endpoints = endpoints.clone();
         sort_endpoints(&mut sorted_endpoints, &config.sort_method);
         for endpoint in sorted_endpoints {
-            write_endpoint(writer, endpoint, doc, config, true)?;
+            let anchor = endpoint_anchor(None, endpoint);
+            write_endpoint(writer, endpoint, config, Some(&anchor), &mut schema_ctx)?;
         }
     }
+
+    render_schema_definitions(writer, &mut schema_ctx)?;
 
     Ok(())
 }
@@ -394,9 +419,13 @@ pub(super) fn generate_flat<W: Write>(
     sort_endpoints(&mut endpoints, &config.sort_method);
 
     writeln!(writer, "## Endpoints\n")?;
+    let mut schema_ctx = SchemaContext::new(doc, config.inline_schemas);
     for endpoint in endpoints {
-        write_endpoint(writer, endpoint, doc, config, true)?;
+        let anchor = endpoint_anchor(None, endpoint);
+        write_endpoint(writer, endpoint, config, Some(&anchor), &mut schema_ctx)?;
     }
+
+    render_schema_definitions(writer, &mut schema_ctx)?;
 
     Ok(())
 }

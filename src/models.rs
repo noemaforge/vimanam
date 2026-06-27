@@ -405,6 +405,9 @@ pub struct DocConfig {
     pub required_only: bool,
     pub detail_level: DetailLevel,
     pub include_schemas: bool,
+    // Expand every `$ref` inline at each use site instead of linking to a shared
+    // "Schema Definitions" section (the fully self-contained output).
+    pub inline_schemas: bool,
     pub include_examples: bool,
     pub include_auth: bool,
     pub include_toc: bool,
