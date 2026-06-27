@@ -312,7 +312,7 @@ fn extract_endpoints(
                     // its content, otherwise the synthetic body is dropped.
                     let req_body = resolve_request_body_ref(spec_json, req_body)
                         .unwrap_or_else(|| req_body.clone());
-                    
+
                     // Iterate over all media types instead of just the first one
                     for (content_type, media_type) in &req_body.content {
                         let param_name = if req_body.content.len() > 1 {
