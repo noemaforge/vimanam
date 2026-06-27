@@ -147,11 +147,6 @@ pub fn extract_servers(spec: &OpenApiSpec) -> Vec<String> {
         }
     }
 
-    // Fallback to a default if empty
-    if servers.is_empty() {
-        servers.push("https://api.example.com".to_string());
-    }
-
     servers
 }
 

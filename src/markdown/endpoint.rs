@@ -21,7 +21,8 @@ pub(super) fn write_endpoint<W: Write>(
     let title = get_short_title(endpoint);
 
     if include_heading {
-        let anchor = clean_for_id(&title);
+        // Include method and path in anchor to avoid collisions
+        let anchor = clean_for_id(&format!("{} {}", endpoint.method, endpoint.path));
         writeln!(writer, "### {} {{#{}}}", title, anchor)?;
     } else {
         writeln!(writer, "**{}**", title)?;
