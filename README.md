@@ -1,5 +1,10 @@
 # Vimanam
 
+[![CI](https://github.com/noemaforge/vimanam/actions/workflows/ci.yml/badge.svg)](https://github.com/noemaforge/vimanam/actions/workflows/ci.yml)
+[![crates.io](https://img.shields.io/crates/v/vimanam.svg)](https://crates.io/crates/vimanam)
+[![License: Apache-2.0](https://img.shields.io/crates/l/vimanam.svg)](LICENSE)
+[![MSRV](https://img.shields.io/badge/MSRV-1.96-blue.svg)](Cargo.toml)
+
 Vimanam is an OpenAPI/Swagger (JSON or YAML) to Markdown documentation generator.
 
 Vimanam stands for Aeroplane in Malayalam. Like an aeroplane, it can fly high and give you a 20,000 feet view of the APIs. It can fly low and give you a detailed view of the APIs. You can also run it along the ground to look deep into the API fields and descriptions.
@@ -231,6 +236,17 @@ The generated documentation includes:
 | 201 | application/json | User created successfully |
 | 400 | application/json | Invalid request |
 ```
+
+## Roadmap
+
+Work is organized into [milestones](https://github.com/noemaforge/vimanam/milestones):
+
+- **[v1.0.0](https://github.com/noemaforge/vimanam/milestone/1)** — first stable release: JSON + YAML input, plus code-quality polish, a security-audit CI gate, and broader test coverage before tagging.
+- **[v1.1.0](https://github.com/noemaforge/vimanam/milestone/2)** — LLM/token ergonomics: token-budget tooling and shell completions.
+- **[v1.2.0](https://github.com/noemaforge/vimanam/milestone/3)** — alternative output modes: multi-file cross-linked pages, an agent-navigable skill-tree mode, and spec diffing.
+- **[Packaging](https://github.com/noemaforge/vimanam/milestone/4)** — distribution channels (Scoop, winget, Chocolatey, AUR, native `.deb`/`.rpm`), shipped independently of code releases.
+
+See the [open issues](https://github.com/noemaforge/vimanam/issues) for the full backlog.
 
 ## License
 
