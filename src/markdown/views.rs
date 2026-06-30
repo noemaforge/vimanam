@@ -13,7 +13,7 @@ use crate::models::{ApiDocumentation, DocConfig, Endpoint, SortMethod};
 use crate::utils::clean_for_id;
 
 use super::endpoint::{get_short_title, write_endpoint};
-use super::schema::{render_schema_definitions, SchemaContext};
+use super::schema::{SchemaContext, render_schema_definitions};
 
 /// The in-document anchor for an endpoint heading. `prefix` (a service name)
 /// scopes it so the same endpoint rendered under several services—as the
@@ -62,15 +62,15 @@ fn passes_filters(endpoint: &Endpoint, config: &DocConfig) -> bool {
     if config.exclude_deprecated && endpoint.deprecated {
         return false;
     }
-    if let Some(methods) = &config.method_filter {
-        if !methods.contains(&endpoint.method) {
-            return false;
-        }
+    if let Some(methods) = &config.method_filter
+        && !methods.contains(&endpoint.method)
+    {
+        return false;
     }
-    if let Some(path_pattern) = &config.path_filter {
-        if !endpoint.path.contains(path_pattern) {
-            return false;
-        }
+    if let Some(path_pattern) = &config.path_filter
+        && !endpoint.path.contains(path_pattern)
+    {
+        return false;
     }
     true
 }
@@ -302,11 +302,11 @@ pub(super) fn generate_by_method<W: Write>(
         for method in [
             "GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD", "TRACE",
         ] {
-            if let Some(endpoints) = method_endpoints.get(method) {
-                if !endpoints.is_empty() {
-                    let anchor = clean_for_id(method);
-                    writeln!(writer, "- [{}](#{anchor})", method)?;
-                }
+            if let Some(endpoints) = method_endpoints.get(method)
+                && !endpoints.is_empty()
+            {
+                let anchor = clean_for_id(method);
+                writeln!(writer, "- [{}](#{anchor})", method)?;
             }
         }
         writeln!(writer)?;
@@ -317,19 +317,19 @@ pub(super) fn generate_by_method<W: Write>(
     for method in [
         "GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD", "TRACE",
     ] {
-        if let Some(endpoints) = method_endpoints.get(method) {
-            if !endpoints.is_empty() {
-                let anchor = clean_for_id(method);
-                writeln!(writer, "## {} {{#{}}}", method, anchor)?;
+        if let Some(endpoints) = method_endpoints.get(method)
+            && !endpoints.is_empty()
+        {
+            let anchor = clean_for_id(method);
+            writeln!(writer, "## {} {{#{}}}", method, anchor)?;
 
-                // Sort endpoints as configured
-                let mut sorted_endpoints = endpoints.clone();
-                sort_endpoints(&mut sorted_endpoints, &config.sort_method);
+            // Sort endpoints as configured
+            let mut sorted_endpoints = endpoints.clone();
+            sort_endpoints(&mut sorted_endpoints, &config.sort_method);
 
-                for endpoint in sorted_endpoints {
-                    let anchor = endpoint_anchor(None, endpoint);
-                    write_endpoint(writer, endpoint, config, Some(&anchor), &mut schema_ctx)?;
-                }
+            for endpoint in sorted_endpoints {
+                let anchor = endpoint_anchor(None, endpoint);
+                write_endpoint(writer, endpoint, config, Some(&anchor), &mut schema_ctx)?;
             }
         }
     }

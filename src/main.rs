@@ -5,14 +5,14 @@ mod parser;
 mod utils;
 
 use std::fs::File;
-use std::io::{stdout, BufWriter};
+use std::io::{BufWriter, stdout};
 use std::process;
 
 use anyhow::{Context, Result};
 use clap::Parser;
 use log::info;
 
-use crate::config::{build_config, Cli};
+use crate::config::{Cli, build_config};
 use crate::markdown::generate_markdown;
 use crate::parser::parse_openapi;
 

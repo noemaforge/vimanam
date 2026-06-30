@@ -1,6 +1,6 @@
 # Vimanam
 
-Vimanam is an OpenAPI/Swagger JSON to Markdown documentation generator.
+Vimanam is an OpenAPI/Swagger (JSON or YAML) to Markdown documentation generator.
 
 Vimanam stands for Aeroplane in Malayalam. Like an aeroplane, it can fly high and give you a 20,000 feet view of the APIs. It can fly low and give you a detailed view of the APIs. You can also run it along the ground to look deep into the API fields and descriptions.
 
@@ -10,7 +10,7 @@ Besides producing documentation for humans, Vimanam is built for **feeding API s
 
 ## Features
 
-- Convert OpenAPI JSON files to Markdown documentation
+- Convert OpenAPI JSON or YAML files to Markdown documentation (format detected by `.json`/`.yaml`/`.yml` extension, with automatic fallback)
 - Supports both OpenAPI 2.0 (Swagger) and OpenAPI 3.0 specifications
 - Group endpoints by service, HTTP method, or path, or list them flat
 - Filter by service, path, or method
@@ -64,7 +64,7 @@ and put the `vimanam` binary on your `PATH`.
 
 ### From source
 
-Requires [Rust](https://www.rust-lang.org/tools/install) 1.85.0 or later.
+Requires [Rust](https://www.rust-lang.org/tools/install) 1.96.0 or later.
 
 ```bash
 # Clone repository

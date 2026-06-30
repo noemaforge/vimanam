@@ -3,7 +3,7 @@ use indexmap::{IndexMap, IndexSet};
 use log::{debug, warn};
 use std::collections::{HashMap, HashSet};
 use std::fs::File;
-use std::io::{BufReader, Read, Seek, SeekFrom};
+use std::io::{BufReader, Read};
 use std::path::Path;
 
 use crate::models::{
@@ -14,105 +14,150 @@ use crate::utils::{
     resolve_request_body_ref, resolve_response_ref,
 };
 
-/// Parses an OpenAPI 2.0/3.0 JSON file into the spec-version-agnostic
+/// Parses an OpenAPI 2.0/3.0 file (JSON or YAML) into the spec-version-agnostic
 /// [`ApiDocumentation`] intermediate representation. On deserialization
-/// failure, re-parses as generic JSON to produce a targeted error message.
+/// failure, re-parses as generic JSON/YAML to produce a targeted error message.
 pub fn parse_openapi<P: AsRef<Path>>(path: P) -> Result<ApiDocumentation> {
     let path_ref = path.as_ref();
     let file = File::open(path_ref).context("Failed to open OpenAPI file")?;
     let mut reader = BufReader::new(file);
 
-    // First, try to parse as OpenAPI spec
-    match serde_json::from_reader(&mut reader) as Result<OpenApiSpec, _> {
-        Ok(spec) => {
-            // Validate the parsed spec
-            validate_openapi(&spec, path_ref)?;
+    // Read entire file content first
+    let mut content = String::new();
+    reader.read_to_string(&mut content)?;
 
-            // Serialize the spec to JSON once so `$ref` resolution can navigate
-            // it without re-serializing the (potentially multi-MB) spec per ref.
-            let spec_json = serde_json::to_value(&spec)
-                .context("Failed to serialize OpenAPI spec for reference resolution")?;
+    // Determine file format based on extension (case-insensitive)
+    let file_extension = path_ref
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .map(|s| s.to_ascii_lowercase())
+        .unwrap_or_default();
 
-            // Extract services (ref-aware: tags inside `$ref` path items count too)
-            let services = extract_services(&spec, &spec_json);
-            debug!("Extracted {} services", services.len());
+    // Parse using the format the extension suggests, falling back to the other
+    // parser if that fails (YAML is a superset of JSON, so either can parse a
+    // misnamed or extension-less file). When the fallback also fails, surface the
+    // *primary* parser's error — it's the targeted, format-appropriate one; the
+    // fallback's error just restates the same structural problem in the wrong format.
+    let spec: OpenApiSpec = if file_extension == "yaml" || file_extension == "yml" {
+        parse_yaml_spec(&content)
+            .or_else(|yaml_err| parse_json_spec(&content).map_err(|_| yaml_err))?
+    } else {
+        parse_json_spec(&content)
+            .or_else(|json_err| parse_yaml_spec(&content).map_err(|_| json_err))?
+    };
 
-            // Extract servers information
-            let servers = extract_servers(&spec);
-            debug!("Extracted {} server URLs", servers.len());
+    // Validate the parsed spec
+    validate_openapi(&spec, path_ref)?;
 
-            // Extract security schemes
-            let security_schemes = extract_security_schemes(&spec);
-            debug!("Extracted {} security schemes", security_schemes.len());
+    // Serialize the spec to JSON once so `$ref` resolution can navigate
+    // it without re-serializing the (potentially multi-MB) spec per ref.
+    let spec_json = serde_json::to_value(&spec)
+        .context("Failed to serialize OpenAPI spec for reference resolution")?;
 
-            let endpoints = extract_endpoints(&spec, &spec_json, &services);
-            debug!("Extracted {} endpoints", endpoints.len());
-            let schemas = extract_schemas(&spec);
-            debug!("Extracted {} reusable schemas", schemas.len());
-            let examples = extract_examples(&spec);
-            debug!("Extracted {} reusable examples", examples.len());
+    // Extract services (ref-aware: tags inside `$ref` path items count too)
+    let services = extract_services(&spec, &spec_json);
+    debug!("Extracted {} services", services.len());
 
-            Ok(ApiDocumentation {
-                title: spec.info.title,
-                version: spec.info.version,
-                description: spec.info.description,
-                services,
-                endpoints,
-                servers,
-                security_schemes,
-                schemas,
-                examples,
-            })
-        }
-        Err(err) => {
-            // Rewind the file to try other parsing methods
-            reader.seek(SeekFrom::Start(0))?;
+    // Extract servers information
+    let servers = extract_servers(&spec);
+    debug!("Extracted {} server URLs", servers.len());
 
-            // Read the file content for better error analysis
-            let mut content = String::new();
-            reader.read_to_string(&mut content)?;
+    // Extract security schemes
+    let security_schemes = extract_security_schemes(&spec);
+    debug!("Extracted {} security schemes", security_schemes.len());
 
-            // Try to parse as generic JSON to provide better error messages
-            match serde_json::from_str::<serde_json::Value>(&content) {
-                Ok(json) => {
-                    // Check for common issues
-                    if !json.is_object() {
-                        return Err(anyhow::anyhow!("Root element is not a JSON object"));
-                    }
+    let endpoints = extract_endpoints(&spec, &spec_json, &services);
+    debug!("Extracted {} endpoints", endpoints.len());
+    let schemas = extract_schemas(&spec);
+    debug!("Extracted {} reusable schemas", schemas.len());
+    let examples = extract_examples(&spec);
+    debug!("Extracted {} reusable examples", examples.len());
 
-                    let obj = json.as_object().unwrap();
+    Ok(ApiDocumentation {
+        title: spec.info.title,
+        version: spec.info.version,
+        description: spec.info.description,
+        services,
+        endpoints,
+        servers,
+        security_schemes,
+        schemas,
+        examples,
+    })
+}
 
-                    if !obj.contains_key("swagger") && !obj.contains_key("openapi") {
-                        return Err(anyhow::anyhow!(
-                            "Missing 'swagger' or 'openapi' field - not a valid OpenAPI specification"
-                        ));
-                    }
-
-                    if !obj.contains_key("paths") {
-                        return Err(anyhow::anyhow!(
-                            "Missing 'paths' field - not a valid OpenAPI specification"
-                        ));
-                    }
-
-                    if !obj.contains_key("info") {
-                        return Err(anyhow::anyhow!(
-                            "Missing 'info' field - not a valid OpenAPI specification"
-                        ));
-                    }
-
-                    // If we got here, there's a structural issue with the spec
-                    Err(anyhow::anyhow!(
-                        "Invalid OpenAPI specification structure: {}",
-                        err
-                    ))
+/// Parse content as OpenAPI spec using the given deserializer, with enhanced error messages.
+/// The `deserializer` function takes the content string and returns either the parsed spec
+/// or an error. The `generic_deserializer` parses to `serde_json::Value` for structural
+/// validation. The `format_name` is used in error messages.
+fn parse_spec<F, G>(
+    content: &str,
+    deserializer: F,
+    generic_deserializer: G,
+    format_name: &str,
+) -> Result<OpenApiSpec>
+where
+    F: FnOnce(&str) -> Result<OpenApiSpec, anyhow::Error>,
+    G: FnOnce(&str) -> Result<serde_json::Value, anyhow::Error>,
+{
+    deserializer(content).map_err(|err| {
+        // Try to parse as generic value to provide better error messages
+        match generic_deserializer(content) {
+            Ok(json) => {
+                // Check for common structural issues
+                if !json.is_object() {
+                    return anyhow::anyhow!("Root element is not a {} object", format_name);
                 }
-                Err(_) => {
-                    // Not even valid JSON
-                    Err(anyhow::anyhow!("File is not valid JSON: {}", err))
+
+                let obj = json.as_object().unwrap();
+
+                if !obj.contains_key("swagger") && !obj.contains_key("openapi") {
+                    return anyhow::anyhow!(
+                        "Missing 'swagger' or 'openapi' field - not a valid OpenAPI specification"
+                    );
                 }
+
+                if !obj.contains_key("paths") {
+                    return anyhow::anyhow!(
+                        "Missing 'paths' field - not a valid OpenAPI specification"
+                    );
+                }
+
+                if !obj.contains_key("info") {
+                    return anyhow::anyhow!(
+                        "Missing 'info' field - not a valid OpenAPI specification"
+                    );
+                }
+
+                // If we got here, there's a structural issue with the spec
+                anyhow::anyhow!("Invalid OpenAPI specification structure: {}", err)
+            }
+            Err(_) => {
+                // Not even valid format
+                anyhow::anyhow!("File is not valid {}: {}", format_name, err)
             }
         }
-    }
+    })
+}
+
+/// Parse YAML content as OpenAPI spec with enhanced error messages.
+fn parse_yaml_spec(content: &str) -> Result<OpenApiSpec> {
+    parse_spec(
+        content,
+        |s| serde_norway::from_str(s).map_err(anyhow::Error::new),
+        |s| serde_norway::from_str(s).map_err(anyhow::Error::new),
+        "YAML",
+    )
+}
+
+/// Parse JSON content as OpenAPI spec with enhanced error messages.
+fn parse_json_spec(content: &str) -> Result<OpenApiSpec> {
+    parse_spec(
+        content,
+        |s| serde_json::from_str(s).map_err(anyhow::Error::new),
+        |s| serde_json::from_str(s).map_err(anyhow::Error::new),
+        "JSON",
+    )
 }
 
 /// Logs warnings for missing-but-tolerated spec fields (version, title, paths).
@@ -365,16 +410,16 @@ fn extract_endpoints(
     endpoints
 }
 
-/// Collects reusable schemas from OpenAPI 3 `components.schemas` and
-/// OpenAPI 2 `definitions` into a deterministic registry.
+/// Collects reusable schemas from OpenAPI 3 `components.schemas` and OpenAPI 2 `definitions`
+/// into a deterministic registry.
 fn extract_schemas(spec: &OpenApiSpec) -> IndexMap<String, Schema> {
     let mut schemas = IndexMap::new();
 
-    if let Some(components) = &spec.components {
-        if let Some(component_schemas) = &components.schemas {
-            for (name, schema) in component_schemas {
-                schemas.insert(name.clone(), schema.clone());
-            }
+    if let Some(components) = &spec.components
+        && let Some(component_schemas) = &components.schemas
+    {
+        for (name, schema) in component_schemas {
+            schemas.insert(name.clone(), schema.clone());
         }
     }
 
@@ -411,11 +456,11 @@ fn extract_schemas(spec: &OpenApiSpec) -> IndexMap<String, Schema> {
 fn extract_examples(spec: &OpenApiSpec) -> IndexMap<String, Example> {
     let mut examples = IndexMap::new();
 
-    if let Some(components) = &spec.components {
-        if let Some(component_examples) = &components.examples {
-            for (name, example) in component_examples {
-                examples.insert(name.clone(), example.clone());
-            }
+    if let Some(components) = &spec.components
+        && let Some(component_examples) = &components.examples
+    {
+        for (name, example) in component_examples {
+            examples.insert(name.clone(), example.clone());
         }
     }
 

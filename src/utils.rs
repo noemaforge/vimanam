@@ -72,12 +72,11 @@ pub fn resolve_response_ref(
     spec_json: &serde_json::Value,
     response: &Response,
 ) -> Option<Response> {
-    if let Some(extensions) = response.extensions.get("$ref") {
-        if let Some(reference) = extensions.as_str() {
-            if let Some(resolved) = resolve_ref(spec_json, reference) {
-                return serde_json::from_value(resolved).ok();
-            }
-        }
+    if let Some(extensions) = response.extensions.get("$ref")
+        && let Some(reference) = extensions.as_str()
+        && let Some(resolved) = resolve_ref(spec_json, reference)
+    {
+        return serde_json::from_value(resolved).ok();
     }
     Some(response.clone())
 }
@@ -90,10 +89,10 @@ pub fn resolve_request_body_ref(
     spec_json: &serde_json::Value,
     request_body: &RequestBody,
 ) -> Option<RequestBody> {
-    if let Some(reference) = &request_body.reference {
-        if let Some(resolved) = resolve_ref(spec_json, reference) {
-            return serde_json::from_value(resolved).ok();
-        }
+    if let Some(reference) = &request_body.reference
+        && let Some(resolved) = resolve_ref(spec_json, reference)
+    {
+        return serde_json::from_value(resolved).ok();
     }
     Some(request_body.clone())
 }
@@ -125,26 +124,26 @@ pub fn extract_servers(spec: &OpenApiSpec) -> Vec<String> {
         }
     }
     // Check for host + basePath (OpenAPI 2.0)
-    else if let Some(host) = spec.extensions.get("host") {
-        if let Some(host_str) = host.as_str() {
-            let mut base_url = if host_str.starts_with("http") {
-                host_str.to_string()
-            } else {
-                format!("https://{}", host_str)
-            };
+    else if let Some(host) = spec.extensions.get("host")
+        && let Some(host_str) = host.as_str()
+    {
+        let mut base_url = if host_str.starts_with("http") {
+            host_str.to_string()
+        } else {
+            format!("https://{}", host_str)
+        };
 
-            // Add basePath if present
-            if let Some(base_path) = spec.extensions.get("basePath") {
-                if let Some(path_str) = base_path.as_str() {
-                    if !base_url.ends_with('/') && !path_str.starts_with('/') {
-                        base_url.push('/');
-                    }
-                    base_url.push_str(path_str);
-                }
+        // Add basePath if present
+        if let Some(base_path) = spec.extensions.get("basePath")
+            && let Some(path_str) = base_path.as_str()
+        {
+            if !base_url.ends_with('/') && !path_str.starts_with('/') {
+                base_url.push('/');
             }
-
-            servers.push(base_url);
+            base_url.push_str(path_str);
         }
+
+        servers.push(base_url);
     }
 
     servers
@@ -158,36 +157,36 @@ pub fn extract_security_schemes(spec: &OpenApiSpec) -> IndexMap<String, String> 
     let mut schemes = IndexMap::new();
 
     // OpenAPI 3.0+: components.securitySchemes
-    if let Some(components) = &spec.components {
-        if let Some(security_schemes) = &components.security_schemes {
-            for (name, scheme) in security_schemes {
-                let desc = format!(
-                    "{} ({})",
-                    scheme.description.as_deref().unwrap_or(""),
-                    scheme.security_type
-                );
-                schemes.insert(name.clone(), desc);
-            }
+    if let Some(components) = &spec.components
+        && let Some(security_schemes) = &components.security_schemes
+    {
+        for (name, scheme) in security_schemes {
+            let desc = format!(
+                "{} ({})",
+                scheme.description.as_deref().unwrap_or(""),
+                scheme.security_type
+            );
+            schemes.insert(name.clone(), desc);
         }
     }
 
     // OpenAPI 2.0: securityDefinitions
-    if let Some(security_defs) = spec.extensions.get("securityDefinitions") {
-        if let Some(defs_map) = security_defs.as_object() {
-            for (name, def) in defs_map {
-                if let Some(def_obj) = def.as_object() {
-                    let type_str = def_obj
-                        .get("type")
-                        .and_then(|t| t.as_str())
-                        .unwrap_or("unknown");
+    if let Some(security_defs) = spec.extensions.get("securityDefinitions")
+        && let Some(defs_map) = security_defs.as_object()
+    {
+        for (name, def) in defs_map {
+            if let Some(def_obj) = def.as_object() {
+                let type_str = def_obj
+                    .get("type")
+                    .and_then(|t| t.as_str())
+                    .unwrap_or("unknown");
 
-                    let desc = def_obj
-                        .get("description")
-                        .and_then(|d| d.as_str())
-                        .unwrap_or("");
+                let desc = def_obj
+                    .get("description")
+                    .and_then(|d| d.as_str())
+                    .unwrap_or("");
 
-                    schemes.insert(name.clone(), format!("{} ({})", desc, type_str));
-                }
+                schemes.insert(name.clone(), format!("{} ({})", desc, type_str));
             }
         }
     }
@@ -222,10 +221,10 @@ pub fn clean_for_id(input: &str) -> String {
 
 /// Extracts the primary content type from responses
 pub fn extract_content_type(response: &Response) -> Option<String> {
-    if let Some(content) = &response.content {
-        if !content.is_empty() {
-            return content.keys().next().map(|s| s.to_string());
-        }
+    if let Some(content) = &response.content
+        && !content.is_empty()
+    {
+        return content.keys().next().map(|s| s.to_string());
     }
 
     // For OpenAPI 2.0, infer from schema

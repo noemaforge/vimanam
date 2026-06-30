@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-06-30
+
+### Added
+
+- YAML input support: specs can now be supplied as `.yaml`/`.yml` in addition to
+  `.json`, for both OpenAPI 3.x and Swagger 2.0. Format is detected by extension
+  (case-insensitive) and falls back to the other parser for misnamed or
+  extension-less files. YAML and JSON inputs produce byte-identical output (#4).
+
+### Changed
+
+- Adopted the Rust 2024 edition and raised the MSRV to 1.96.
+- Replaced the deprecated `serde_yaml` dependency with the maintained `serde_norway`
+  fork, which better handles YAML 1.1 quoting footguns (the "Norway problem").
+
 ### Security
 
 - All GitHub Actions across CI and the dist release workflow are now pinned to full commit

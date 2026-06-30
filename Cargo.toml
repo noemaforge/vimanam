@@ -1,8 +1,8 @@
 [package]
 name = "vimanam"
-version = "0.6.0"
-edition = "2021"
-rust-version = "1.85"
+version = "1.0.0"
+edition = "2024"
+rust-version = "1.96"
 authors = ["Narayan SS <nrynss@users.noreply.github.com>"]
 description = "OpenAPI/Swagger to Markdown documentation generator with grouping, filtering, and detail levels for docs and LLM context"
 license = "Apache-2.0"
@@ -22,6 +22,9 @@ serde = { version = "1.0", features = ["derive"] }
 # OpenAPI 2.0 `securityDefinitions` (read via the extensions map) and `$ref`
 # resolution preserve declaration order rather than sorting alphabetically.
 serde_json = { version = "1.0", features = ["preserve_order"] }
+# Maintained fork of the (deprecated) serde_yaml; chosen over other forks for
+# its better handling of YAML 1.1 footguns (the "Norway problem" et al).
+serde_norway = "0.9"
 
 # Insertion-order-preserving maps for deterministic output
 indexmap = { version = "2.14", features = ["serde"] }
