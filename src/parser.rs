@@ -157,8 +157,8 @@ where
 fn parse_yaml_spec(content: &str) -> Result<OpenApiSpec> {
     parse_spec(
         content,
-        |s| saneyaml::from_str(s).map_err(anyhow::Error::new),
-        |s| saneyaml::from_str(s).map_err(anyhow::Error::new),
+        |s| serde_yaml::from_str(s).map_err(anyhow::Error::new),
+        |s| serde_yaml::from_str(s).map_err(anyhow::Error::new),
         "YAML",
     )
 }
