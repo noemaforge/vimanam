@@ -33,30 +33,17 @@ pub fn parse_openapi<P: AsRef<Path>>(path: P) -> Result<ApiDocumentation> {
         .map(|s| s.to_ascii_lowercase())
         .unwrap_or_default();
 
-    // Prefer YAML parser when extension suggests YAML, but fall back to JSON parser
-    // if that fails (since YAML is a superset of JSON). This handles files with
-    // unusual/no extensions and makes parsing more robust.
+    // Parse using the format the extension suggests, falling back to the other
+    // parser if that fails (YAML is a superset of JSON, so either can parse a
+    // misnamed or extension-less file). When the fallback also fails, surface the
+    // *primary* parser's error — it's the targeted, format-appropriate one; the
+    // fallback's error just restates the same structural problem in the wrong format.
     let spec: OpenApiSpec = if file_extension == "yaml" || file_extension == "yml" {
-        parse_yaml_spec(&content).or_else(|yaml_err| {
-            parse_json_spec(&content).map_err(|json_err| {
-                anyhow::anyhow!(
-                    "YAML parse failed: {}; JSON fallback also failed: {}",
-                    yaml_err,
-                    json_err
-                )
-            })
-        })?
+        parse_yaml_spec(&content)
+            .or_else(|yaml_err| parse_json_spec(&content).map_err(|_| yaml_err))?
     } else {
-        // Try JSON first; if it fails, fall back to YAML parser (handles JSON too)
-        parse_json_spec(&content).or_else(|json_err| {
-            parse_yaml_spec(&content).map_err(|yaml_err| {
-                anyhow::anyhow!(
-                    "JSON parse failed: {}; YAML fallback also failed: {}",
-                    json_err,
-                    yaml_err
-                )
-            })
-        })?
+        parse_json_spec(&content)
+            .or_else(|json_err| parse_yaml_spec(&content).map_err(|_| json_err))?
     };
 
     // Validate the parsed spec
@@ -157,8 +144,8 @@ where
 fn parse_yaml_spec(content: &str) -> Result<OpenApiSpec> {
     parse_spec(
         content,
-        |s| serde_yaml::from_str(s).map_err(anyhow::Error::new),
-        |s| serde_yaml::from_str(s).map_err(anyhow::Error::new),
+        |s| serde_norway::from_str(s).map_err(anyhow::Error::new),
+        |s| serde_norway::from_str(s).map_err(anyhow::Error::new),
         "YAML",
     )
 }
