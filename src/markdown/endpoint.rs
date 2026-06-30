@@ -8,7 +8,7 @@ use crate::models::{DetailLevel, DocConfig, Endpoint};
 use crate::utils::extract_content_type;
 
 use super::examples::write_examples;
-use super::schema::{response_schema, write_schema_table, SchemaContext};
+use super::schema::{SchemaContext, response_schema, write_schema_table};
 
 /// Writes a single endpoint section; the amount of detail depends on `config.detail_level`.
 ///
@@ -150,11 +150,11 @@ pub(super) fn get_short_title(endpoint: &Endpoint) -> String {
         return operation_id.clone();
     } else if let Some(summary) = &endpoint.summary {
         // If there's a summary, try to extract the operation name (first word or camelCase part)
-        if let Some(first_word) = summary.split_whitespace().next() {
-            if first_word.chars().any(|c| c.is_uppercase()) {
-                // This is likely a camelCase operation name
-                return first_word.to_string();
-            }
+        if let Some(first_word) = summary.split_whitespace().next()
+            && first_word.chars().any(|c| c.is_uppercase())
+        {
+            // This is likely a camelCase operation name
+            return first_word.to_string();
         }
         // If no good first word, just use the whole summary
         return summary.clone();

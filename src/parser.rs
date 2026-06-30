@@ -428,11 +428,11 @@ fn extract_endpoints(
 fn extract_schemas(spec: &OpenApiSpec) -> IndexMap<String, Schema> {
     let mut schemas = IndexMap::new();
 
-    if let Some(components) = &spec.components {
-        if let Some(component_schemas) = &components.schemas {
-            for (name, schema) in component_schemas {
-                schemas.insert(name.clone(), schema.clone());
-            }
+    if let Some(components) = &spec.components
+        && let Some(component_schemas) = &components.schemas
+    {
+        for (name, schema) in component_schemas {
+            schemas.insert(name.clone(), schema.clone());
         }
     }
 
@@ -469,11 +469,11 @@ fn extract_schemas(spec: &OpenApiSpec) -> IndexMap<String, Schema> {
 fn extract_examples(spec: &OpenApiSpec) -> IndexMap<String, Example> {
     let mut examples = IndexMap::new();
 
-    if let Some(components) = &spec.components {
-        if let Some(component_examples) = &components.examples {
-            for (name, example) in component_examples {
-                examples.insert(name.clone(), example.clone());
-            }
+    if let Some(components) = &spec.components
+        && let Some(component_examples) = &components.examples
+    {
+        for (name, example) in component_examples {
+            examples.insert(name.clone(), example.clone());
         }
     }
 
