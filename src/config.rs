@@ -204,3 +204,41 @@ fn detail_arg_name(detail: DetailLevelArg) -> &'static str {
         DetailLevelArg::Full => "full",
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::assert_matches;
+
+    #[test]
+    fn test_detail_level_conversion() {
+        let cli = Cli {
+            input: PathBuf::from("spec.json"),
+            output: None,
+            method: false,
+            group_by: GroupByArg::Service,
+            flat: false,
+            service_filter: None,
+            path_filter: None,
+            method_filter: None,
+            exclude_deprecated: false,
+            required_only: false,
+            detail: DetailLevelArg::Summary,
+            include_schemas: false,
+            inline_schemas: false,
+            include_examples: false,
+            include_auth: false,
+            no_toc: false,
+            sort: SortArg::Alpha,
+            max_tokens: None,
+        };
+
+        let config = build_config(&cli);
+        assert_matches!(config.detail_level, DetailLevel::Summary);
+
+        let mut cli_basic = cli;
+        cli_basic.detail = DetailLevelArg::Basic;
+        let config_basic = build_config(&cli_basic);
+        assert_matches!(config_basic.detail_level, DetailLevel::Basic);
+    }
+}
