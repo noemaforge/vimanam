@@ -12,6 +12,8 @@ const OAS3_REF_BODY: &str = "tests/fixtures/ref_request_body_oas3.json";
 
 // YAML twin of petstore_oas3.json — must parse to identical documentation (#4).
 const OAS3_YAML: &str = "tests/fixtures/petstore_oas3.yaml";
+const OAS2_YAML: &str = "tests/fixtures/petstore_oas2.yaml";
+const OAS3_SCHEMA_REFS_YAML: &str = "tests/fixtures/schema_refs_oas3.yaml";
 
 // Parse-layer correctness cluster (issues #48, #50, #51, #54, #56, #60).
 const MULTI_TAG: &str = "tests/fixtures/multi_tag_oas3.json";
@@ -257,6 +259,42 @@ fn yaml_and_json_produce_identical_output() {
         render(OAS3),
         render(OAS3_YAML),
         "YAML and JSON inputs produced different output"
+    );
+}
+
+// The Swagger 2.0 (OAS2) YAML twin and its JSON counterpart must produce byte-identical documentation.
+#[test]
+fn yaml_and_json_produce_identical_output_oas2() {
+    let render = |spec: &str| {
+        vimanam()
+            .arg(spec)
+            .args(["--detail", "full", "--include-schemas", "--include-auth"])
+            .output()
+            .unwrap()
+            .stdout
+    };
+    assert_eq!(
+        render(OAS2),
+        render(OAS2_YAML),
+        "OAS2 YAML and JSON inputs produced different output"
+    );
+}
+
+// The $ref-heavy YAML twin of schema_refs_oas3.json must produce identical output.
+#[test]
+fn yaml_and_json_produce_identical_output_schema_refs() {
+    let render = |spec: &str| {
+        vimanam()
+            .arg(spec)
+            .args(["--detail", "full", "--include-schemas"])
+            .output()
+            .unwrap()
+            .stdout
+    };
+    assert_eq!(
+        render(OAS3_SCHEMA_REFS),
+        render(OAS3_SCHEMA_REFS_YAML),
+        "schema_refs YAML and JSON inputs produced different output"
     );
 }
 

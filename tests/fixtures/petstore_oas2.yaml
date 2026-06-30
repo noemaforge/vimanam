@@ -1,0 +1,36 @@
+swagger: "2.0"
+info:
+  title: Petstore Legacy API
+  version: "2.0.0"
+host: legacy.petstore.example.com
+basePath: /v2
+tags:
+  - name: Pets
+paths:
+  /pets:
+    post:
+      tags:
+        - Pets
+      summary: Create a pet
+      operationId: Pets_CreatePet
+      parameters:
+        - name: body
+          in: body
+          required: true
+          description: Pet to add
+          schema:
+            $ref: "#/definitions/Pet"
+      responses:
+        "200":
+          description: Created
+          schema:
+            $ref: "#/definitions/Pet"
+definitions:
+  Pet:
+    type: object
+securityDefinitions:
+  apiKey:
+    type: apiKey
+    name: api_key
+    in: header
+    description: API key auth

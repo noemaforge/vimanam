@@ -466,3 +466,23 @@ fn extract_examples(spec: &OpenApiSpec) -> IndexMap<String, Example> {
 
     examples
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::assert_matches;
+
+    #[test]
+    fn test_parse_non_existent_file() {
+        let res = parse_openapi("non_existent_file.json");
+        assert_matches!(res, Err(_));
+    }
+
+    #[test]
+    fn test_parse_invalid_format() {
+        let temp = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(temp.path(), "not json or yaml").unwrap();
+        let res = parse_openapi(temp.path());
+        assert_matches!(res, Err(_));
+    }
+}
