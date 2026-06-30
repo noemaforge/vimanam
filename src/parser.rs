@@ -26,19 +26,37 @@ pub fn parse_openapi<P: AsRef<Path>>(path: P) -> Result<ApiDocumentation> {
     let mut content = String::new();
     reader.read_to_string(&mut content)?;
 
-    // Determine file format based on extension
+    // Determine file format based on extension (case-insensitive)
     let file_extension = path_ref
         .extension()
         .and_then(|ext| ext.to_str())
-        .unwrap_or("");
+        .map(|s| s.to_ascii_lowercase())
+        .unwrap_or_default();
 
-    let is_yaml = file_extension == "yaml" || file_extension == "yml";
-
-    // Parse the spec from the content string
-    let spec: OpenApiSpec = if is_yaml {
-        parse_yaml_spec(&content)?
+    // Prefer YAML parser when extension suggests YAML, but fall back to JSON parser
+    // if that fails (since YAML is a superset of JSON). This handles files with
+    // unusual/no extensions and makes parsing more robust.
+    let spec: OpenApiSpec = if file_extension == "yaml" || file_extension == "yml" {
+        parse_yaml_spec(&content).or_else(|yaml_err| {
+            parse_json_spec(&content).map_err(|json_err| {
+                anyhow::anyhow!(
+                    "YAML parse failed: {}; JSON fallback also failed: {}",
+                    yaml_err,
+                    json_err
+                )
+            })
+        })?
     } else {
-        parse_json_spec(&content)?
+        // Try JSON first; if it fails, fall back to YAML parser (handles JSON too)
+        parse_json_spec(&content).or_else(|json_err| {
+            parse_yaml_spec(&content).map_err(|yaml_err| {
+                anyhow::anyhow!(
+                    "JSON parse failed: {}; YAML fallback also failed: {}",
+                    json_err,
+                    yaml_err
+                )
+            })
+        })?
     };
 
     // Validate the parsed spec
@@ -81,15 +99,27 @@ pub fn parse_openapi<P: AsRef<Path>>(path: P) -> Result<ApiDocumentation> {
     })
 }
 
-/// Parse YAML content as OpenAPI spec with enhanced error messages.
-fn parse_yaml_spec(content: &str) -> Result<OpenApiSpec> {
-    serde_yaml::from_str::<OpenApiSpec>(content).map_err(|err| {
-        // Try to parse as generic YAML to provide better error messages
-        match serde_yaml::from_str::<serde_json::Value>(content) {
+/// Parse content as OpenAPI spec using the given deserializer, with enhanced error messages.
+/// The `deserializer` function takes the content string and returns either the parsed spec
+/// or an error. The `generic_deserializer` parses to `serde_json::Value` for structural
+/// validation. The `format_name` is used in error messages.
+fn parse_spec<F, G>(
+    content: &str,
+    deserializer: F,
+    generic_deserializer: G,
+    format_name: &str,
+) -> Result<OpenApiSpec>
+where
+    F: FnOnce(&str) -> Result<OpenApiSpec, anyhow::Error>,
+    G: FnOnce(&str) -> Result<serde_json::Value, anyhow::Error>,
+{
+    deserializer(content).map_err(|err| {
+        // Try to parse as generic value to provide better error messages
+        match generic_deserializer(content) {
             Ok(json) => {
-                // Check for common issues
+                // Check for common structural issues
                 if !json.is_object() {
-                    return anyhow::anyhow!("Root element is not a YAML object");
+                    return anyhow::anyhow!("Root element is not a {} object", format_name);
                 }
 
                 let obj = json.as_object().unwrap();
@@ -116,53 +146,31 @@ fn parse_yaml_spec(content: &str) -> Result<OpenApiSpec> {
                 anyhow::anyhow!("Invalid OpenAPI specification structure: {}", err)
             }
             Err(_) => {
-                // Not even valid YAML
-                anyhow::anyhow!("File is not valid YAML: {}", err)
+                // Not even valid format
+                anyhow::anyhow!("File is not valid {}: {}", format_name, err)
             }
         }
     })
 }
 
+/// Parse YAML content as OpenAPI spec with enhanced error messages.
+fn parse_yaml_spec(content: &str) -> Result<OpenApiSpec> {
+    parse_spec(
+        content,
+        |s| saneyaml::from_str(s).map_err(anyhow::Error::new),
+        |s| saneyaml::from_str(s).map_err(anyhow::Error::new),
+        "YAML",
+    )
+}
+
 /// Parse JSON content as OpenAPI spec with enhanced error messages.
 fn parse_json_spec(content: &str) -> Result<OpenApiSpec> {
-    serde_json::from_str::<OpenApiSpec>(content).map_err(|err| {
-        // Try to parse as generic JSON to provide better error messages
-        match serde_json::from_str::<serde_json::Value>(content) {
-            Ok(json) => {
-                // Check for common issues
-                if !json.is_object() {
-                    return anyhow::anyhow!("Root element is not a JSON object");
-                }
-
-                let obj = json.as_object().unwrap();
-
-                if !obj.contains_key("swagger") && !obj.contains_key("openapi") {
-                    return anyhow::anyhow!(
-                        "Missing 'swagger' or 'openapi' field - not a valid OpenAPI specification"
-                    );
-                }
-
-                if !obj.contains_key("paths") {
-                    return anyhow::anyhow!(
-                        "Missing 'paths' field - not a valid OpenAPI specification"
-                    );
-                }
-
-                if !obj.contains_key("info") {
-                    return anyhow::anyhow!(
-                        "Missing 'info' field - not a valid OpenAPI specification"
-                    );
-                }
-
-                // If we got here, there's a structural issue with the spec
-                anyhow::anyhow!("Invalid OpenAPI specification structure: {}", err)
-            }
-            Err(_) => {
-                // Not even valid JSON
-                anyhow::anyhow!("File is not valid JSON: {}", err)
-            }
-        }
-    })
+    parse_spec(
+        content,
+        |s| serde_json::from_str(s).map_err(anyhow::Error::new),
+        |s| serde_json::from_str(s).map_err(anyhow::Error::new),
+        "JSON",
+    )
 }
 
 /// Logs warnings for missing-but-tolerated spec fields (version, title, paths).
