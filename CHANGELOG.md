@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-09-17
+
 ### Added
 
 - `--toc` flag as the explicit opposite of `--no-toc`; when both are given, the
@@ -47,6 +49,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Swagger 2.0 `schemes` is now respected when building the server URL from
   `host`/`basePath`; previously plain-HTTP specs were rendered with an assumed
   `https://` prefix.
+
+## [1.0.1] - 2026-07-07
+
+### Changed
+
+- `Response` model now has a dedicated `$ref` field instead of relying on
+  flattened extensions, for consistency with other ref-bearing types.
+- MSRV documentation updated from 1.85 to 1.96 (actual MSRV as of 1.0.0).
+
+This version was tagged and published as a GitHub release, but its crates.io
+publish failed, so 1.0.1 never appeared on crates.io. Its code changes were
+already on `main`; only the version bump was missing.
 
 ## [1.0.0] - 2026-06-30
 
@@ -274,6 +288,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Initial release: OpenAPI 2.0 (Swagger) JSON to Markdown with grouping,
   filtering, sorting, and detail levels
 
+[1.1.0]: https://github.com/noemaforge/vimanam/compare/v1.0.1...v1.1.0
+[1.0.1]: https://github.com/noemaforge/vimanam/compare/v1.0.0...v1.0.1
+[1.0.0]: https://github.com/noemaforge/vimanam/compare/v0.6.0...v1.0.0
 [0.6.0]: https://github.com/noemaforge/vimanam/compare/v0.5.1...v0.6.0
 [0.5.1]: https://github.com/noemaforge/vimanam/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/noemaforge/vimanam/compare/v0.4.0...v0.5.0
