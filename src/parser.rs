@@ -2,8 +2,6 @@ use anyhow::{Context, Result};
 use indexmap::{IndexMap, IndexSet};
 use log::{debug, warn};
 use std::collections::{HashMap, HashSet};
-use std::fs::File;
-use std::io::{BufReader, Read};
 use std::path::Path;
 
 use crate::models::{
@@ -19,19 +17,30 @@ use crate::utils::{
 /// failure, re-parses as generic JSON/YAML to produce a targeted error message.
 pub fn parse_openapi<P: AsRef<Path>>(path: P) -> Result<ApiDocumentation> {
     let path_ref = path.as_ref();
-    let file = File::open(path_ref).context("Failed to open OpenAPI file")?;
-    let mut reader = BufReader::new(file);
-
-    // Read entire file content first
-    let mut content = String::new();
-    reader.read_to_string(&mut content)?;
-
-    // Determine file format based on extension (case-insensitive)
-    let file_extension = path_ref
+    let bytes = std::fs::read(path_ref)
+        .with_context(|| format!("Failed to open OpenAPI file: {}", path_ref.display()))?;
+    let extension = path_ref
         .extension()
         .and_then(|ext| ext.to_str())
-        .map(|s| s.to_ascii_lowercase())
         .unwrap_or_default();
+    parse_openapi_bytes(&bytes, extension, Some(path_ref))
+}
+
+/// Parses an OpenAPI spec from already-read bytes. Callers that also hash the
+/// raw file (`diff --format json` derives `file_sha256` from it) parse exactly
+/// the bytes they hashed, so the two can never refer to different contents.
+/// `extension` selects the parser (case-insensitively; anything that is not
+/// "yaml"/"yml" starts with the JSON parser). `path` is only used in warning
+/// messages and may be `None` for in-memory sources.
+pub fn parse_openapi_bytes(
+    bytes: &[u8],
+    extension: &str,
+    path: Option<&Path>,
+) -> Result<ApiDocumentation> {
+    let content = String::from_utf8(bytes.to_vec()).context("OpenAPI file is not valid UTF-8")?;
+
+    // Format is chosen by extension, case-insensitively.
+    let file_extension = extension.to_ascii_lowercase();
 
     // Parse using the format the extension suggests, falling back to the other
     // parser if that fails (YAML is a superset of JSON, so either can parse a
@@ -47,7 +56,7 @@ pub fn parse_openapi<P: AsRef<Path>>(path: P) -> Result<ApiDocumentation> {
     };
 
     // Validate the parsed spec
-    validate_openapi(&spec, path_ref)?;
+    validate_openapi(&spec, path)?;
 
     // Serialize the spec to JSON once so `$ref` resolution can navigate
     // it without re-serializing the (potentially multi-MB) spec per ref.
@@ -161,15 +170,17 @@ fn parse_json_spec(content: &str) -> Result<OpenApiSpec> {
 }
 
 /// Logs warnings for missing-but-tolerated spec fields (version, title, paths).
-fn validate_openapi(spec: &OpenApiSpec, path: &Path) -> Result<()> {
+fn validate_openapi(spec: &OpenApiSpec, path: Option<&Path>) -> Result<()> {
     // Log the OpenAPI version
     if let Some(version) = &spec.spec_version {
         debug!("OpenAPI specification version: {}", version);
-    } else {
+    } else if let Some(path) = path {
         warn!(
             "OpenAPI specification version not found in {}, continuing anyway",
             path.display()
         );
+    } else {
+        warn!("OpenAPI specification version not found, continuing anyway");
     }
 
     // Check for required fields

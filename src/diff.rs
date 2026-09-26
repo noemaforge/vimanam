@@ -68,7 +68,7 @@ pub enum ValueChangeKind {
 /// What a JSON pointer into a schema addresses, as far as the severity rules
 /// care.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Location {
+pub(crate) enum Location {
     /// A `type` keyword.
     Type,
     /// A member of a `required` array.
@@ -145,7 +145,7 @@ impl Node {
 /// Classifies `pointer` by walking it with the schema grammar in mind: under
 /// `properties` the next segment is a field name (so a field called `type` is a
 /// property, not a type keyword), under `allOf` it is an index, and so on.
-fn locate(pointer: &str) -> Location {
+pub(crate) fn locate(pointer: &str) -> Location {
     let mut node = Node::Schema;
     let mut location = Location::Other;
     for segment in pointer.split('/').skip(1) {

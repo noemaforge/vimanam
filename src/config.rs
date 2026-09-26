@@ -152,6 +152,11 @@ pub struct DiffArgs {
     #[arg(long)]
     pub report: bool,
 
+    /// Output format: a Markdown report or machine-readable JSON with stable
+    /// change IDs
+    #[arg(long, value_enum, default_value_t = DiffFormatArg::Markdown)]
+    pub format: DiffFormatArg,
+
     /// Exit with status 3 when any breaking change is found, after writing the
     /// full report
     ///
@@ -164,6 +169,15 @@ pub struct DiffArgs {
     /// Write the diff to FILE instead of stdout
     #[arg(short, long, value_name = "FILE")]
     pub output: Option<PathBuf>,
+}
+
+/// Output format of the `diff` subcommand.
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum, Debug)]
+pub enum DiffFormatArg {
+    /// Human-readable Markdown report
+    Markdown,
+    /// Machine-readable JSON with a stable, content-derived ID per change
+    Json,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum, Debug)]
