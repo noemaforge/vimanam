@@ -230,6 +230,8 @@ Options:
       --service-filter <SERVICE[,...]>     Include only specific services (comma-separated)
       --path-filter <PATTERN>              Filter endpoints by path pattern
       --method-filter <METHOD[,...]>       Filter by HTTP methods (comma-separated)
+      --operation <METHOD PATH>            Render exactly this operation, as "METHOD /path/template" (repeatable; exact path match, Swagger 2 basePath excluded)
+      --operation-id <ID>                  Render exactly the operation(s) with this operationId (repeatable, case-sensitive)
       --exclude-deprecated                 Hide deprecated endpoints
       --required-only                      Only show required parameters
       --detail <summary|basic|standard|full> Control amount of information [default: summary]
@@ -288,6 +290,28 @@ vimanam openapi.json --service-filter Findings --detail full --max-tokens 8000 -
 ```
 
 `--max-tokens` uses a chars/4 token estimate — close enough to choose a detail level, but treat it as approximate rather than an exact cap. When the output is fed to a model, add `--no-report`: the spec hygiene report is useful to a human tidying the spec but is noise in an LLM prompt, and it is appended outside the token budget.
+
+### Selecting exact operations
+
+When a task concerns one or two operations, `--operation` and `--operation-id` render exactly those and nothing else:
+
+```bash
+vimanam openapi.json --operation "GET /users" --detail full --include-schemas --flat
+vimanam openapi.json --operation "GET /users" --operation "DELETE /users/{id}" --detail standard
+vimanam openapi.json --operation-id listUsers --detail full
+```
+
+Unlike `--path-filter`, which is a substring match (`--path-filter /users` also picks up `/users/{id}`, `/users/{id}/keys` and `/admin/users`), `--operation "<METHOD> <PATH>"` matches the spec's path template byte for byte: the method is case-insensitive, but `{id}` and `{userId}` are different templates and `/users/` is not `/users`. For Swagger 2 specs the path is the key under `paths`, without `basePath`. `--operation-id` matches operation IDs exactly (case-sensitive); if the spec reuses an ID, every operation carrying it is selected. Both flags are repeatable and can be combined — the selection is their union — and they are ANDed with the other filters, so `--operation "GET /users" --exclude-deprecated` renders nothing if that operation is deprecated (with a warning on stderr naming the filter). A value that matches no operation in the spec is an error (exit 1) rather than an empty document.
+
+Under the default service grouping, services with no selected operation are left out, and an operation with several tags appears once under each of its services; add `--flat` to get each selected operation exactly once. The selection also scopes `--stats`, `--max-tokens` and the hygiene report.
+
+The selectors round-trip with [`diff --format json`](#json-output): every change record's `endpoint.method` and `endpoint.path` can be passed back as `--operation "<method> <path>"` to render that operation's contract from the old spec (for `endpoint_removed`) or the new one:
+
+```bash
+vimanam diff v1.json v2.json --format json \
+  | jq -r '.changes[] | select(.kind != "endpoint_removed") | "\(.endpoint.method) \(.endpoint.path)"' \
+  | sort -u | while read -r op; do vimanam v2.json --operation "$op" --detail full --include-schemas --flat --no-report; done
+```
 
 Before choosing which slice to generate, `--stats` sizes the candidates without writing any Markdown: it prints one row per service with its visible endpoint count and the estimated token size of rendering that service alone, at whatever `--detail`, grouping and filter flags you pass, plus a TOTAL row for the whole document. A service left with no visible endpoint (for example, one whose only operations are dropped by `--exclude-deprecated`) is omitted from the table.
 

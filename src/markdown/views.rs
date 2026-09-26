@@ -9,7 +9,7 @@ use std::io::Write;
 use anyhow::Result;
 use indexmap::IndexMap;
 
-use crate::models::{ApiDocumentation, DocConfig, Endpoint, SortMethod};
+use crate::models::{ApiDocumentation, DocConfig, Endpoint, Service, SortMethod};
 use crate::utils::clean_for_id;
 
 use super::endpoint::{get_short_title, write_endpoint};
@@ -84,25 +84,49 @@ pub(crate) fn visible_endpoints<'a>(
     endpoints
 }
 
-/// Whether an endpoint survives the deprecated, method, and path filters that
-/// every view applies. The service filter is handled separately
-/// ([`passes_service_filter`]): the service-grouped views narrow their service
-/// list instead of filtering endpoints.
+/// Whether an endpoint survives the deprecated, method, path and exact
+/// operation (`--operation`/`--operation-id`) filters that every view applies.
+/// The service filter is handled separately ([`passes_service_filter`]): the
+/// service-grouped views narrow their service list instead of filtering
+/// endpoints.
 fn passes_filters(endpoint: &Endpoint, config: &DocConfig) -> bool {
-    if config.exclude_deprecated && endpoint.deprecated {
+    if let Some(selector) = &config.operation_selector
+        && !selector.matches(endpoint)
+    {
         return false;
+    }
+    rejecting_endpoint_filters(endpoint, config).is_empty()
+}
+
+/// The deprecated, method and path filters that reject `endpoint`, as the
+/// flags a user would type, in a fixed order.
+fn rejecting_endpoint_filters(endpoint: &Endpoint, config: &DocConfig) -> Vec<&'static str> {
+    let mut filters = Vec::new();
+    if config.exclude_deprecated && endpoint.deprecated {
+        filters.push("--exclude-deprecated");
     }
     if let Some(methods) = &config.method_filter
         && !methods.contains(&endpoint.method)
     {
-        return false;
+        filters.push("--method-filter");
     }
     if let Some(path_pattern) = &config.path_filter
         && !endpoint.path.contains(path_pattern)
     {
-        return false;
+        filters.push("--path-filter");
     }
-    true
+    filters
+}
+
+/// Every flag other than the exact operation selector that removes `endpoint`
+/// from the document, in a fixed order; empty when it would be rendered. Used
+/// to explain why a selected operation produced no output.
+pub(crate) fn removing_filters(endpoint: &Endpoint, config: &DocConfig) -> Vec<&'static str> {
+    let mut filters = rejecting_endpoint_filters(endpoint, config);
+    if !passes_service_filter(endpoint, config) {
+        filters.push("--service-filter");
+    }
+    filters
 }
 
 /// Whether an endpoint belongs to one of the `--service-filter` services. Always
@@ -114,6 +138,19 @@ fn passes_service_filter(endpoint: &Endpoint, config: &DocConfig) -> bool {
             .iter()
             .any(|s| service_matches_filter(s, filter)),
         None => true,
+    }
+}
+
+/// Under `--operation`/`--operation-id`, keeps only the services that contain a
+/// selected, visible endpoint. Without a selector the list is untouched, so
+/// existing output never changes.
+fn retain_selected_services(
+    services: &mut Vec<&Service>,
+    service_endpoints: &HashMap<&str, Vec<&Endpoint>>,
+    config: &DocConfig,
+) {
+    if config.operation_selector.is_some() {
+        services.retain(|service| service_endpoints.contains_key(service.name.as_str()));
     }
 }
 
@@ -161,7 +198,7 @@ pub(super) fn generate_summary<W: Write>(
     write_preamble(writer, doc, config)?;
 
     // Filter services if needed (case-insensitive)
-    let services = if let Some(filter) = &config.service_filter {
+    let mut services = if let Some(filter) = &config.service_filter {
         doc.services
             .iter()
             .filter(|s| service_matches_filter(&s.name, filter))
@@ -184,6 +221,10 @@ pub(super) fn generate_summary<W: Write>(
                 .push(endpoint);
         }
     }
+
+    // An exact selection is about its operations, so services it leaves empty
+    // are dropped instead of padding the output with empty sections.
+    retain_selected_services(&mut services, &service_endpoints, config);
 
     // Write Services List
     writeln!(writer, "## Services")?;
@@ -225,7 +266,7 @@ pub(super) fn generate_by_service<W: Write>(
     write_preamble(writer, doc, config)?;
 
     // Filter services if needed (case-insensitive)
-    let services = if let Some(filter) = &config.service_filter {
+    let mut services = if let Some(filter) = &config.service_filter {
         doc.services
             .iter()
             .filter(|s| service_matches_filter(&s.name, filter))
@@ -248,6 +289,10 @@ pub(super) fn generate_by_service<W: Write>(
                 .push(endpoint);
         }
     }
+
+    // As in the summary view, services an exact selection leaves empty are
+    // dropped.
+    retain_selected_services(&mut services, &service_endpoints, config);
 
     // Table of Contents (if enabled)
     if config.include_toc {
