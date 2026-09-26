@@ -5,6 +5,7 @@ mod markdown;
 mod models;
 mod parser;
 mod report;
+mod selection;
 mod stats;
 mod utils;
 
@@ -136,6 +137,14 @@ fn write_json_diff<W: Write>(writer: &mut W, document: &diff_json::JsonDiff) -> 
     writer.flush().context("Failed to write diff")
 }
 
+/// Warns on stderr about `--operation`/`--operation-id` values whose
+/// operations exist in the spec but were all removed by another filter.
+fn warn_filtered_out_selectors(api_doc: &ApiDocumentation, config: &DocConfig) {
+    for warning in selection::filtered_out_warnings(api_doc, config) {
+        eprintln!("{warning}");
+    }
+}
+
 fn create_output_file(path: &Path) -> Result<File> {
     File::create(path).with_context(|| format!("Failed to create output file: {:?}", path))
 }
@@ -175,12 +184,21 @@ fn run() -> Result<ExitCode> {
     let api_doc =
         parse_openapi(input).with_context(|| format!("Failed to parse OpenAPI file: {input:?}"))?;
 
+    // A selector naming no operation in the spec is a mistake, not an empty
+    // document: fail before any output (or output file) is produced.
+    if let Some(selector) = &config.operation_selector
+        && let Some(message) = selection::unmatched_selectors(&api_doc, selector)
+    {
+        bail!(message);
+    }
+
     // `--stats` is a dry run: print the per-service size table to stdout
     // instead of the documentation. clap rejects `-o` and `--max-tokens`
     // alongside it, and the hygiene report is never emitted in this mode.
     if cli.stats {
         let stats = stats::compute(&api_doc, &config).context("Failed to compute stats")?;
         stats::write_stats(&mut stdout(), &stats).context("Failed to write stats")?;
+        warn_filtered_out_selectors(&api_doc, &config);
         return Ok(ExitCode::SUCCESS);
     }
 
@@ -198,6 +216,7 @@ fn run() -> Result<ExitCode> {
 
         write_output(&mut writer, &api_doc, &config)?;
     }
+    warn_filtered_out_selectors(&api_doc, &config);
 
     Ok(ExitCode::SUCCESS)
 }

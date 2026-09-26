@@ -1,4 +1,4 @@
-use indexmap::IndexMap;
+use indexmap::{IndexMap, IndexSet};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -413,6 +413,9 @@ pub struct DocConfig {
     pub service_filter: Option<Vec<String>>,
     pub path_filter: Option<String>,
     pub method_filter: Option<Vec<String>>,
+    // Exact operations picked with `--operation`/`--operation-id`; `None` when
+    // neither flag was given. ANDed with the other filters.
+    pub operation_selector: Option<OperationSelector>,
     pub exclude_deprecated: bool,
     pub required_only: bool,
     pub detail_level: DetailLevel,
@@ -443,6 +446,7 @@ impl DocConfig {
             service_filter: None,
             path_filter: None,
             method_filter: None,
+            operation_selector: None,
             exclude_deprecated: false,
             required_only: false,
             detail_level: DetailLevel::Full,
@@ -455,6 +459,46 @@ impl DocConfig {
             max_tokens: None,
             include_report: false,
         }
+    }
+}
+
+/// One `--operation` value: an uppercased HTTP method and a path template that
+/// must equal [`Endpoint::path`] byte for byte.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct OperationRef {
+    pub method: String,
+    pub path: String,
+}
+
+impl OperationRef {
+    pub fn matches(&self, endpoint: &Endpoint) -> bool {
+        endpoint.method == self.method && endpoint.path == self.path
+    }
+}
+
+impl std::fmt::Display for OperationRef {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} {}", self.method, self.path)
+    }
+}
+
+/// The exact-operation selection from `--operation` and `--operation-id`. An
+/// endpoint is selected when it matches any entry of either set (a union).
+/// `IndexSet` keeps the order the values were given, so the unmatched-selector
+/// error lists them deterministically.
+#[derive(Debug, Clone, Default)]
+pub struct OperationSelector {
+    pub operations: IndexSet<OperationRef>,
+    pub operation_ids: IndexSet<String>,
+}
+
+impl OperationSelector {
+    pub fn matches(&self, endpoint: &Endpoint) -> bool {
+        self.operations.iter().any(|op| op.matches(endpoint))
+            || endpoint
+                .operation_id
+                .as_ref()
+                .is_some_and(|id| self.operation_ids.contains(id))
     }
 }
 

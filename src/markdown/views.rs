@@ -84,25 +84,49 @@ pub(crate) fn visible_endpoints<'a>(
     endpoints
 }
 
-/// Whether an endpoint survives the deprecated, method, and path filters that
-/// every view applies. The service filter is handled separately
-/// ([`passes_service_filter`]): the service-grouped views narrow their service
-/// list instead of filtering endpoints.
+/// Whether an endpoint survives the deprecated, method, path and exact
+/// operation (`--operation`/`--operation-id`) filters that every view applies.
+/// The service filter is handled separately ([`passes_service_filter`]): the
+/// service-grouped views narrow their service list instead of filtering
+/// endpoints.
 fn passes_filters(endpoint: &Endpoint, config: &DocConfig) -> bool {
-    if config.exclude_deprecated && endpoint.deprecated {
+    if let Some(selector) = &config.operation_selector
+        && !selector.matches(endpoint)
+    {
         return false;
+    }
+    rejecting_endpoint_filters(endpoint, config).is_empty()
+}
+
+/// The deprecated, method and path filters that reject `endpoint`, as the
+/// flags a user would type, in a fixed order.
+fn rejecting_endpoint_filters(endpoint: &Endpoint, config: &DocConfig) -> Vec<&'static str> {
+    let mut filters = Vec::new();
+    if config.exclude_deprecated && endpoint.deprecated {
+        filters.push("--exclude-deprecated");
     }
     if let Some(methods) = &config.method_filter
         && !methods.contains(&endpoint.method)
     {
-        return false;
+        filters.push("--method-filter");
     }
     if let Some(path_pattern) = &config.path_filter
         && !endpoint.path.contains(path_pattern)
     {
-        return false;
+        filters.push("--path-filter");
     }
-    true
+    filters
+}
+
+/// Every flag other than the exact operation selector that removes `endpoint`
+/// from the document, in a fixed order; empty when it would be rendered. Used
+/// to explain why a selected operation produced no output.
+pub(crate) fn removing_filters(endpoint: &Endpoint, config: &DocConfig) -> Vec<&'static str> {
+    let mut filters = rejecting_endpoint_filters(endpoint, config);
+    if !passes_service_filter(endpoint, config) {
+        filters.push("--service-filter");
+    }
+    filters
 }
 
 /// Whether an endpoint belongs to one of the `--service-filter` services. Always

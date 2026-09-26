@@ -1,0 +1,116 @@
+{
+  "openapi": "3.0.3",
+  "info": { "title": "Operation Select API", "version": "1.0.0" },
+  "tags": [
+    { "name": "Users", "description": "User management" },
+    { "name": "Admin", "description": "Administration" }
+  ],
+  "paths": {
+    "/users": {
+      "get": {
+        "tags": ["Users"],
+        "operationId": "listUsers",
+        "summary": "List users",
+        "responses": {
+          "200": {
+            "description": "The users",
+            "content": {
+              "application/json": {
+                "schema": { "type": "array", "items": { "$ref": "#/components/schemas/User" } },
+                "example": [{ "id": "u1", "name": "Ada" }]
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": ["Users"],
+        "operationId": "createUser",
+        "summary": "Create a user",
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/User" } } }
+        },
+        "responses": { "201": { "description": "Created" } }
+      }
+    },
+    "/users/{id}": {
+      "parameters": [
+        { "name": "id", "in": "path", "required": true, "description": "User ID", "schema": { "type": "string" } }
+      ],
+      "get": {
+        "tags": ["Users", "Admin"],
+        "operationId": "getUser",
+        "summary": "Get a user",
+        "responses": {
+          "200": {
+            "description": "The user",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/User" } } }
+          }
+        }
+      },
+      "delete": {
+        "tags": ["Users"],
+        "operationId": "deleteUser",
+        "summary": "Delete a user",
+        "responses": { "204": { "description": "Deleted" } }
+      }
+    },
+    "/users/{id}/keys": {
+      "parameters": [
+        { "name": "id", "in": "path", "required": true, "description": "User ID", "schema": { "type": "string" } }
+      ],
+      "get": {
+        "tags": ["Users"],
+        "operationId": "listUserKeys",
+        "summary": "List a user's keys",
+        "responses": { "200": { "description": "The keys" } }
+      }
+    },
+    "/admin/users": {
+      "get": {
+        "tags": ["Admin"],
+        "operationId": "adminListUsers",
+        "summary": "List users as an admin",
+        "responses": { "200": { "description": "The users" } }
+      }
+    },
+    "/legacy": {
+      "get": {
+        "tags": ["Admin"],
+        "operationId": "legacyReport",
+        "summary": "Legacy report",
+        "deprecated": true,
+        "responses": { "200": { "description": "The report" } }
+      }
+    },
+    "/exports/a": {
+      "get": {
+        "tags": ["Admin"],
+        "operationId": "export",
+        "summary": "Export A",
+        "responses": { "200": { "description": "Export" } }
+      }
+    },
+    "/exports/b": {
+      "get": {
+        "tags": ["Admin"],
+        "operationId": "export",
+        "summary": "Export B",
+        "responses": { "200": { "description": "Export" } }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "User": {
+        "type": "object",
+        "required": ["id"],
+        "properties": {
+          "id": { "type": "string", "description": "User ID" },
+          "name": { "type": "string", "description": "Display name" }
+        }
+      }
+    }
+  }
+}

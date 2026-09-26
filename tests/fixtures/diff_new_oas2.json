@@ -1,0 +1,40 @@
+{
+  "swagger": "2.0",
+  "info": { "title": "Gadgets API", "version": "2.0.0" },
+  "basePath": "/v1",
+  "paths": {
+    "/gadgets": {
+      "get": {
+        "tags": ["Gadgets"],
+        "operationId": "listGadgets",
+        "summary": "List gadgets",
+        "parameters": [
+          { "name": "limit", "in": "query", "type": "integer", "required": true }
+        ],
+        "responses": { "200": { "description": "The gadgets" } }
+      }
+    },
+    "/gadgets/{id}": {
+      "get": {
+        "tags": ["Gadgets"],
+        "operationId": "getGadget",
+        "summary": "Get a gadget",
+        "parameters": [
+          { "name": "id", "in": "path", "type": "string", "required": true }
+        ],
+        "responses": { "200": { "description": "The gadget" }, "404": { "description": "Not found" } }
+      }
+    },
+    "/gadgets/{id}/parts": {
+      "get": {
+        "tags": ["Gadgets"],
+        "operationId": "listParts",
+        "summary": "List a gadget's parts",
+        "parameters": [
+          { "name": "id", "in": "path", "type": "string", "required": true }
+        ],
+        "responses": { "200": { "description": "The parts" } }
+      }
+    }
+  }
+}

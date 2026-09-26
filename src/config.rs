@@ -2,7 +2,7 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 use clap_complete::Shell;
 use std::path::PathBuf;
 
-use crate::models::{DetailLevel, DocConfig, GroupBy, SortMethod};
+use crate::models::{DetailLevel, DocConfig, GroupBy, OperationRef, OperationSelector, SortMethod};
 
 #[derive(Parser, Debug)]
 #[command(name = "vimanam", version)]
@@ -48,6 +48,18 @@ pub struct Cli {
     /// Filter by HTTP methods (comma-separated)
     #[arg(long, value_delimiter = ',')]
     pub method_filter: Option<Vec<String>>,
+
+    /// Render exactly this operation, as "METHOD /path/template" (repeatable).
+    /// The path must equal the spec's path template byte for byte (no
+    /// substring, prefix or trailing-slash matching; Swagger 2 `basePath` is
+    /// not part of it)
+    #[arg(long = "operation", value_name = "METHOD PATH", value_parser = parse_operation)]
+    pub operations: Vec<OperationRef>,
+
+    /// Render exactly the operation(s) with this operationId (repeatable,
+    /// case-sensitive)
+    #[arg(long = "operation-id", value_name = "ID")]
+    pub operation_ids: Vec<String>,
 
     /// Hide deprecated endpoints
     #[arg(long)]
@@ -257,6 +269,14 @@ pub fn build_config(cli: &Cli) -> DocConfig {
             .method_filter
             .as_ref()
             .map(|methods| methods.iter().map(|m| m.to_uppercase()).collect()),
+        operation_selector: if cli.operations.is_empty() && cli.operation_ids.is_empty() {
+            None
+        } else {
+            Some(OperationSelector {
+                operations: cli.operations.iter().cloned().collect(),
+                operation_ids: cli.operation_ids.iter().cloned().collect(),
+            })
+        },
         exclude_deprecated: cli.exclude_deprecated,
         required_only: cli.required_only,
         detail_level: cli.detail.into(),
@@ -307,6 +327,27 @@ pub fn build_config(cli: &Cli) -> DocConfig {
     config
 }
 
+/// Parses an `--operation` value: a method and a path separated by the first
+/// run of whitespace. The method is uppercased (as `--method-filter` does); the
+/// path is kept verbatim and must start with `/`. A usage error (exit 2) names
+/// the expected form.
+fn parse_operation(value: &str) -> Result<OperationRef, String> {
+    let usage =
+        || format!("expected \"METHOD /path\" (for example \"GET /users/{{id}}\"), got {value:?}");
+    let (method, rest) = value.split_once(char::is_whitespace).ok_or_else(usage)?;
+    let path = rest.trim_start();
+    if method.is_empty()
+        || !method.chars().all(|c| c.is_ascii_alphabetic())
+        || !path.starts_with('/')
+    {
+        return Err(usage());
+    }
+    Ok(OperationRef {
+        method: method.to_ascii_uppercase(),
+        path: path.to_string(),
+    })
+}
+
 /// The `--detail` value name as the user spells it (e.g. `standard`), for stderr
 /// messages. Matches the kebab-case names clap derives for [`DetailLevelArg`].
 fn detail_arg_name(detail: DetailLevelArg) -> &'static str {
@@ -335,6 +376,8 @@ mod tests {
             service_filter: None,
             path_filter: None,
             method_filter: None,
+            operations: Vec::new(),
+            operation_ids: Vec::new(),
             exclude_deprecated: false,
             required_only: false,
             detail: DetailLevelArg::Summary,
@@ -357,5 +400,22 @@ mod tests {
         cli_basic.detail = DetailLevelArg::Basic;
         let config_basic = build_config(&cli_basic);
         assert_matches!(config_basic.detail_level, DetailLevel::Basic);
+    }
+
+    #[test]
+    fn parse_operation_splits_on_first_whitespace_run() {
+        let op = parse_operation("get \t /users/{id}").unwrap();
+        assert_eq!(op.method, "GET");
+        assert_eq!(op.path, "/users/{id}");
+        // Everything after the first whitespace run is the path, verbatim.
+        let op = parse_operation("POST /a,b c").unwrap();
+        assert_eq!(op.path, "/a,b c");
+    }
+
+    #[test]
+    fn parse_operation_rejects_malformed_values() {
+        for bad in ["GET", "/users", "GET users", " GET /users", "", "G3T /x"] {
+            assert!(parse_operation(bad).is_err(), "{bad:?} should be rejected");
+        }
     }
 }

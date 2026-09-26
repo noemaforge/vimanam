@@ -22,7 +22,7 @@ use crate::models::{ApiDocumentation, DetailLevel, DocConfig, GroupBy};
 // The report and stats modules reuse the views' notion of which endpoints and
 // services the rendered body covers, so their scope always matches the
 // document's.
-pub(crate) use views::{service_is_visible, visible_endpoints};
+pub(crate) use views::{removing_filters, service_is_visible, visible_endpoints};
 // `diff` compares the response schema the renderer would document.
 pub(crate) use schema::response_schema;
 
