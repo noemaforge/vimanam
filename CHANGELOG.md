@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `vimanam diff --format json`: a machine-readable diff document (pretty-printed,
+  trailing newline) with per-spec `file_sha256` over the raw input bytes, a
+  one-to-one `kind`/`details` contract for every change, `target`/`member`
+  classification and `before`/`after` presence encoding for schema changes, and
+  a stable, content-derived `vc1_` change ID per record so CI tools and coding
+  agents can track changes across runs (#98).
+
 ## [1.1.0] - 2026-09-17
 
 ### Added

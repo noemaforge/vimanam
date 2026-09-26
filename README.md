@@ -258,6 +258,7 @@ Arguments:
 
 Options:
       --report            Append a Deltas section: spec hygiene counts for both specs and the estimated token size of each at --detail full --include-schemas
+      --format <FORMAT>   Output format: a Markdown report or machine-readable JSON with stable change IDs [default: markdown] [possible values: markdown, json]
       --fail-on-breaking  Exit with status 3 when any breaking change is found, after writing the full report
   -o, --output <FILE>     Write the diff to FILE instead of stdout
   -h, --help              Print help (see more with '--help')
@@ -359,6 +360,72 @@ When a property is removed, the accompanying "removed from `required`" row for t
 `--report` appends a `## Deltas` section with the spec hygiene counts for both versions and the estimated token size of each at `--detail full --include-schemas`, so a spec update's documentation cost is visible alongside its API changes. `-o FILE` writes the report to a file (the subcommand has its own `-o`; the conversion flags do not apply to `diff`).
 
 **Known limitations.** Only the first media type of a request body or response is compared. A path-template rename (`/pets/{id}` → `/pets/{petId}`) appears as a removal plus an addition. `allOf`/`oneOf`/`anyOf` lists are compared index-wise, so reordering variants is reported as changes. The model drops `null` from OpenAPI 3.1 type arrays (`type: ["string", "null"]` is folded to `string`), so a nullability change expressed as a type array is not detected — only `nullable: true`/`false` is.
+
+### JSON output
+
+`--format json` prints the same comparison as a single pretty-printed JSON document (2-space indentation, trailing newline) on stdout or in `-o FILE`, for CI tools, review bots and coding agents. Exit codes are identical across formats, and under `--fail-on-breaking` the complete document is written and flushed before exit status 3. Diagnostics go to stderr only, so stdout is always one parseable document. `-o FILE` and stdout carry byte-identical bytes.
+
+```bash
+vimanam diff old.json new.json --format json --report -o diff.json --fail-on-breaking
+```
+
+```json
+{
+  "schema_version": 1,
+  "generator": { "name": "vimanam", "version": "1.2.0" },
+  "old": { "title": "Widgets API", "version": "1.0.0", "file_sha256": "<64 lowercase hex>" },
+  "new": { "title": "Widgets API", "version": "1.1.0", "file_sha256": "<64 lowercase hex>" },
+  "summary": {
+    "endpoints_added": 1, "endpoints_removed": 1, "endpoints_changed": 4,
+    "breaking": 4, "non_breaking": 8, "review": 1
+  },
+  "changes": [
+    {
+      "id": "vc1_<64 lowercase hex>",
+      "endpoint": { "method": "GET", "path": "/widgets/{id}" },
+      "kind": "parameter_required_changed",
+      "severity": "breaking",
+      "details": { "name": "fields", "location": "query", "now_required": true }
+    },
+    {
+      "id": "vc1_…",
+      "endpoint": { "method": "GET", "path": "/widgets" },
+      "kind": "response_schema_changed",
+      "severity": "non_breaking",
+      "details": {
+        "status": "200",
+        "schema_change": {
+          "pointer": "/properties/pricing",
+          "target": "property",
+          "member": "pricing",
+          "operation": "added",
+          "before": { "present": false },
+          "after": { "present": true, "value": { "type": "number" } }
+        }
+      }
+    }
+  ],
+  "deltas": { "hygiene": [ { "check": "Missing description", "old": 3, "new": 1 } ],
+              "tokens": { "old": 12345, "new": 12890, "estimate": "chars/4", "detail": "full+schemas" } }
+}
+```
+
+**Field reference.** `schema_version` is `1`; bumping it (or the `vc1_` ID prefix below) signals a contract change. `generator.version` is the vimanam version that produced the document. `old`/`new` carry each spec's title, version and `file_sha256`. `summary` mirrors the Markdown summary line (`summary.counts` always agree with it); `changes` lists every change in the order the Markdown tables use before grouping by severity; `severity` is one of `breaking`, `non_breaking`, `review`. `deltas` is present **only** with `--report` — the key is omitted, never `null` — with hygiene rows in the same order as the Markdown `## Deltas` table and the same chars/4 token estimate the `--report` Markdown shows. Every `kind` maps one-to-one to an internal `ChangeKind` variant, and its `details` object carries exactly that variant's fields (e.g. `parameter_required_changed` → `name`, `location`, `now_required`; `response_schema_changed` → `status`, `schema_change`; `operation_id_changed` → `old`/`new`, which may be `null` because a spec may lack an `operationId`). `status` stays a string (`"200"`, `"default"`, `"4XX"`).
+
+**Presence encoding.** `before`/`after` are each either `{ "present": false }` or `{ "present": true, "value": <json> }`. A present `value` may legitimately be JSON `null` (`default: null`, a `null` member of `enum`) — that is distinct from absence. One special case: "no schema at all" is encoded internally as a null at the root pointer `""`, so a root-level `null` side is reported as `{ "present": false }` with `operation` flipped to `added`/`removed` (a body appeared or disappeared) rather than a change to/from `null`.
+
+**Pointers.** `schema_change.pointer` is an RFC 6901 pointer exactly as the differ emits it, and `target`/`member` classify it according to the schema grammar: `target` is one of `type`, `required_member`, `enum_member`, `property`, `additional_properties`, `nullable`, `other`, and `member` is the decoded last pointer segment for the targets that address a named member (`null` otherwise). A property *named* `type` is a `property`, not the `type` keyword. Pointers address the **resolved, canonicalised schema** — `$ref`s are inlined and `description`/`title`/`example(s)`/`deprecated`/`x-*` annotations are stripped before comparing — so a pointer is a location in that normalised form, not necessarily in your input file. `required`/`enum` members appear as `/required/<name>` and `/enum/<value>`.
+
+**Change identity.** Every record's `id` is `"vc1_" + SHA-256` (lowercase hex) of a canonical JSON object `{ "v": 1, "endpoint": …, "kind": …, "details": … }` — the same `endpoint`, `kind` and `details` values the record emits, serialised with object keys sorted recursively and no whitespace. Severity, display strings, timestamps, file paths, `file_sha256` and the generator version are deliberately **not** part of the hash, so a future change to the severity rules cannot rewrite any ID; the `vc1_` prefix and the `"v": 1` field version the construction and must move together if it ever changes. Consequences you can rely on:
+
+- the same pair of specs yields identical IDs on every run;
+- reformatting a spec (whitespace, key order) changes `file_sha256` but no ID or record;
+- an unrelated edit elsewhere in the spec leaves existing IDs unchanged;
+- two different changes at the same pointer (`string` → `integer` vs `string` → `boolean`) get different IDs;
+- a change behind a shared `$ref` produces one record per affected endpoint, each with its own ID, because the endpoint is part of the hash input;
+- IDs are unique within a document.
+
+**Known limits for IDs.** `allOf`/`oneOf`/`anyOf` members are compared by index, so reordering them changes pointers and therefore IDs, even when the set of variants is unchanged. A path-template rename is a removal plus an addition with two fresh IDs — there is no rename detection.
 
 ## Continuous integration
 
