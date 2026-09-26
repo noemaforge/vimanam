@@ -9,7 +9,7 @@ use std::io::Write;
 use anyhow::Result;
 use indexmap::IndexMap;
 
-use crate::models::{ApiDocumentation, DocConfig, Endpoint, SortMethod};
+use crate::models::{ApiDocumentation, DocConfig, Endpoint, Service, SortMethod};
 use crate::utils::clean_for_id;
 
 use super::endpoint::{get_short_title, write_endpoint};
@@ -141,6 +141,19 @@ fn passes_service_filter(endpoint: &Endpoint, config: &DocConfig) -> bool {
     }
 }
 
+/// Under `--operation`/`--operation-id`, keeps only the services that contain a
+/// selected, visible endpoint. Without a selector the list is untouched, so
+/// existing output never changes.
+fn retain_selected_services(
+    services: &mut Vec<&Service>,
+    service_endpoints: &HashMap<&str, Vec<&Endpoint>>,
+    config: &DocConfig,
+) {
+    if config.operation_selector.is_some() {
+        services.retain(|service| service_endpoints.contains_key(service.name.as_str()));
+    }
+}
+
 /// Writes the document preamble shared by every view: title, description, API
 /// version, and—when `--include-auth` is set—the server URLs and authentication
 /// schemes.
@@ -185,7 +198,7 @@ pub(super) fn generate_summary<W: Write>(
     write_preamble(writer, doc, config)?;
 
     // Filter services if needed (case-insensitive)
-    let services = if let Some(filter) = &config.service_filter {
+    let mut services = if let Some(filter) = &config.service_filter {
         doc.services
             .iter()
             .filter(|s| service_matches_filter(&s.name, filter))
@@ -208,6 +221,10 @@ pub(super) fn generate_summary<W: Write>(
                 .push(endpoint);
         }
     }
+
+    // An exact selection is about its operations, so services it leaves empty
+    // are dropped instead of padding the output with empty sections.
+    retain_selected_services(&mut services, &service_endpoints, config);
 
     // Write Services List
     writeln!(writer, "## Services")?;
@@ -249,7 +266,7 @@ pub(super) fn generate_by_service<W: Write>(
     write_preamble(writer, doc, config)?;
 
     // Filter services if needed (case-insensitive)
-    let services = if let Some(filter) = &config.service_filter {
+    let mut services = if let Some(filter) = &config.service_filter {
         doc.services
             .iter()
             .filter(|s| service_matches_filter(&s.name, filter))
@@ -272,6 +289,10 @@ pub(super) fn generate_by_service<W: Write>(
                 .push(endpoint);
         }
     }
+
+    // As in the summary view, services an exact selection leaves empty are
+    // dropped.
+    retain_selected_services(&mut services, &service_endpoints, config);
 
     // Table of Contents (if enabled)
     if config.include_toc {

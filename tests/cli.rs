@@ -3023,6 +3023,7 @@ fn operation_method_is_case_insensitive() {
     let upper = run_select(&[OP_SELECT, "--operation", "GET /users", "--detail", "basic"]);
     let lower = run_select(&[OP_SELECT, "--operation", "get /users", "--detail", "basic"]);
     assert_eq!(upper.0, 0);
+    assert_eq!(rendered_operations(&upper.1), ["GET /users"]);
     assert_eq!(upper, lower);
 }
 
@@ -3249,22 +3250,32 @@ fn operation_composes_with_full_detail_schemas_examples_and_budget() {
     assert!(stdout.contains("**1 endpoint** across **1 service**"));
 
     // --inline-schemas and --max-tokens keep the same single-endpoint scope.
-    let (code, stdout, _) = run_select(&[
+    // The budget fits the selection at --detail full (so the inline schema rows
+    // render) but not the whole spec.
+    let budget_args = [
         OP_SELECT,
-        "--operation",
-        "GET /users",
         "--detail",
         "full",
         "--include-schemas",
         "--inline-schemas",
         "--max-tokens",
-        "50",
+        "200",
         "--flat",
         "--no-report",
-    ]);
+    ];
+    let (code, stdout, stderr) =
+        run_select(&[&budget_args[..], &["--operation", "GET /users"]].concat());
     assert_eq!(code, 0);
-    assert!(!stdout.contains("/users/{id}"));
-    assert!(!stdout.contains("/admin/users"));
+    assert!(stderr.is_empty(), "no detail reduction expected: {stderr}");
+    assert_eq!(rendered_operations(&stdout), ["GET /users"]);
+    assert!(
+        stdout.contains("`response[].id`"),
+        "inline schema rows: {stdout}"
+    );
+    assert!(!stdout.contains("## Schema Definitions"));
+    // Without the selector the same budget forces the detail down.
+    let (_, _, stderr) = run_select(&budget_args);
+    assert!(!stderr.is_empty(), "whole spec should not fit 200 tokens");
 }
 
 #[test]
@@ -3296,4 +3307,79 @@ fn completions_offer_the_operation_flags() {
     let script = String::from_utf8(output.stdout).unwrap();
     assert!(script.contains("--operation"));
     assert!(script.contains("--operation-id"));
+}
+
+#[test]
+fn selector_warning_names_every_removing_filter() {
+    let cases: [(&[&str], &str); 4] = [
+        (
+            &["--service-filter", "Admin"],
+            "removed by --service-filter",
+        ),
+        (&["--method-filter", "POST"], "removed by --method-filter"),
+        (&["--path-filter", "/admin"], "removed by --path-filter"),
+        (
+            &["--method-filter", "POST", "--path-filter", "/admin"],
+            "removed by --method-filter, --path-filter",
+        ),
+    ];
+    for (filters, expected) in cases {
+        let args = [&[OP_SELECT, "--operation", "GET /users"][..], filters].concat();
+        let (code, _, stderr) = run_select(&args);
+        assert_eq!(code, 0);
+        assert!(
+            stderr.contains(&format!(
+                r#"--operation "GET /users" matched an operation {expected};"#
+            )),
+            "{filters:?}: {stderr}"
+        );
+    }
+}
+
+#[test]
+fn duplicate_id_with_one_surviving_carrier_does_not_warn() {
+    let (code, stdout, stderr) = run_select(&[
+        OP_SELECT,
+        "--operation-id",
+        "export",
+        "--path-filter",
+        "/exports/a",
+        "--flat",
+        "--detail",
+        "basic",
+    ]);
+    assert_eq!(code, 0);
+    assert_eq!(rendered_operations(&stdout), ["GET /exports/a"]);
+    assert!(!stderr.contains("removed by"), "stderr: {stderr}");
+}
+
+#[test]
+fn selection_omits_services_it_leaves_empty() {
+    for detail in ["summary", "basic"] {
+        let (code, stdout, _) = run_select(&[
+            OP_SELECT,
+            "--operation",
+            "GET /admin/users",
+            "--detail",
+            detail,
+            "--no-report",
+        ]);
+        assert_eq!(code, 0);
+        assert!(stdout.contains("Admin"), "{detail}: {stdout}");
+        // The Users service (as a list entry, TOC link or section) is gone.
+        assert!(!stdout.contains("- Users"), "{detail}: {stdout}");
+        assert!(!stdout.contains("[Users]"), "{detail}: {stdout}");
+        assert!(!stdout.contains("## Users"), "{detail}: {stdout}");
+        assert!(!stdout.contains("No endpoints found"), "{detail}: {stdout}");
+    }
+    // Without a selector, empty services are still listed as before.
+    let (_, stdout, _) = run_select(&[
+        OP_SELECT,
+        "--path-filter",
+        "/admin",
+        "--detail",
+        "basic",
+        "--no-report",
+    ]);
+    assert!(stdout.contains("No endpoints found for this service."));
 }

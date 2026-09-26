@@ -14,8 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   template byte for byte (method case-insensitive, Swagger 2 `basePath`
   excluded), so `diff --format json` endpoints can be passed straight back. The
   selection is the union of both flags, ANDed with the other filters; a value
-  matching no operation in the spec exits 1 with a "did you mean" hint, and one
-  removed by another filter warns on stderr (#99).
+  matching no operation in the spec exits 1 (with a "did you mean" hint when one
+  is close), one removed by another filter warns on stderr, and the service and
+  summary views omit services the selection leaves empty (#99).
 
 ## [1.2.0] - 2026-09-26
 
