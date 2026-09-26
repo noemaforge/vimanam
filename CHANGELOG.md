@@ -5,7 +5,7 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.2.0] - 2026-09-26
 
 ### Added
 
@@ -297,6 +297,7 @@ already on `main`; only the version bump was missing.
 - Initial release: OpenAPI 2.0 (Swagger) JSON to Markdown with grouping,
   filtering, sorting, and detail levels
 
+[1.2.0]: https://github.com/noemaforge/vimanam/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/noemaforge/vimanam/compare/v1.0.1...v1.1.0
 [1.0.1]: https://github.com/noemaforge/vimanam/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/noemaforge/vimanam/compare/v0.6.0...v1.0.0
