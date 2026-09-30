@@ -3577,26 +3577,225 @@ fn schema_depth_preserves_inline_root_metadata_at_zero() {
 }
 
 #[test]
-fn schema_selectors_reject_tree_stats_and_ineffective_depth_options() {
-    for args in [
-        vec!["--schema", "Root", "--stats"],
-        vec!["--schema", "Root", "--split", "endpoint", "-o", "unused"],
-        vec![
+fn schema_depth_keeps_enums_without_selectors() {
+    vimanam()
+        .args([
+            SCHEMA_SELECTION,
+            "--detail",
+            "full",
+            "--include-schemas",
+            "--schema-depth",
+            "2",
+            "--no-report",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "| `Root.a/b~c` | string | No | Escaped name; Enum: \"alpha\", \"beta\" |",
+        ));
+}
+
+#[test]
+fn schema_depth_field_selector_retrieval_uses_same_schema_field() {
+    vimanam()
+        .args([
+            SCHEMA_SELECTION,
             "--schema-field",
-            "Root#",
-            "--output-mode",
-            "skill",
-            "-o",
-            "unused",
-        ],
-        vec!["--schema-depth", "1"],
-        vec!["--schema", "Root", "--schema-depth", "25"],
-    ] {
+            "Root#/properties/selected",
+            "--schema-depth",
+            "1",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "--schema-field 'Root#/properties/selected' --no-report",
+        ))
+        .stderr(predicate::str::contains(
+            "--schema-field 'Root#/properties/selected' --no-report",
+        ));
+}
+
+#[test]
+fn schema_depth_cutoff_links_to_emitted_schema_not_missing_ones() {
+    vimanam()
+        .args([
+            SCHEMA_SELECTION,
+            "--operation-id",
+            "GetRoot",
+            "--detail",
+            "full",
+            "--include-schemas",
+            "--schema-depth",
+            "3",
+            "--no-report",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "| `Root.deep.hop` | [Shared](#schema-shared) |",
+        ))
+        .stdout(predicate::str::contains("| `Root.selected[]` | ref Tag |"))
+        .stdout(predicate::str::contains("### Tag").not());
+}
+
+#[test]
+fn schema_depth_max_tokens_trials_do_not_leak_omission_stderr() {
+    let trial = vimanam()
+        .args([
+            SCHEMA_SELECTION,
+            "--detail",
+            "full",
+            "--include-schemas",
+            "--schema-depth",
+            "2",
+            "--max-tokens",
+            "60",
+            "--no-report",
+        ])
+        .output()
+        .unwrap();
+    assert!(trial.status.success());
+    let trial_err = String::from_utf8(trial.stderr).unwrap();
+    assert!(
+        trial_err.contains("reduced to --detail basic"),
+        "expected budget reduction: {trial_err}"
+    );
+    assert!(
+        !trial_err.contains("omitted nested schema expansion"),
+        "discarded full-detail trial leaked omissions: {trial_err}"
+    );
+
+    let real = vimanam()
+        .args([
+            SCHEMA_SELECTION,
+            "--detail",
+            "full",
+            "--include-schemas",
+            "--schema-depth",
+            "2",
+            "--no-report",
+        ])
+        .output()
+        .unwrap();
+    assert!(real.status.success());
+    let real_err = String::from_utf8(real.stderr).unwrap();
+    assert!(
+        real_err.contains("omitted nested schema expansion"),
+        "real depth-limited render should report omissions: {real_err}"
+    );
+}
+
+#[test]
+fn default_maximum_schema_depth_message_unchanged_without_new_flags() {
+    // Build a 25-deep property chain so the safety limit (24) fires without
+    // --schema/--schema-field/--schema-depth.
+    let mut properties = serde_json::json!({"leaf": {"type": "boolean"}});
+    for depth in (0..25).rev() {
+        properties = serde_json::json!({
+            "type": "object",
+            "properties": {
+                format!("n{depth}"): properties
+            }
+        });
+    }
+    let spec = serde_json::json!({
+        "openapi": "3.0.3",
+        "info": {"title": "Deep", "version": "1"},
+        "paths": {
+            "/deep": {
+                "get": {
+                    "operationId": "GetDeep",
+                    "responses": {
+                        "200": {
+                            "description": "ok",
+                            "content": {
+                                "application/json": {
+                                    "schema": properties
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    });
+    let mut file = tempfile::NamedTempFile::new().unwrap();
+    file.write_all(serde_json::to_string(&spec).unwrap().as_bytes())
+        .unwrap();
+    let output = vimanam()
+        .args([
+            file.path().to_str().unwrap(),
+            "--detail",
+            "full",
+            "--include-schemas",
+            "--inline-schemas",
+            "--no-report",
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let text = String::from_utf8(output.stdout).unwrap();
+    assert!(
+        text.contains("Maximum schema depth reached; nested expansion stopped"),
+        "safety cutoff missing: {text}"
+    );
+    assert!(
+        !text.contains("Omitted nested expansion at schema depth"),
+        "new depth-limit wording must not appear without --schema-depth: {text}"
+    );
+
+    // Absent the deep nest, the same flags must not invent the safety message.
+    vimanam()
+        .args([
+            SCHEMA_SELECTION,
+            "--detail",
+            "full",
+            "--include-schemas",
+            "--no-report",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Maximum schema depth reached").not());
+}
+
+#[test]
+fn schema_selectors_reject_tree_stats_and_ineffective_depth_options() {
+    let cases: &[(&[&str], &str)] = &[
+        (
+            &["--schema", "Root", "--stats"],
+            "cannot be used with '--stats'",
+        ),
+        (
+            &["--schema", "Root", "--split", "endpoint", "-o", "unused"],
+            "cannot be used with '--split",
+        ),
+        (
+            &[
+                "--schema-field",
+                "Root#",
+                "--output-mode",
+                "skill",
+                "-o",
+                "unused",
+            ],
+            "cannot be used with '--output-mode",
+        ),
+        (
+            &["--schema-depth", "1"],
+            "Error: --schema-depth requires --detail full --include-schemas, or --schema/--schema-field",
+        ),
+        (
+            &["--schema", "Root", "--schema-depth", "25"],
+            "Error: --schema-depth supports 0..=24 (the schema recursion safety limit)",
+        ),
+    ];
+    for (args, expected) in cases {
         vimanam()
             .arg(SCHEMA_SELECTION)
-            .args(args)
+            .args(*args)
             .assert()
-            .failure();
+            .failure()
+            .stderr(predicate::str::contains(*expected));
     }
 }
 

@@ -15,7 +15,9 @@ use std::io::Write;
 use anyhow::Result;
 use indexmap::IndexMap;
 
-use crate::models::{AdditionalProperties, ApiDocumentation, DocConfig, Response, Schema};
+use crate::models::{
+    AdditionalProperties, ApiDocumentation, DocConfig, OperationSelector, Response, Schema,
+};
 use crate::utils::{clean_for_id, decode_json_pointer_token, resolve_schema_reference};
 
 #[derive(Debug)]
@@ -45,10 +47,27 @@ pub(super) struct SchemaContext<'a> {
     external: bool,
     max_depth: Option<usize>,
     depths: IndexMap<String, usize>,
+    /// Refs that will be emitted in this build (pre-discovered for split/Skill).
+    /// Cutoff rows may link only to these or to refs already in `anchors`.
+    emitted_depths: IndexMap<String, usize>,
     source_path: String,
     current_schema: Option<String>,
+    /// Active `--schema-field` selector for the subtree being rendered, if any.
+    active_selector: Option<String>,
+    /// Endpoint identity (`METHOD path`) while rendering an operation body.
+    current_operation: Option<String>,
+    schema_names: Vec<String>,
+    schema_fields: Vec<String>,
+    operation_selector: Option<OperationSelector>,
+    service_filter: Option<Vec<String>>,
+    path_filter: Option<String>,
+    method_filter: Option<Vec<String>>,
+    exclude_deprecated: bool,
     selected: bool,
     protected_depth: usize,
+    /// Omission notices for the render that owns this context; callers print
+    /// them only when that render's buffer is actually written.
+    omissions: Vec<String>,
 }
 
 impl<'a> SchemaContext<'a> {
@@ -61,10 +80,21 @@ impl<'a> SchemaContext<'a> {
             external: false,
             max_depth: None,
             depths: IndexMap::new(),
+            emitted_depths: IndexMap::new(),
             source_path: "spec.json".to_string(),
             current_schema: None,
+            active_selector: None,
+            current_operation: None,
+            schema_names: Vec::new(),
+            schema_fields: Vec::new(),
+            operation_selector: None,
+            service_filter: None,
+            path_filter: None,
+            method_filter: None,
+            exclude_deprecated: false,
             selected: false,
             protected_depth: 0,
+            omissions: Vec::new(),
         }
     }
 
@@ -80,6 +110,13 @@ impl<'a> SchemaContext<'a> {
             .source_path
             .clone()
             .unwrap_or_else(|| "spec.json".into());
+        ctx.schema_names = config.schema_names.clone();
+        ctx.schema_fields = config.schema_fields.clone();
+        ctx.operation_selector = config.operation_selector.clone();
+        ctx.service_filter = config.service_filter.clone();
+        ctx.path_filter = config.path_filter.clone();
+        ctx.method_filter = config.method_filter.clone();
+        ctx.exclude_deprecated = config.exclude_deprecated;
         ctx.selected = !config.schema_names.is_empty() || !config.schema_fields.is_empty();
         ctx
     }
@@ -90,6 +127,33 @@ impl<'a> SchemaContext<'a> {
 
     pub(super) fn set_current_schema(&mut self, name: &str) {
         self.current_schema = Some(name.into());
+    }
+
+    pub(super) fn set_active_selector(&mut self, selector: Option<String>) {
+        self.active_selector = selector;
+    }
+
+    pub(super) fn set_current_operation(&mut self, operation: Option<String>) {
+        self.current_operation = operation;
+    }
+
+    /// Pre-discover references from a root so split/Skill pages know which
+    /// schemas will actually be emitted before cutoff rows are written.
+    pub(super) fn discover_root(&mut self, schema: &Schema, depth: usize) {
+        self.discover(schema, depth);
+    }
+
+    /// Seed the set of schemas that will be written elsewhere in this build.
+    pub(super) fn set_emitted_depths(&mut self, depths: IndexMap<String, usize>) {
+        self.emitted_depths = depths;
+    }
+
+    pub(super) fn discovered_depths(&self) -> IndexMap<String, usize> {
+        self.depths.clone()
+    }
+
+    pub(super) fn take_omissions(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.omissions)
     }
 
     pub(super) fn references(&self) -> impl Iterator<Item = (&String, usize)> {
@@ -141,16 +205,102 @@ impl<'a> SchemaContext<'a> {
     }
 
     fn retrieval(&self, reference: Option<&str>) -> String {
-        let name = reference
-            .map(short_schema_reference)
-            .or_else(|| self.current_schema.clone());
-        let selection = name
-            .map(|name| format!(" --schema {}", super::split::quote_shell(&name)))
-            .unwrap_or_else(|| " --detail full --include-schemas".into());
-        format!(
-            "vimanam {}{selection} --no-report",
-            super::split::quote_shell(&self.source_path)
-        )
+        let mut command = format!("vimanam {}", super::split::quote_shell(&self.source_path));
+
+        if let Some(selector) = &self.active_selector {
+            command.push_str(&format!(
+                " --schema-field {}",
+                super::split::quote_shell(selector)
+            ));
+            command.push_str(" --no-report");
+            return command;
+        }
+
+        if let Some(name) = reference.map(short_schema_reference) {
+            command.push_str(&format!(" --schema {}", super::split::quote_shell(&name)));
+            command.push_str(" --no-report");
+            return command;
+        }
+
+        if let Some(name) = &self.current_schema {
+            command.push_str(&format!(" --schema {}", super::split::quote_shell(name)));
+            command.push_str(" --no-report");
+            return command;
+        }
+
+        // Inline operation body: reconstruct from the active endpoint and filters.
+        self.append_scope_flags(&mut command);
+        command.push_str(" --detail full --include-schemas --no-report");
+        command
+    }
+
+    fn append_scope_flags(&self, command: &mut String) {
+        if let Some(selector) = &self.operation_selector {
+            for operation in &selector.operations {
+                command.push_str(&format!(
+                    " --operation {}",
+                    super::split::quote_shell(&operation.to_string())
+                ));
+            }
+            for id in &selector.operation_ids {
+                command.push_str(&format!(
+                    " --operation-id {}",
+                    super::split::quote_shell(id)
+                ));
+            }
+        } else if let Some(operation) = &self.current_operation {
+            command.push_str(&format!(
+                " --operation {}",
+                super::split::quote_shell(operation)
+            ));
+        }
+        if let Some(services) = &self.service_filter {
+            command.push_str(&format!(
+                " --service-filter {}",
+                super::split::quote_shell(&services.join(","))
+            ));
+        }
+        if let Some(methods) = &self.method_filter {
+            command.push_str(&format!(
+                " --method-filter {}",
+                super::split::quote_shell(&methods.join(","))
+            ));
+        }
+        if let Some(path) = &self.path_filter {
+            command.push_str(&format!(
+                " --path-filter {}",
+                super::split::quote_shell(path)
+            ));
+        }
+        if self.exclude_deprecated {
+            command.push_str(" --exclude-deprecated");
+        }
+    }
+
+    /// Link target for a cutoff `$ref` when a fuller artifact will be (or was)
+    /// written. Does not invent links to schemas that are not emitted.
+    fn cutoff_type_name(&mut self, schema: &Schema) -> String {
+        let Some(reference) = schema.reference.as_deref() else {
+            return schema_type_label(schema).to_string();
+        };
+        let linkable =
+            self.anchors.contains_key(reference) || self.emitted_depths.contains_key(reference);
+        if !linkable {
+            return format!("ref {}", short_schema_reference(reference));
+        }
+        if let Some(&depth) = self.emitted_depths.get(reference) {
+            self.depths
+                .entry(reference.to_string())
+                .and_modify(|old| *old = (*old).min(depth))
+                .or_insert(depth);
+        }
+        let name = short_schema_reference(reference);
+        let anchor = self.register(reference);
+        if self.external {
+            format!("[{}]({anchor})", super::split::escape(&name))
+        } else {
+            format!("[{name}](#{anchor})")
+        }
     }
 
     /// The documentation being rendered, for callers that need it alongside the
@@ -186,6 +336,13 @@ impl<'a> SchemaContext<'a> {
         self.used_anchors.insert(anchor.clone());
         self.anchors.insert(reference.to_string(), anchor.clone());
         anchor
+    }
+}
+
+/// Print omission notices collected during a render that was actually written.
+pub(super) fn emit_omissions(omissions: &[String]) {
+    for notice in omissions {
+        eprintln!("{notice}");
     }
 }
 
@@ -364,7 +521,9 @@ fn collect_schema_rows(
             .clone()
             .or_else(|| metadata.description.clone())
             .unwrap_or_else(|| "-".into());
-        append_enum(&mut description, metadata, ctx.selected);
+        // Depth-limited rows always keep enums; this branch is only reached when
+        // max_depth or selected is set, so default output is unchanged.
+        append_enum(&mut description, metadata, true);
         let expandable = schema.reference.is_some()
             || schema.properties.as_ref().is_some_and(|v| !v.is_empty())
             || schema.items.is_some()
@@ -378,17 +537,13 @@ fn collect_schema_rows(
         if expandable {
             let command = ctx.retrieval(schema.reference.as_deref());
             description.push_str(&format!("; Omitted nested expansion at schema depth {depth}. Retrieve full detail: {command}"));
-            eprintln!(
+            ctx.omissions.push(format!(
                 "vimanam: omitted nested schema expansion at depth {depth} for {field}; retrieve full detail: {command}"
-            );
+            ));
         }
         rows.push(SchemaRow {
             field: field.to_string(),
-            type_name: schema
-                .reference
-                .as_ref()
-                .map(|reference| format!("ref {}", short_schema_reference(reference)))
-                .unwrap_or_else(|| schema_type_label(schema).to_string()),
+            type_name: ctx.cutoff_type_name(schema),
             required: required_to_string(required).to_string(),
             description,
         });

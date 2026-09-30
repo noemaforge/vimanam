@@ -262,7 +262,7 @@ pub(super) fn generate_by_service<W: Write>(
     writer: &mut W,
     doc: &ApiDocumentation,
     config: &DocConfig,
-) -> Result<()> {
+) -> Result<Vec<String>> {
     write_preamble(writer, doc, config)?;
 
     // Filter services if needed (case-insensitive)
@@ -345,7 +345,7 @@ pub(super) fn generate_by_service<W: Write>(
 
     render_schema_definitions(writer, &mut schema_ctx)?;
 
-    Ok(())
+    Ok(schema_ctx.take_omissions())
 }
 
 /// Generates documentation grouped by HTTP method, one `##` section per method.
@@ -353,7 +353,7 @@ pub(super) fn generate_by_method<W: Write>(
     writer: &mut W,
     doc: &ApiDocumentation,
     config: &DocConfig,
-) -> Result<()> {
+) -> Result<Vec<String>> {
     write_preamble(writer, doc, config)?;
 
     // Group endpoints by method
@@ -409,7 +409,7 @@ pub(super) fn generate_by_method<W: Write>(
 
     render_schema_definitions(writer, &mut schema_ctx)?;
 
-    Ok(())
+    Ok(schema_ctx.take_omissions())
 }
 
 /// Generates documentation grouped by path (`--group-by path`), one `##`
@@ -419,7 +419,7 @@ pub(super) fn generate_by_path<W: Write>(
     writer: &mut W,
     doc: &ApiDocumentation,
     config: &DocConfig,
-) -> Result<()> {
+) -> Result<Vec<String>> {
     write_preamble(writer, doc, config)?;
 
     // Group endpoints by path. IndexMap keeps first-appearance (spec) order.
@@ -469,7 +469,7 @@ pub(super) fn generate_by_path<W: Write>(
 
     render_schema_definitions(writer, &mut schema_ctx)?;
 
-    Ok(())
+    Ok(schema_ctx.take_omissions())
 }
 
 /// Generates a flat endpoint list (`--flat`) with no grouping hierarchy.
@@ -477,7 +477,7 @@ pub(super) fn generate_flat<W: Write>(
     writer: &mut W,
     doc: &ApiDocumentation,
     config: &DocConfig,
-) -> Result<()> {
+) -> Result<Vec<String>> {
     write_preamble(writer, doc, config)?;
 
     // Collect endpoints, applying the same filters as the grouped views
@@ -492,5 +492,5 @@ pub(super) fn generate_flat<W: Write>(
 
     render_schema_definitions(writer, &mut schema_ctx)?;
 
-    Ok(())
+    Ok(schema_ctx.take_omissions())
 }

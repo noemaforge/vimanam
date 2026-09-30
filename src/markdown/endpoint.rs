@@ -24,6 +24,7 @@ pub(super) fn write_endpoint<W: Write>(
     ctx: &mut SchemaContext,
 ) -> Result<()> {
     let title = get_short_title(endpoint);
+    ctx.set_current_operation(Some(format!("{} {}", endpoint.method, endpoint.path)));
 
     match anchor {
         Some(anchor) => writeln!(writer, "### {} {{#{}}}", title, anchor)?,
@@ -139,6 +140,7 @@ pub(super) fn write_endpoint<W: Write>(
     }
 
     writeln!(writer)?; // End with a blank line
+    ctx.set_current_operation(None);
     Ok(())
 }
 

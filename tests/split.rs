@@ -721,6 +721,20 @@ fn depth_limits_apply_to_split_and_skill_reference_graphs_with_valid_links() {
                 );
                 assert!(!schemas.iter().any(|(_, text)| text.starts_with("# Tag\n")));
                 assert!(!schemas.iter().any(|(_, text)| text.starts_with("# Tail\n")));
+                let root = schemas
+                    .iter()
+                    .find(|(_, text)| text.starts_with("# Root\n"))
+                    .expect("Root schema page");
+                assert!(
+                    root.1.contains("[Shared](../schemas/shared-"),
+                    "cutoff hop should link to emitted Shared: {}",
+                    root.1
+                );
+                assert!(
+                    root.1.contains("| ` Root.selected[] ` | ref Tag |"),
+                    "missing Tag must stay an unlinked ref: {}",
+                    root.1
+                );
             } else if depth == 5 {
                 // Shared is first discovered via Root.deep.hop (depth4), then
                 // Root.shallow (depth3). The shallower path must expose tail.
