@@ -16,7 +16,8 @@ use crate::utils::{clean_for_id, resolve_schema_reference};
 
 use super::endpoint::write_endpoint;
 use super::schema::{
-    SchemaContext, emit_omissions, response_schema, short_schema_reference, write_schema_table_at,
+    SchemaContext, emit_omissions, prediscover_rendered_endpoints, short_schema_reference,
+    write_schema_table_at,
 };
 use super::{detail_level_name, estimate_tokens, service_is_visible, visible_endpoints};
 
@@ -204,21 +205,8 @@ fn prediscover_emitted_depths(
     endpoints: &[&crate::models::Endpoint],
 ) -> indexmap::IndexMap<String, usize> {
     let mut ctx = SchemaContext::configured(doc, config, true);
-    for endpoint in endpoints {
-        if let Some(schema) = endpoint
-            .parameters
-            .iter()
-            .find(|parameter| parameter.parameter_in == "body")
-            .and_then(|parameter| parameter.schema.as_ref())
-        {
-            ctx.discover_root(schema, 0);
-        }
-        for response in endpoint.responses.values() {
-            if let Some(schema) = response_schema(response) {
-                ctx.discover_root(schema, 0);
-            }
-        }
-    }
+    // Only schemas the endpoint renderer expands (request body + first 2xx).
+    prediscover_rendered_endpoints(&mut ctx, config, endpoints.iter().copied());
     ctx.discovered_depths()
 }
 

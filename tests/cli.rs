@@ -3639,6 +3639,197 @@ fn schema_depth_cutoff_links_to_emitted_schema_not_missing_ones() {
 }
 
 #[test]
+fn schema_depth_cutoff_links_shared_schema_discovered_by_later_endpoint() {
+    // Early hits Shared only at the depth cutoff; Late reaches it inside the
+    // limit. Pre-discovery must make Early's cutoff link regardless of write order.
+    let dir = tempfile::tempdir().unwrap();
+    let path = write_spec(
+        &dir,
+        "order.json",
+        &serde_json::json!({
+            "openapi": "3.0.3",
+            "info": {"title": "Order", "version": "1"},
+            "paths": {
+                "/early": {
+                    "get": {
+                        "operationId": "Early",
+                        "tags": ["A"],
+                        "responses": {
+                            "200": {
+                                "description": "ok",
+                                "content": {
+                                    "application/json": {
+                                        "schema": {
+                                            "type": "object",
+                                            "properties": {
+                                                "l1": {
+                                                    "type": "object",
+                                                    "properties": {
+                                                        "l2": {
+                                                            "type": "object",
+                                                            "properties": {
+                                                                "hop": {
+                                                                    "$ref": "#/components/schemas/Shared"
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+                "/late": {
+                    "get": {
+                        "operationId": "Late",
+                        "tags": ["A"],
+                        "responses": {
+                            "200": {
+                                "description": "ok",
+                                "content": {
+                                    "application/json": {
+                                        "schema": {"$ref": "#/components/schemas/Shared"}
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            "components": {
+                "schemas": {
+                    "Shared": {
+                        "type": "object",
+                        "properties": {"x": {"type": "string"}}
+                    }
+                }
+            }
+        }),
+    );
+
+    let output = vimanam()
+        .args([
+            &path,
+            "--flat",
+            "--detail",
+            "full",
+            "--include-schemas",
+            "--schema-depth",
+            "3",
+            "--no-report",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let text = String::from_utf8(output.stdout).unwrap();
+    let early = text
+        .find("### Early")
+        .and_then(|start| {
+            text[start..]
+                .find("### Late")
+                .map(|end| &text[start..start + end])
+        })
+        .expect("Early section before Late");
+    assert!(
+        early.contains("| `response.l1.l2.hop` | [Shared](#schema-shared) |"),
+        "Early cutoff must link to Shared discovered via Late: {early}"
+    );
+    assert!(text.contains("### Shared {#schema-shared}"), "{text}");
+}
+
+#[test]
+fn schema_depth_ignores_schemas_reachable_only_via_non_2xx() {
+    // Renderer expands only the first 2xx body. A schema referenced solely from
+    // a 4xx response must stay unlinked and unemitted under depth limiting.
+    let dir = tempfile::tempdir().unwrap();
+    let path = write_spec(
+        &dir,
+        "error_only.json",
+        &serde_json::json!({
+            "openapi": "3.0.3",
+            "info": {"title": "Errors", "version": "1"},
+            "paths": {
+                "/item": {
+                    "get": {
+                        "operationId": "GetItem",
+                        "tags": ["Items"],
+                        "responses": {
+                            "200": {
+                                "description": "ok",
+                                "content": {
+                                    "application/json": {
+                                        "schema": {
+                                            "type": "object",
+                                            "properties": {
+                                                "l1": {
+                                                    "type": "object",
+                                                    "properties": {
+                                                        "l2": {
+                                                            "type": "object",
+                                                            "properties": {
+                                                                "hop": {
+                                                                    "$ref": "#/components/schemas/ErrorOnly"
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            },
+                            "400": {
+                                "description": "bad",
+                                "content": {
+                                    "application/json": {
+                                        "schema": {"$ref": "#/components/schemas/ErrorOnly"}
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            "components": {
+                "schemas": {
+                    "ErrorOnly": {
+                        "type": "object",
+                        "properties": {"message": {"type": "string"}}
+                    }
+                }
+            }
+        }),
+    );
+
+    vimanam()
+        .args([
+            &path,
+            "--detail",
+            "full",
+            "--include-schemas",
+            "--schema-depth",
+            "3",
+            "--no-report",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "| `response.l1.l2.hop` | ref ErrorOnly |",
+        ))
+        .stdout(predicate::str::contains("### ErrorOnly").not())
+        .stdout(predicate::str::contains("[ErrorOnly]").not());
+}
+
+#[test]
 fn schema_depth_max_tokens_trials_do_not_leak_omission_stderr() {
     let trial = vimanam()
         .args([

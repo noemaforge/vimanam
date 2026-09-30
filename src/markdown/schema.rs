@@ -16,7 +16,8 @@ use anyhow::Result;
 use indexmap::IndexMap;
 
 use crate::models::{
-    AdditionalProperties, ApiDocumentation, DocConfig, OperationSelector, Response, Schema,
+    AdditionalProperties, ApiDocumentation, DetailLevel, DocConfig, Endpoint, OperationSelector,
+    Response, Schema,
 };
 use crate::utils::{clean_for_id, decode_json_pointer_token, resolve_schema_reference};
 
@@ -360,6 +361,64 @@ pub(crate) fn response_schema(response: &Response) -> Option<&Schema> {
         .content
         .as_ref()
         .and_then(|content| content.values().find_map(|media| media.schema.as_ref()))
+}
+
+/// Request-body schema an endpoint's full-detail schema section expands, if any.
+pub(super) fn request_body_schema(endpoint: &Endpoint) -> Option<&Schema> {
+    endpoint
+        .parameters
+        .iter()
+        .find(|parameter| parameter.parameter_in == "body")
+        .and_then(|parameter| parameter.schema.as_ref())
+}
+
+/// First 2xx response in spec order — the only success body the renderer expands.
+pub(super) fn first_success_response(endpoint: &Endpoint) -> Option<(&str, &Response)> {
+    endpoint
+        .responses
+        .iter()
+        .find(|(code, _)| code.starts_with('2'))
+        .map(|(code, response)| (code.as_str(), response))
+}
+
+/// Schemas [`super::endpoint::write_endpoint`] actually expands under
+/// `--detail full --include-schemas`: request body (if any) and the first 2xx
+/// response schema (if any). Shared by single-file and split/Skill pre-discovery
+/// so cutoff linking never invents pages for schemas the tree does not render.
+pub(super) fn rendered_endpoint_schemas(endpoint: &Endpoint) -> Vec<&Schema> {
+    let mut schemas = Vec::new();
+    if let Some(schema) = request_body_schema(endpoint) {
+        schemas.push(schema);
+    }
+    if let Some((_, response)) = first_success_response(endpoint)
+        && let Some(schema) = response_schema(response)
+    {
+        schemas.push(schema);
+    }
+    schemas
+}
+
+/// Pre-discover every schema this document will expand so cutoff rows can link
+/// to definitions regardless of endpoint write order. No-op without
+/// `--schema-depth`, and no-op unless the renderer will expand schemas
+/// (`--detail full --include-schemas`), so lower-detail budget trials and
+/// default output stay unchanged.
+pub(super) fn prediscover_rendered_endpoints<'a>(
+    ctx: &mut SchemaContext<'_>,
+    config: &DocConfig,
+    endpoints: impl IntoIterator<Item = &'a Endpoint>,
+) {
+    if ctx.max_depth.is_none()
+        || config.detail_level != DetailLevel::Full
+        || !config.include_schemas
+    {
+        return;
+    }
+    for endpoint in endpoints {
+        for schema in rendered_endpoint_schemas(endpoint) {
+            ctx.discover_root(schema, 0);
+        }
+    }
 }
 
 /// Writes a Markdown field table for `schema`. `root_label` names the top-level
