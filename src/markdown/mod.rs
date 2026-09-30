@@ -11,6 +11,7 @@
 mod endpoint;
 mod examples;
 mod schema;
+pub(crate) mod schema_selection;
 pub(crate) mod split;
 mod views;
 
@@ -51,6 +52,9 @@ pub(crate) fn render<W: Write>(
     doc: &ApiDocumentation,
     config: &DocConfig,
 ) -> Result<()> {
+    if schema_selection::active(config) {
+        return schema_selection::render(writer, doc, config);
+    }
     // For summary level, just generate the TOC
     if config.detail_level == DetailLevel::Summary {
         views::generate_summary(writer, doc, config)
@@ -84,6 +88,22 @@ fn generate_within_budget<W: Write>(
     config: &DocConfig,
     budget: usize,
 ) -> Result<()> {
+    if schema_selection::active(config) {
+        let mut buffer = Vec::new();
+        render(&mut buffer, doc, config)?;
+        let tokens = estimate_tokens(&buffer);
+        if tokens > budget {
+            let notice = format!(
+                "> Selected schemas exceed the approximate {budget}-token budget (~{tokens} tokens before this notice). Selection and metadata are preserved; narrow --schema-field or explicitly set --schema-depth.\n\n"
+            );
+            eprintln!(
+                "vimanam: selected schemas exceed approximate {budget}-token budget (~{tokens} tokens); preserving requested selection and metadata"
+            );
+            writer.write_all(notice.as_bytes())?;
+        }
+        writer.write_all(&buffer)?;
+        return Ok(());
+    }
     // Only consider levels at or below the one the caller asked for.
     let start = DETAIL_LADDER
         .iter()

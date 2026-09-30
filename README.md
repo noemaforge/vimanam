@@ -169,7 +169,26 @@ vimanam input.json --stats --detail standard
 vimanam diff v1/openapi.json v2/openapi.json --report --fail-on-breaking
 ```
 
-### Spec hygiene report
+### Schema reads and expansion limits
+
+Keep full split/Skill files available and request a smaller schema read when one file is too large:
+
+```sh
+vimanam spec.json --schema v1FindingSpec
+vimanam spec.json --schema-field 'v1FindingSpec#/properties/finding_tags'
+vimanam spec.json --schema-field 'v1FindingSpec#/properties/finding_tags/items/properties/tag'
+vimanam spec.json --operation-id GetFinding --detail full --include-schemas --schema-depth 2
+```
+
+`--schema` and `--schema-field` are repeatable standalone reads. They always render full schema metadata and omit the endpoint hygiene report. Named schemas need not be reachable from an operation. Combining an exact operation selector adds a matched-operation context list; schema selection stays independent. Field reads retain ancestor types, descriptions, requiredness and enum values, pruning unrelated siblings and their references. A pointer crosses references automatically and selects schema subtrees using `/properties/NAME`, `/items`, `/additionalProperties`, or `/allOf/INDEX`, `/oneOf/INDEX`, `/anyOf/INDEX`. Escape property-name `~` as `~0` and `/` as `~1`; an empty pointer selects the complete schema. Invalid names/pointers fail before creating output. Both Swagger 2 definitions and OpenAPI 3 component schemas are supported.
+
+`--schema-depth N` accepts 0 through 24, matching the recursion safety limit. A root has depth zero; each property, array item, composition variant, additional-properties schema and reference traversal adds one edge. At depth N, the row retains its type/reference, description and requiredness, but stops nested expansion and gives a full retrieval command. Depth zero keeps root metadata. Shared definitions inherit the shortest depth from the original roots, including across deferred definitions and split/Skill pages; limits never restart at every schema. Explicit field selectors protect their ancestor path and leaf metadata even below this depth; the limit then bounds expansion beyond that selection. Omissions are reported in Markdown and stderr.
+
+Without standalone selectors, depth requires `--detail full --include-schemas`; it works with operation filters, `--stats` and split/Skill output. Selectors produce dedicated reads and conflict with split/Skill output and service-oriented `--stats`; use the commands in schema detail pages to read a field separately. Depth/field limits are opt-in; existing full rendering remains available when omitted.
+
+For explicit schema reads, `--max-tokens` never drops selected metadata or lowers detail. If the selection exceeds the approximate characters/4 budget (including budget zero), Vimanam emits the complete requested read with an over-budget notice in Markdown and stderr. Narrow the field selector or explicitly set depth to reduce it. Other single-file output keeps its existing detail fallback, and split/Skill overview budgets affect only the overview.
+
+## Spec hygiene report
 
 Every run appends a short report after the documentation, separated by a horizontal rule, that flags common gaps in the spec: operations with no summary or description, no `operationId`, no documented responses, deprecated operations, operations with no tag (attributed to the default service), duplicate `operationId`s, and parameters without a description (a request body counts once per operation, however many media types it offers). It covers the same endpoints the documentation does, so `--service-filter`, `--path-filter`, `--method-filter` and `--exclude-deprecated` narrow the report too. Detail lists appear only for checks that found something.
 
@@ -279,6 +298,9 @@ Options:
       --split <SPLIT>                      Write linked pages to the --output directory [service, tag, endpoint]
       --output-mode <OUTPUT_MODE>          Write an agent-navigable SKILL.md tree [skill]
       --overview-max-tokens <N>            Estimated budget for the split index or SKILL.md only; detail remains available
+      --schema-depth <N>                   Limit schema expansion edges (0..=24)
+      --schema <NAME>                      Read a named schema directly (repeatable)
+      --schema-field <NAME#POINTER>        Read a schema subtree with ancestors (repeatable)
       --no-report                          Skip the spec hygiene report appended after the documentation
       --stats                              Dry run: print a per-service table of visible endpoints and estimated tokens instead of Markdown (TOTAL is one whole-document render, not the sum of the rows)
   -h, --help                               Print help

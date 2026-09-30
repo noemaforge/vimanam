@@ -15,7 +15,7 @@ use crate::models::{ApiDocumentation, DetailLevel, DocConfig, Endpoint};
 use crate::utils::{clean_for_id, resolve_schema_reference};
 
 use super::endpoint::write_endpoint;
-use super::schema::{SchemaContext, short_schema_reference, write_schema_table};
+use super::schema::{SchemaContext, short_schema_reference, write_schema_table_at};
 use super::{detail_level_name, estimate_tokens, service_is_visible, visible_endpoints};
 
 const MANIFEST: &str = ".vimanam-manifest.json";
@@ -97,7 +97,7 @@ fn skill_name(title: &str) -> String {
     }
 }
 
-fn quote_shell(value: &str) -> String {
+pub(super) fn quote_shell(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\\''"))
 }
 
@@ -207,7 +207,7 @@ fn render_tree(
     files.insert("api.md".to_string(), api_details);
     let endpoints = visible_endpoints(doc, config);
     let mut overview_entries = Vec::new();
-    let mut references = BTreeSet::new();
+    let mut references = BTreeMap::new();
 
     match split {
         SplitArg::Endpoint => {
@@ -281,7 +281,14 @@ fn render_tree(
     // Expand each shared definition exactly once; newly encountered references
     // are queued. The seen set terminates cycles without dropping valid links.
     let mut seen = BTreeSet::new();
-    while let Some(reference) = references.pop_first() {
+    while !references.is_empty() {
+        let reference = references
+            .iter()
+            .min_by_key(|(reference, depth)| (**depth, *reference))
+            .expect("nonempty")
+            .0
+            .clone();
+        let depth = references.remove(&reference).expect("queued");
         if !seen.insert(reference.clone()) {
             continue;
         }
@@ -290,16 +297,29 @@ fn render_tree(
         let name = short_schema_reference(&reference);
         let mut body = Vec::new();
         writeln!(body, "# {}\n\n[Overview](../index.md)\n", escape(&name))?;
-        let mut ctx = SchemaContext::external(doc);
-        write_schema_table(&mut body, schema, &name, &mut ctx)?;
-        references.extend(
-            ctx.references()
-                .filter(|reference| !seen.contains(*reference))
-                .cloned(),
-        );
+        let mut ctx = SchemaContext::configured(doc, config, true);
+        ctx.set_current_schema(&name);
+        write_schema_table_at(&mut body, schema, &name, depth, &mut ctx)?;
+        for (child, child_depth) in ctx
+            .references()
+            .filter(|(reference, _)| !seen.contains(*reference))
+        {
+            references
+                .entry(child.clone())
+                .and_modify(|old| *old = (*old).min(child_depth))
+                .or_insert(child_depth);
+        }
         writeln!(
             body,
             "\n> Referenced schema details are in the linked schema files; they are omitted from this page.\n"
+        )?;
+        writeln!(
+            body,
+            "Read this schema directly, or select a field subtree (replace FIELD with a source property; JSON-pointer escaping uses ~0/~1):\n\n```sh\nvimanam {} --schema {} --no-report\nvimanam {} --schema-field {} --no-report\n```\n",
+            quote_shell(&input.to_string_lossy()),
+            quote_shell(&name),
+            quote_shell(&input.to_string_lossy()),
+            quote_shell(&format!("{name}#/properties/FIELD"))
         )?;
         files.insert(format!("schemas/{}", schema_filename(&reference)), body);
     }
@@ -555,7 +575,7 @@ fn write_detail(
     endpoint: &Endpoint,
     doc: &ApiDocumentation,
     config: &DocConfig,
-    references: &mut BTreeSet<String>,
+    references: &mut BTreeMap<String, usize>,
 ) -> Result<()> {
     if config.detail_level == DetailLevel::Summary {
         // Summary never invokes write_endpoint (whose lowest body level is Basic).
@@ -568,7 +588,7 @@ fn write_detail(
         body.extend(entry(endpoint, &format!("#{}", endpoint_anchor(endpoint))).as_bytes());
         return Ok(());
     }
-    let mut ctx = SchemaContext::external(doc);
+    let mut ctx = SchemaContext::configured(doc, config, true);
     write_endpoint(
         body,
         endpoint,
@@ -576,7 +596,12 @@ fn write_detail(
         Some(&endpoint_anchor(endpoint)),
         &mut ctx,
     )?;
-    references.extend(ctx.references().cloned());
+    for (reference, depth) in ctx.references() {
+        references
+            .entry(reference.clone())
+            .and_modify(|old| *old = (*old).min(depth))
+            .or_insert(depth);
+    }
     Ok(())
 }
 

@@ -674,3 +674,89 @@ fn global_api_guidance_remains_available_in_all_modes_and_tiny_overviews() {
         assert_eq!(tree(&directory), budgeted);
     }
 }
+
+#[test]
+fn depth_limits_apply_to_split_and_skill_reference_graphs_with_valid_links() {
+    let temporary = tempfile::tempdir().unwrap();
+    let root = temporary.path().canonicalize().unwrap();
+    for (mode, value) in [
+        ("--split", "endpoint"),
+        ("--split", "service"),
+        ("--split", "tag"),
+        ("--output-mode", "skill"),
+    ] {
+        for depth in [0, 3, 5, 8] {
+            let directory = root.join(format!("{}-{value}-{depth}", mode.trim_start_matches('-')));
+            Command::cargo_bin("vimanam")
+                .unwrap()
+                .args([
+                    "tests/fixtures/schema_selection_oas3.json",
+                    mode,
+                    value,
+                    "--detail",
+                    "full",
+                    "--include-schemas",
+                    "--schema-depth",
+                    &depth.to_string(),
+                    "-o",
+                ])
+                .arg(&directory)
+                .assert()
+                .success();
+            let files = tree(&directory);
+            assert_links(&directory, &files);
+            let schemas: Vec<_> = files
+                .iter()
+                .filter(|(path, _)| {
+                    path.starts_with("schemas") && path.file_name().unwrap() != "index.md"
+                })
+                .collect();
+            if depth == 0 {
+                assert!(schemas.is_empty());
+            } else if depth == 3 {
+                assert!(
+                    schemas
+                        .iter()
+                        .any(|(_, text)| text.starts_with("# Shared\n"))
+                );
+                assert!(!schemas.iter().any(|(_, text)| text.starts_with("# Tag\n")));
+                assert!(!schemas.iter().any(|(_, text)| text.starts_with("# Tail\n")));
+            } else if depth == 5 {
+                // Shared is first discovered via Root.deep.hop (depth4), then
+                // Root.shallow (depth3). The shallower path must expose tail.
+                let shared = schemas
+                    .iter()
+                    .find(|(_, text)| text.starts_with("# Shared\n"))
+                    .unwrap();
+                assert!(shared.1.contains("../schemas/tail-"));
+                assert!(schemas.iter().any(|(_, text)| text.starts_with("# Tail\n")));
+            }
+            let detail = files
+                .iter()
+                .filter(|(path, _)| path.extension().is_some_and(|ext| ext == "md"))
+                .map(|(_, text)| text.as_str())
+                .collect::<Vec<_>>()
+                .join("\n");
+            if depth < 8 {
+                assert!(detail.contains("Omitted nested expansion"));
+            }
+            Command::cargo_bin("vimanam")
+                .unwrap()
+                .args([
+                    "tests/fixtures/schema_selection_oas3.json",
+                    mode,
+                    value,
+                    "--detail",
+                    "full",
+                    "--include-schemas",
+                    "--schema-depth",
+                    &depth.to_string(),
+                    "-o",
+                ])
+                .arg(&directory)
+                .assert()
+                .success();
+            assert_eq!(tree(&directory), files);
+        }
+    }
+}

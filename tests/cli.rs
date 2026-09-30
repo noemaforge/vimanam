@@ -3383,3 +3383,311 @@ fn selection_omits_services_it_leaves_empty() {
     ]);
     assert!(stdout.contains("No endpoints found for this service."));
 }
+
+const SCHEMA_SELECTION: &str = "tests/fixtures/schema_selection_oas3.json";
+
+#[test]
+fn schema_field_retains_array_requiredness_description_enum_and_excludes_siblings() {
+    vimanam()
+        .args([
+            SCHEMA_SELECTION,
+            "--schema-field",
+            "Root#/properties/selected/items/properties/kind",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "| `Root.selected` | array<object> | Yes | Chosen tags |",
+        ))
+        .stdout(predicate::str::contains(
+            "| `Root.selected[].kind` | string | Yes | Tag kind; Enum: \"FIRST\", \"SECOND\" |",
+        ))
+        .stdout(predicate::str::contains("Root metadata"))
+        .stdout(predicate::str::contains("Tag metadata"))
+        .stdout(predicate::str::contains("Unrelated").not())
+        .stdout(predicate::str::contains("Root.other").not())
+        .stdout(predicate::str::contains("Schema Definitions").not());
+}
+
+#[test]
+fn schema_selectors_are_repeatable_and_read_unreachable_schemas() {
+    vimanam()
+        .args([
+            SCHEMA_SELECTION,
+            "--schema",
+            "Unused",
+            "--schema-field",
+            "Root#/properties/a~1b~0c",
+            "--schema",
+            "Unused",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "Not referenced by any endpoint; Enum: \"X\", \"Y\"",
+        ))
+        .stdout(predicate::str::contains("Root.a/b~c"))
+        .stdout(predicate::str::contains("Enum: \"alpha\", \"beta\""));
+}
+
+#[test]
+fn schema_selection_crosses_recursive_refs_with_consumed_pointer() {
+    vimanam()
+        .args([
+            SCHEMA_SELECTION,
+            "--schema-field",
+            "Node#/properties/next/properties/next/properties/value",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "Node.next.next.value` | integer | Yes",
+        ));
+}
+
+#[test]
+fn schema_selection_composition_and_map_keep_source_context() {
+    vimanam()
+        .args([
+            SCHEMA_SELECTION,
+            "--schema-field",
+            "Root#/properties/choice/oneOf/1/properties/kind",
+            "--schema-field",
+            "Root#/properties/map/additionalProperties/properties/kind",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Root.choice.oneOf[1].kind"))
+        .stdout(predicate::str::contains("Root.map.*.kind"))
+        .stdout(predicate::str::contains("Root.choice.oneOf[0]").not());
+}
+
+#[test]
+fn schema_invalid_selectors_fail_before_creating_output() {
+    let temp = tempfile::tempdir().unwrap();
+    for selector in [
+        "Root",
+        "Root#properties/selected",
+        "Root#/properties/nope",
+        "Root#/properties/a~2b",
+        "Root#/properties/choice/oneOf/09",
+        "Root#/description",
+        "Missing#/properties/a",
+    ] {
+        let output = temp.path().join("missing").join("out.md");
+        vimanam()
+            .args([SCHEMA_SELECTION, "--schema-field", selector, "-o"])
+            .arg(&output)
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains("Error:"));
+        assert!(!output.exists(), "{selector} created output");
+        assert!(!output.parent().unwrap().exists());
+    }
+}
+
+#[test]
+fn schema_selection_preserves_selected_leaf_even_at_depth_and_budget_zero() {
+    vimanam()
+        .args([
+            SCHEMA_SELECTION,
+            "--schema-field",
+            "Root#/properties/selected/items/properties/kind",
+            "--schema-depth",
+            "0",
+            "--max-tokens",
+            "0",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "Root.selected[].kind` | string | Yes | Tag kind; Enum: \"FIRST\", \"SECOND\"",
+        ))
+        .stdout(predicate::str::contains(
+            "Selected schemas exceed the approximate 0-token budget",
+        ))
+        .stderr(predicate::str::contains(
+            "preserving requested selection and metadata",
+        ));
+}
+
+#[test]
+fn schema_selection_composes_with_exact_operation_context() {
+    vimanam()
+        .args([
+            SCHEMA_SELECTION,
+            "--schema",
+            "Unused",
+            "--operation-id",
+            "GetRoot",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("- GET /roots"))
+        .stdout(predicate::str::contains(
+            "Operation selectors provide context",
+        ))
+        .stdout(predicate::str::contains("Root.selected").not());
+}
+
+#[test]
+fn schema_depth_bounds_deferred_graph_and_reports_retrieval() {
+    vimanam()
+        .args([
+            SCHEMA_SELECTION,
+            "--operation-id",
+            "GetRoot",
+            "--detail",
+            "full",
+            "--include-schemas",
+            "--schema-depth",
+            "3",
+            "--no-report",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("### Root {#schema-root}"))
+        .stdout(predicate::str::contains("### Shared {#schema-shared}"))
+        .stdout(predicate::str::contains("### Tag").not())
+        .stdout(predicate::str::contains("### Tail").not())
+        .stdout(predicate::str::contains(
+            "Omitted nested expansion at schema depth 3",
+        ))
+        .stdout(predicate::str::contains("--schema 'Tag' --no-report"))
+        .stderr(predicate::str::contains("omitted nested schema expansion"));
+}
+
+#[test]
+fn schema_depth_preserves_inline_root_metadata_at_zero() {
+    vimanam()
+        .args([
+            SCHEMA_SELECTION,
+            "--schema",
+            "Root",
+            "--inline-schemas",
+            "--schema-depth",
+            "0",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "Root` | object | - | Root metadata; Omitted",
+        ))
+        .stdout(predicate::str::contains("Root.selected").not());
+}
+
+#[test]
+fn schema_selectors_reject_tree_stats_and_ineffective_depth_options() {
+    for args in [
+        vec!["--schema", "Root", "--stats"],
+        vec!["--schema", "Root", "--split", "endpoint", "-o", "unused"],
+        vec![
+            "--schema-field",
+            "Root#",
+            "--output-mode",
+            "skill",
+            "-o",
+            "unused",
+        ],
+        vec!["--schema-depth", "1"],
+        vec!["--schema", "Root", "--schema-depth", "25"],
+    ] {
+        vimanam()
+            .arg(SCHEMA_SELECTION)
+            .args(args)
+            .assert()
+            .failure();
+    }
+}
+
+#[test]
+fn schema_selection_supports_swagger_definitions() {
+    let mut spec: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(SCHEMA_SELECTION).unwrap()).unwrap();
+    spec["swagger"] = serde_json::json!("2.0");
+    spec.as_object_mut().unwrap().remove("openapi");
+    spec["definitions"] = spec["components"]["schemas"].take();
+    spec.as_object_mut().unwrap().remove("components");
+    spec["paths"] = serde_json::json!({});
+    let text = serde_json::to_string(&spec)
+        .unwrap()
+        .replace("#/components/schemas/", "#/definitions/");
+    let mut file = tempfile::NamedTempFile::new().unwrap();
+    file.write_all(text.as_bytes()).unwrap();
+    vimanam()
+        .arg(file.path())
+        .args([
+            "--schema-field",
+            "Root#/properties/selected/items/properties/kind",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Root.selected[].kind"))
+        .stdout(predicate::str::contains("Enum: \"FIRST\", \"SECOND\""));
+}
+
+#[test]
+fn schema_depth_shared_definition_uses_shortest_path_and_is_deterministic() {
+    let args = [
+        SCHEMA_SELECTION,
+        "--operation-id",
+        "GetRoot",
+        "--detail",
+        "full",
+        "--include-schemas",
+        "--schema-depth",
+        "5",
+        "--no-report",
+    ];
+    let first = vimanam().args(args).output().unwrap();
+    let second = vimanam().args(args).output().unwrap();
+    assert!(first.status.success());
+    assert_eq!(first.stdout, second.stdout);
+    let text = String::from_utf8(first.stdout).unwrap();
+    let shared = text
+        .split("### Shared {#schema-shared}")
+        .nth(1)
+        .unwrap()
+        .split("### ")
+        .next()
+        .unwrap();
+    assert!(shared.contains("[Tail](#schema-tail)"));
+    assert!(text.contains("### Tail {#schema-tail}"));
+    assert!(!text.contains("Maximum schema depth"));
+}
+
+#[test]
+fn schema_depth_stats_estimate_matches_real_render() {
+    let args = [
+        SCHEMA_SELECTION,
+        "--operation-id",
+        "GetRoot",
+        "--detail",
+        "full",
+        "--include-schemas",
+        "--schema-depth",
+        "3",
+    ];
+    let document = vimanam().args(args).arg("--no-report").output().unwrap();
+    let statistics = vimanam().args(args).arg("--stats").output().unwrap();
+    assert!(document.status.success() && statistics.status.success());
+    let tokens = String::from_utf8(document.stdout)
+        .unwrap()
+        .chars()
+        .count()
+        .div_ceil(4);
+    let statistics = String::from_utf8(statistics.stdout).unwrap();
+    let total = statistics
+        .lines()
+        .find(|line| line.starts_with("TOTAL"))
+        .unwrap();
+    assert_eq!(
+        total
+            .split_whitespace()
+            .last()
+            .unwrap()
+            .parse::<usize>()
+            .unwrap(),
+        tokens
+    );
+}
