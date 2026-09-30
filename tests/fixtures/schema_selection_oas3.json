@@ -1,0 +1,24 @@
+{
+ "openapi":"3.0.3", "info":{"title":"Schema selection","version":"1"},
+ "paths":{"/roots":{"get":{"operationId":"GetRoot","tags":["Roots"],"responses":{"200":{"description":"Root response","content":{"application/json":{"schema":{"$ref":"#/components/schemas/Root"}}}}}}}},
+ "components":{"schemas":{
+  "Root":{"type":"object","description":"Root metadata","required":["selected","other"],"properties":{
+   "selected":{"type":"array","description":"Chosen tags","items":{"$ref":"#/components/schemas/Tag"}},
+   "other":{"$ref":"#/components/schemas/Unrelated"},
+   "deep":{"type":"object","properties":{"hop":{"$ref":"#/components/schemas/Shared"}}},
+   "shallow":{"$ref":"#/components/schemas/Shared"},
+   "a/b~c":{"type":"string","description":"Escaped name","enum":["alpha","beta"]},
+   "choice":{"oneOf":[{"type":"integer"},{"$ref":"#/components/schemas/Tag"}]},
+   "map":{"type":"object","additionalProperties":{"$ref":"#/components/schemas/Tag"}}
+  }},
+  "Tag":{"type":"object","description":"Tag metadata","required":["kind"],"properties":{
+   "kind":{"type":"string","description":"Tag kind","enum":["FIRST","SECOND"]},
+   "child":{"$ref":"#/components/schemas/Tail"}
+  }},
+  "Tail":{"type":"object","properties":{"stop":{"type":"boolean"},"cycle":{"$ref":"#/components/schemas/Root"}}},
+  "Shared":{"type":"object","properties":{"tail":{"$ref":"#/components/schemas/Tail"}}},
+  "Unrelated":{"type":"object","properties":{"secret":{"type":"string"}}},
+  "Unused":{"type":"string","description":"Not referenced by any endpoint","enum":["X","Y"]},
+  "Node":{"type":"object","required":["value"],"properties":{"value":{"type":"integer"},"next":{"$ref":"#/components/schemas/Node"}}}
+ }}
+}

@@ -1,4 +1,4 @@
-use clap::{Args, Parser, Subcommand, ValueEnum};
+use clap::{ArgGroup, Args, Parser, Subcommand, ValueEnum};
 use clap_complete::Shell;
 use std::path::PathBuf;
 
@@ -13,17 +13,31 @@ use crate::models::{DetailLevel, DocConfig, GroupBy, OperationRef, OperationSele
 // positional `required` and let the subcommand negate that requirement.
 // Conversion flags are meaningless alongside a subcommand, so they conflict.
 #[command(subcommand_negates_reqs = true, args_conflicts_with_subcommands = true)]
+#[command(group(ArgGroup::new("tree_output").args(["split", "output_mode"])))]
 pub struct Cli {
-    /// Path to the OpenAPI JSON file
+    /// Path to the OpenAPI JSON or YAML file
     #[arg(value_name = "FILE", required = true)]
     pub input: Option<PathBuf>,
 
     #[command(subcommand)]
     pub command: Option<Commands>,
 
-    /// Output file path
+    /// Output file path, or directory for split/skill output
     #[arg(short, long, value_name = "FILE")]
     pub output: Option<PathBuf>,
+
+    /// Write linked Markdown pages to the directory given by --output
+    #[arg(long, value_enum, requires = "output", conflicts_with_all = ["stats", "max_tokens", "inline_schemas"])]
+    pub split: Option<SplitArg>,
+
+    /// Write an agent-navigable SKILL.md tree to the --output directory
+    #[arg(long, value_enum, requires = "output", conflicts_with_all = ["stats", "max_tokens", "inline_schemas"])]
+    pub output_mode: Option<OutputModeArg>,
+
+    /// Estimated token budget for the compact split index or SKILL.md only; full navigation
+    /// and detail pages remain available, without detail fallback
+    #[arg(long, value_name = "N", requires = "tree_output")]
+    pub overview_max_tokens: Option<usize>,
 
     /// Group endpoints by HTTP method instead of by service
     #[arg(long)]
@@ -81,6 +95,21 @@ pub struct Cli {
     /// shared "Schema Definitions" section (larger, self-contained output)
     #[arg(long)]
     pub inline_schemas: bool,
+
+    /// Maximum schema traversal edges from a root (properties/items/composition/$ref).
+    /// Zero retains only roots. Without selectors requires full detail with schemas.
+    #[arg(long, value_name = "N")]
+    pub schema_depth: Option<usize>,
+
+    /// Read a named schema directly (repeatable); independent of endpoint reachability.
+    /// Always renders full schema metadata, regardless of --detail.
+    #[arg(long = "schema", value_name = "NAME", conflicts_with_all = ["split", "output_mode", "stats"])]
+    pub schema_names: Vec<String>,
+
+    /// Read a schema subtree and its ancestors, as NAME#/properties/FIELD (repeatable).
+    /// JSON-pointer escaping applies. Referenced schemas may be traversed by the pointer.
+    #[arg(long = "schema-field", value_name = "NAME#POINTER", conflicts_with_all = ["split", "output_mode", "stats"])]
+    pub schema_fields: Vec<String>,
 
     /// Include request/response examples
     #[arg(long)]
@@ -199,6 +228,18 @@ pub enum GroupByArg {
     Path,
 }
 
+#[derive(Copy, Clone, PartialEq, Eq, ValueEnum, Debug)]
+pub enum SplitArg {
+    Service,
+    Tag,
+    Endpoint,
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, ValueEnum, Debug)]
+pub enum OutputModeArg {
+    Skill,
+}
+
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum, Debug)]
 pub enum DetailLevelArg {
     Summary,
@@ -279,9 +320,22 @@ pub fn build_config(cli: &Cli) -> DocConfig {
         },
         exclude_deprecated: cli.exclude_deprecated,
         required_only: cli.required_only,
-        detail_level: cli.detail.into(),
-        include_schemas: cli.include_schemas,
+        detail_level: if cli.schema_names.is_empty() && cli.schema_fields.is_empty() {
+            cli.detail.into()
+        } else {
+            DetailLevel::Full
+        },
+        include_schemas: cli.include_schemas
+            || !cli.schema_names.is_empty()
+            || !cli.schema_fields.is_empty(),
         inline_schemas: cli.inline_schemas,
+        schema_depth: cli.schema_depth,
+        schema_names: cli.schema_names.clone(),
+        schema_fields: cli.schema_fields.clone(),
+        source_path: cli
+            .input
+            .as_ref()
+            .map(|path| path.to_string_lossy().into_owned()),
         include_examples: cli.include_examples,
         include_auth: cli.include_auth,
         // `--toc`/`--no-toc` override each other (last one wins), so at most
@@ -289,7 +343,9 @@ pub fn build_config(cli: &Cli) -> DocConfig {
         include_toc: cli.toc || !cli.no_toc,
         sort_method: cli.sort.into(),
         max_tokens: cli.max_tokens,
-        include_report: !cli.no_report,
+        include_report: !cli.no_report
+            && cli.schema_names.is_empty()
+            && cli.schema_fields.is_empty(),
     };
 
     // Warn if --include-schemas or --include-examples is set but detail is not
@@ -370,6 +426,9 @@ mod tests {
             input: Some(PathBuf::from("spec.json")),
             command: None,
             output: None,
+            split: None,
+            output_mode: None,
+            overview_max_tokens: None,
             method: false,
             group_by: GroupByArg::Service,
             flat: false,
@@ -383,6 +442,9 @@ mod tests {
             detail: DetailLevelArg::Summary,
             include_schemas: false,
             inline_schemas: false,
+            schema_depth: None,
+            schema_names: Vec::new(),
+            schema_fields: Vec::new(),
             include_examples: false,
             include_auth: false,
             toc: false,

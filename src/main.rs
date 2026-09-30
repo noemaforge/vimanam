@@ -192,6 +192,8 @@ fn run() -> Result<ExitCode> {
         bail!(message);
     }
 
+    markdown::schema_selection::validate(&api_doc, &config)?;
+
     // `--stats` is a dry run: print the per-service size table to stdout
     // instead of the documentation. clap rejects `-o` and `--max-tokens`
     // alongside it, and the hygiene report is never emitted in this mode.
@@ -203,6 +205,22 @@ fn run() -> Result<ExitCode> {
     }
 
     // Generate markdown
+    let tree_layout = cli
+        .split
+        .map(markdown::split::TreeLayout::Split)
+        .or_else(|| cli.output_mode.map(|_| markdown::split::TreeLayout::Skill));
+    if let Some(layout) = tree_layout {
+        markdown::split::write_tree(
+            cli.output.as_ref().expect("clap requires --output"),
+            input,
+            &api_doc,
+            &config,
+            layout,
+            cli.overview_max_tokens,
+        )?;
+        warn_filtered_out_selectors(&api_doc, &config);
+        return Ok(ExitCode::SUCCESS);
+    }
     if let Some(output_path) = &cli.output {
         // Write to file
         let mut writer = BufWriter::new(create_output_file(output_path)?);

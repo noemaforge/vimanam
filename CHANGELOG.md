@@ -5,6 +5,33 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.0] - 2026-09-30
+
+### Added
+
+- `--split service|tag|endpoint -o DIR` writes linked pages: a compact `index.md`,
+  complete guidance in `api.md`, and shared `schemas/` pages. `--overview-max-tokens`
+  budgets only the index; when entries do not fit, `index-all.md` keeps full
+  navigation. Detail pages stay at the requested level. A manifest removes only
+  unchanged generated files and refuses to overwrite edited or unmanaged paths (#67).
+- `--output-mode skill -o DIR` writes an agent-navigable tree: `SKILL.md` with
+  YAML frontmatter, service and schema hubs, and one shared endpoint file per
+  operation. Hub entries show an approximate characters/4 read cost for that
+  file alone. `--overview-max-tokens` limits only `SKILL.md` (default 1600);
+  complete service navigation stays in `index.md` (#68).
+- `--schema NAME` and `--schema-field NAME#JSON_POINTER` (both repeatable) read
+  a named schema or a subtree with its ancestors, types, requiredness,
+  descriptions, and enums. Pointers cross `$ref`s. Invalid selectors fail
+  before any output file is created. These reads always use full schema
+  metadata and omit the hygiene report (#101).
+- `--schema-depth N` (0 through 24) bounds property, array, composition,
+  additional-properties, and `$ref` expansion from the original roots, including
+  deferred definitions and split/Skill pages. At the limit, rows keep their
+  type and metadata, say what was omitted, and give a retrieval command. Links
+  point only at schemas that were actually written. Explicit field selections
+  stay intact under `--max-tokens`, including budget zero, with an over-budget
+  notice instead of a lower-detail fallback (#101).
+
 ## [1.3.0] - 2026-09-26
 
 ### Added
@@ -310,6 +337,7 @@ already on `main`; only the version bump was missing.
 - Initial release: OpenAPI 2.0 (Swagger) JSON to Markdown with grouping,
   filtering, sorting, and detail levels
 
+[1.4.0]: https://github.com/noemaforge/vimanam/compare/v1.3.0...v1.4.0
 [1.3.0]: https://github.com/noemaforge/vimanam/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/noemaforge/vimanam/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/noemaforge/vimanam/compare/v1.0.1...v1.1.0

@@ -8,7 +8,9 @@ use crate::models::{DetailLevel, DocConfig, Endpoint};
 use crate::utils::extract_content_type;
 
 use super::examples::write_examples;
-use super::schema::{SchemaContext, response_schema, write_schema_table};
+use super::schema::{
+    SchemaContext, first_success_response, request_body_schema, response_schema, write_schema_table,
+};
 
 /// Writes a single endpoint section; the amount of detail depends on `config.detail_level`.
 ///
@@ -24,6 +26,7 @@ pub(super) fn write_endpoint<W: Write>(
     ctx: &mut SchemaContext,
 ) -> Result<()> {
     let title = get_short_title(endpoint);
+    ctx.set_current_operation(Some(format!("{} {}", endpoint.method, endpoint.path)));
 
     match anchor {
         Some(anchor) => writeln!(writer, "### {} {{#{}}}", title, anchor)?,
@@ -96,39 +99,28 @@ pub(super) fn write_endpoint<W: Write>(
             writeln!(writer, "| {} | {} | {} |", code, content_type, desc)?;
         }
 
-        // Add schemas if configured
+        // Add schemas if configured. Roots match `rendered_endpoint_schemas`
+        // (request body + first 2xx) so pre-discovery and rendering stay aligned.
         if config.include_schemas && config.detail_level == DetailLevel::Full {
             writeln!(writer, "\n#### Request Schema")?;
-
-            // Find a body parameter with schema
-            let body_param = endpoint
-                .parameters
-                .iter()
-                .find(|p| p.parameter_in == "body" && p.schema.is_some());
-
-            if let Some(param) = body_param {
-                if let Some(schema) = &param.schema {
-                    write_schema_table(writer, schema, "request", ctx)?;
-                } else {
-                    writeln!(writer, "*No request schema available*")?;
-                }
+            if let Some(schema) = request_body_schema(endpoint) {
+                write_schema_table(writer, schema, "request", ctx)?;
             } else {
                 writeln!(writer, "*No request schema available*")?;
             }
 
             writeln!(writer, "\n#### Response Schema")?;
-            if let Some((_, response)) = endpoint
-                .responses
-                .iter()
-                .find(|(code, _)| code.starts_with('2'))
-            {
-                if let Some(schema) = response_schema(response) {
-                    write_schema_table(writer, schema, "response", ctx)?;
-                } else {
-                    writeln!(writer, "*No response schema available*")?;
+            match first_success_response(endpoint) {
+                Some((_, response)) => {
+                    if let Some(schema) = response_schema(response) {
+                        write_schema_table(writer, schema, "response", ctx)?;
+                    } else {
+                        writeln!(writer, "*No response schema available*")?;
+                    }
                 }
-            } else {
-                writeln!(writer, "*No success response schema available*")?;
+                None => {
+                    writeln!(writer, "*No success response schema available*")?;
+                }
             }
         }
 
@@ -139,6 +131,7 @@ pub(super) fn write_endpoint<W: Write>(
     }
 
     writeln!(writer)?; // End with a blank line
+    ctx.set_current_operation(None);
     Ok(())
 }
 

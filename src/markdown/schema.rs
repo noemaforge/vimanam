@@ -15,7 +15,10 @@ use std::io::Write;
 use anyhow::Result;
 use indexmap::IndexMap;
 
-use crate::models::{ApiDocumentation, Response, Schema};
+use crate::models::{
+    AdditionalProperties, ApiDocumentation, DetailLevel, DocConfig, Endpoint, OperationSelector,
+    Response, Schema,
+};
 use crate::utils::{clean_for_id, decode_json_pointer_token, resolve_schema_reference};
 
 #[derive(Debug)]
@@ -41,6 +44,31 @@ pub(super) struct SchemaContext<'a> {
     anchors: IndexMap<String, String>,
     /// Anchors already handed out, so colliding name slugs get a unique suffix.
     used_anchors: HashSet<String>,
+    /// Split pages link definitions to separate files, never local anchors.
+    external: bool,
+    max_depth: Option<usize>,
+    depths: IndexMap<String, usize>,
+    /// Refs that will be emitted in this build (pre-discovered for split/Skill).
+    /// Cutoff rows may link only to these or to refs already in `anchors`.
+    emitted_depths: IndexMap<String, usize>,
+    source_path: String,
+    current_schema: Option<String>,
+    /// Active `--schema-field` selector for the subtree being rendered, if any.
+    active_selector: Option<String>,
+    /// Endpoint identity (`METHOD path`) while rendering an operation body.
+    current_operation: Option<String>,
+    schema_names: Vec<String>,
+    schema_fields: Vec<String>,
+    operation_selector: Option<OperationSelector>,
+    service_filter: Option<Vec<String>>,
+    path_filter: Option<String>,
+    method_filter: Option<Vec<String>>,
+    exclude_deprecated: bool,
+    selected: bool,
+    protected_depth: usize,
+    /// Omission notices for the render that owns this context; callers print
+    /// them only when that render's buffer is actually written.
+    omissions: Vec<String>,
 }
 
 impl<'a> SchemaContext<'a> {
@@ -50,6 +78,229 @@ impl<'a> SchemaContext<'a> {
             inline,
             anchors: IndexMap::new(),
             used_anchors: HashSet::new(),
+            external: false,
+            max_depth: None,
+            depths: IndexMap::new(),
+            emitted_depths: IndexMap::new(),
+            source_path: "spec.json".to_string(),
+            current_schema: None,
+            active_selector: None,
+            current_operation: None,
+            schema_names: Vec::new(),
+            schema_fields: Vec::new(),
+            operation_selector: None,
+            service_filter: None,
+            path_filter: None,
+            method_filter: None,
+            exclude_deprecated: false,
+            selected: false,
+            protected_depth: 0,
+            omissions: Vec::new(),
+        }
+    }
+
+    pub(super) fn configured(
+        doc: &'a ApiDocumentation,
+        config: &DocConfig,
+        external: bool,
+    ) -> Self {
+        let mut ctx = Self::new(doc, config.inline_schemas);
+        ctx.external = external;
+        ctx.max_depth = config.schema_depth;
+        ctx.source_path = config
+            .source_path
+            .clone()
+            .unwrap_or_else(|| "spec.json".into());
+        ctx.schema_names = config.schema_names.clone();
+        ctx.schema_fields = config.schema_fields.clone();
+        ctx.operation_selector = config.operation_selector.clone();
+        ctx.service_filter = config.service_filter.clone();
+        ctx.path_filter = config.path_filter.clone();
+        ctx.method_filter = config.method_filter.clone();
+        ctx.exclude_deprecated = config.exclude_deprecated;
+        ctx.selected = !config.schema_names.is_empty() || !config.schema_fields.is_empty();
+        ctx
+    }
+
+    pub(super) fn protect_selection_path(&mut self, depth: usize) {
+        self.protected_depth = depth;
+    }
+
+    pub(super) fn set_current_schema(&mut self, name: &str) {
+        self.current_schema = Some(name.into());
+    }
+
+    pub(super) fn set_active_selector(&mut self, selector: Option<String>) {
+        self.active_selector = selector;
+    }
+
+    pub(super) fn set_current_operation(&mut self, operation: Option<String>) {
+        self.current_operation = operation;
+    }
+
+    /// Pre-discover references from a root so split/Skill pages know which
+    /// schemas will actually be emitted before cutoff rows are written.
+    pub(super) fn discover_root(&mut self, schema: &Schema, depth: usize) {
+        self.discover(schema, depth);
+    }
+
+    /// Seed the set of schemas that will be written elsewhere in this build.
+    pub(super) fn set_emitted_depths(&mut self, depths: IndexMap<String, usize>) {
+        self.emitted_depths = depths;
+    }
+
+    pub(super) fn discovered_depths(&self) -> IndexMap<String, usize> {
+        self.depths.clone()
+    }
+
+    pub(super) fn take_omissions(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.omissions)
+    }
+
+    pub(super) fn references(&self) -> impl Iterator<Item = (&String, usize)> {
+        self.anchors
+            .keys()
+            .map(|reference| (reference, self.depths.get(reference).copied().unwrap_or(0)))
+    }
+
+    // Relax the complete reachable reference graph before rendering definitions.
+    // A shared schema may first occur through a deeper route; its smallest depth
+    // is propagated transitively so rendering order cannot change the result.
+    fn discover(&mut self, schema: &Schema, depth: usize) {
+        if self
+            .max_depth
+            .is_some_and(|limit| depth >= limit.max(self.protected_depth))
+        {
+            return;
+        }
+        if let Some(reference) = &schema.reference {
+            if let Some(resolved) = resolve_schema_reference(reference, self.doc) {
+                let next = depth + 1;
+                if self.depths.get(reference).is_none_or(|old| next < *old) {
+                    self.depths.insert(reference.clone(), next);
+                    self.register(reference);
+                    self.discover(resolved, next);
+                }
+            }
+            return;
+        }
+        if let Some(properties) = &schema.properties {
+            for child in properties.values() {
+                self.discover(child, depth + 1);
+            }
+        }
+        if let Some(items) = &schema.items {
+            self.discover(items, depth + 1);
+        }
+        if let Some(AdditionalProperties::Schema(child)) = &schema.additional_properties {
+            self.discover(child, depth + 1);
+        }
+        for variants in [&schema.all_of, &schema.one_of, &schema.any_of]
+            .into_iter()
+            .flatten()
+        {
+            for child in variants {
+                self.discover(child, depth + 1);
+            }
+        }
+    }
+
+    fn retrieval(&self, reference: Option<&str>) -> String {
+        let mut command = format!("vimanam {}", super::split::quote_shell(&self.source_path));
+
+        if let Some(selector) = &self.active_selector {
+            command.push_str(&format!(
+                " --schema-field {}",
+                super::split::quote_shell(selector)
+            ));
+            command.push_str(" --no-report");
+            return command;
+        }
+
+        if let Some(name) = reference.map(short_schema_reference) {
+            command.push_str(&format!(" --schema {}", super::split::quote_shell(&name)));
+            command.push_str(" --no-report");
+            return command;
+        }
+
+        if let Some(name) = &self.current_schema {
+            command.push_str(&format!(" --schema {}", super::split::quote_shell(name)));
+            command.push_str(" --no-report");
+            return command;
+        }
+
+        // Inline operation body: reconstruct from the active endpoint and filters.
+        self.append_scope_flags(&mut command);
+        command.push_str(" --detail full --include-schemas --no-report");
+        command
+    }
+
+    fn append_scope_flags(&self, command: &mut String) {
+        if let Some(selector) = &self.operation_selector {
+            for operation in &selector.operations {
+                command.push_str(&format!(
+                    " --operation {}",
+                    super::split::quote_shell(&operation.to_string())
+                ));
+            }
+            for id in &selector.operation_ids {
+                command.push_str(&format!(
+                    " --operation-id {}",
+                    super::split::quote_shell(id)
+                ));
+            }
+        } else if let Some(operation) = &self.current_operation {
+            command.push_str(&format!(
+                " --operation {}",
+                super::split::quote_shell(operation)
+            ));
+        }
+        if let Some(services) = &self.service_filter {
+            command.push_str(&format!(
+                " --service-filter {}",
+                super::split::quote_shell(&services.join(","))
+            ));
+        }
+        if let Some(methods) = &self.method_filter {
+            command.push_str(&format!(
+                " --method-filter {}",
+                super::split::quote_shell(&methods.join(","))
+            ));
+        }
+        if let Some(path) = &self.path_filter {
+            command.push_str(&format!(
+                " --path-filter {}",
+                super::split::quote_shell(path)
+            ));
+        }
+        if self.exclude_deprecated {
+            command.push_str(" --exclude-deprecated");
+        }
+    }
+
+    /// Link target for a cutoff `$ref` when a fuller artifact will be (or was)
+    /// written. Does not invent links to schemas that are not emitted.
+    fn cutoff_type_name(&mut self, schema: &Schema) -> String {
+        let Some(reference) = schema.reference.as_deref() else {
+            return schema_type_label(schema).to_string();
+        };
+        let linkable =
+            self.anchors.contains_key(reference) || self.emitted_depths.contains_key(reference);
+        if !linkable {
+            return format!("ref {}", short_schema_reference(reference));
+        }
+        if let Some(&depth) = self.emitted_depths.get(reference) {
+            self.depths
+                .entry(reference.to_string())
+                .and_modify(|old| *old = (*old).min(depth))
+                .or_insert(depth);
+        }
+        let name = short_schema_reference(reference);
+        let anchor = self.register(reference);
+        if self.external {
+            format!("[{}]({anchor})", super::split::escape(&name))
+        } else {
+            format!("[{name}](#{anchor})")
         }
     }
 
@@ -64,6 +315,12 @@ impl<'a> SchemaContext<'a> {
     fn register(&mut self, reference: &str) -> String {
         if let Some(anchor) = self.anchors.get(reference) {
             return anchor.clone();
+        }
+
+        if self.external {
+            let target = format!("../schemas/{}", super::split::schema_filename(reference));
+            self.anchors.insert(reference.to_string(), target.clone());
+            return target;
         }
 
         let base = format!(
@@ -83,6 +340,13 @@ impl<'a> SchemaContext<'a> {
     }
 }
 
+/// Print omission notices collected during a render that was actually written.
+pub(super) fn emit_omissions(omissions: &[String]) {
+    for notice in omissions {
+        eprintln!("{notice}");
+    }
+}
+
 /// Returns the schema of a response, preferring the OpenAPI 2.0 `schema` field
 /// and falling back to the first media type's schema (OpenAPI 3.0 `content`).
 ///
@@ -99,6 +363,72 @@ pub(crate) fn response_schema(response: &Response) -> Option<&Schema> {
         .and_then(|content| content.values().find_map(|media| media.schema.as_ref()))
 }
 
+/// Request-body schema an endpoint's full-detail schema section expands, if any.
+///
+/// The parser emits one synthetic `in: body` parameter per requestBody media
+/// type (and Swagger 2 may carry multiple body parameters). Prefer the first
+/// that has a schema — same rule as [`response_schema`] for content media types
+/// — so a schema-less `application/octet-stream` ahead of `application/json`
+/// does not suppress the JSON table.
+pub(super) fn request_body_schema(endpoint: &Endpoint) -> Option<&Schema> {
+    endpoint
+        .parameters
+        .iter()
+        .filter(|parameter| parameter.parameter_in == "body")
+        .find_map(|parameter| parameter.schema.as_ref())
+}
+
+/// First 2xx response in spec order — the only success body the renderer expands.
+pub(super) fn first_success_response(endpoint: &Endpoint) -> Option<(&str, &Response)> {
+    endpoint
+        .responses
+        .iter()
+        .find(|(code, _)| code.starts_with('2'))
+        .map(|(code, response)| (code.as_str(), response))
+}
+
+/// Schemas [`super::endpoint::write_endpoint`] actually expands under
+/// `--detail full --include-schemas`: request body (if any) and the first 2xx
+/// response schema (if any). Shared by single-file and split/Skill pre-discovery
+/// so cutoff linking never invents pages for schemas the tree does not render.
+pub(super) fn rendered_endpoint_schemas(endpoint: &Endpoint) -> Vec<&Schema> {
+    let mut schemas = Vec::new();
+    if let Some(schema) = request_body_schema(endpoint) {
+        schemas.push(schema);
+    }
+    if let Some((_, response)) = first_success_response(endpoint)
+        && let Some(schema) = response_schema(response)
+    {
+        schemas.push(schema);
+    }
+    schemas
+}
+
+/// Pre-discover every schema this document will expand so cutoff rows can link
+/// to definitions regardless of endpoint write order. No-op without
+/// `--schema-depth`, no-op in `--inline-schemas` mode (no Schema Definitions
+/// section to link to), and no-op unless the renderer will expand schemas
+/// (`--detail full --include-schemas`), so lower-detail budget trials and
+/// default output stay unchanged.
+pub(super) fn prediscover_rendered_endpoints<'a>(
+    ctx: &mut SchemaContext<'_>,
+    config: &DocConfig,
+    endpoints: impl IntoIterator<Item = &'a Endpoint>,
+) {
+    if ctx.inline
+        || ctx.max_depth.is_none()
+        || config.detail_level != DetailLevel::Full
+        || !config.include_schemas
+    {
+        return;
+    }
+    for endpoint in endpoints {
+        for schema in rendered_endpoint_schemas(endpoint) {
+            ctx.discover_root(schema, 0);
+        }
+    }
+}
+
 /// Writes a Markdown field table for `schema`. `root_label` names the top-level
 /// row (e.g. `request`). Component `$ref`s are linked through `ctx` (or inlined
 /// under `--inline-schemas`).
@@ -108,10 +438,31 @@ pub(super) fn write_schema_table<W: Write>(
     root_label: &str,
     ctx: &mut SchemaContext,
 ) -> Result<()> {
+    write_schema_table_at(writer, schema, root_label, 0, ctx)
+}
+
+pub(super) fn write_schema_table_at<W: Write>(
+    writer: &mut W,
+    schema: &Schema,
+    root_label: &str,
+    depth: usize,
+    ctx: &mut SchemaContext,
+) -> Result<()> {
     let mut rows = Vec::new();
     let mut ref_stack = Vec::new();
-    collect_schema_rows(schema, root_label, None, &mut rows, &mut ref_stack, 0, ctx);
-    write_rows(writer, &rows)
+    if ctx.max_depth.is_some() && !ctx.inline {
+        ctx.discover(schema, depth);
+    }
+    collect_schema_rows(
+        schema,
+        root_label,
+        None,
+        &mut rows,
+        &mut ref_stack,
+        depth,
+        ctx,
+    );
+    write_rows(writer, &rows, ctx.external)
 }
 
 /// Renders the trailing "Schema Definitions" section: every component schema
@@ -141,14 +492,23 @@ pub(super) fn render_schema_definitions<W: Write>(
         index += 1;
 
         let name = short_schema_reference(&reference);
+        ctx.current_schema = Some(name.clone());
+        ctx.protected_depth = 0;
+        let definition_depth = ctx.depths.get(&reference).copied().unwrap_or(0);
         writeln!(writer, "### {} {{#{}}}", name, anchor)?;
 
         let mut rows = Vec::new();
         let mut ref_stack = Vec::new();
         match resolve_schema_reference(&reference, doc) {
-            Some(resolved) => {
-                collect_schema_rows(resolved, &name, None, &mut rows, &mut ref_stack, 0, ctx)
-            }
+            Some(resolved) => collect_schema_rows(
+                resolved,
+                &name,
+                None,
+                &mut rows,
+                &mut ref_stack,
+                definition_depth,
+                ctx,
+            ),
             None => rows.push(SchemaRow {
                 field: name.clone(),
                 type_name: "unknown".to_string(),
@@ -157,14 +517,14 @@ pub(super) fn render_schema_definitions<W: Write>(
             }),
         }
 
-        write_rows(writer, &rows)?;
+        write_rows(writer, &rows, false)?;
         writeln!(writer)?;
     }
 
     Ok(())
 }
 
-fn write_rows<W: Write>(writer: &mut W, rows: &[SchemaRow]) -> Result<()> {
+fn write_rows<W: Write>(writer: &mut W, rows: &[SchemaRow], external: bool) -> Result<()> {
     if rows.is_empty() {
         writeln!(writer, "*No schema fields available*")?;
         return Ok(());
@@ -173,11 +533,26 @@ fn write_rows<W: Write>(writer: &mut W, rows: &[SchemaRow]) -> Result<()> {
     writeln!(writer, "| Field | Type | Required | Description |")?;
     writeln!(writer, "|------|------|---------:|-------------|")?;
     for row in rows {
+        // Split navigation supports arbitrary component/property names. Use a
+        // sufficiently long code delimiter and escape table pipes/newlines.
+        // Preserve existing single-document bytes.
+        let field = if external {
+            let longest_run = row
+                .field
+                .split(|ch| ch != '`')
+                .map(str::len)
+                .max()
+                .unwrap_or(0);
+            let delimiter = "`".repeat(longest_run + 1);
+            format!("{delimiter} {} {delimiter}", escape_table_cell(&row.field))
+        } else {
+            format!("`{}`", row.field)
+        };
         // #74: escape_table_cell now returns impl Display — no intermediate String.
         writeln!(
             writer,
-            "| `{}` | {} | {} | {} |",
-            row.field,
+            "| {} | {} | {} | {} |",
+            field,
             escape_table_cell(&row.type_name),
             row.required,
             escape_table_cell(&row.description)
@@ -198,7 +573,51 @@ fn collect_schema_rows(
 ) {
     const MAX_DEPTH: usize = 24;
 
-    if depth >= MAX_DEPTH {
+    if ctx
+        .max_depth
+        .is_some_and(|limit| depth >= limit.max(ctx.protected_depth))
+        || (ctx.selected && depth >= MAX_DEPTH.max(ctx.protected_depth))
+    {
+        let metadata = schema
+            .reference
+            .as_deref()
+            .and_then(|reference| resolve_schema_reference(reference, ctx.doc))
+            .unwrap_or(schema);
+        let mut description = schema
+            .description
+            .clone()
+            .or_else(|| metadata.description.clone())
+            .unwrap_or_else(|| "-".into());
+        // Depth-limited rows always keep enums; this branch is only reached when
+        // max_depth or selected is set, so default output is unchanged.
+        append_enum(&mut description, metadata, true);
+        let expandable = schema.reference.is_some()
+            || schema.properties.as_ref().is_some_and(|v| !v.is_empty())
+            || schema.items.is_some()
+            || matches!(
+                schema.additional_properties,
+                Some(AdditionalProperties::Schema(_))
+            )
+            || schema.all_of.is_some()
+            || schema.one_of.is_some()
+            || schema.any_of.is_some();
+        if expandable {
+            let command = ctx.retrieval(schema.reference.as_deref());
+            description.push_str(&format!("; Omitted nested expansion at schema depth {depth}. Retrieve full detail: {command}"));
+            ctx.omissions.push(format!(
+                "vimanam: omitted nested schema expansion at depth {depth} for {field}; retrieve full detail: {command}"
+            ));
+        }
+        rows.push(SchemaRow {
+            field: field.to_string(),
+            type_name: ctx.cutoff_type_name(schema),
+            required: required_to_string(required).to_string(),
+            description,
+        });
+        return;
+    }
+
+    if ctx.max_depth.is_none() && !ctx.selected && depth >= MAX_DEPTH {
         rows.push(SchemaRow {
             field: field.to_string(),
             type_name: "truncated".to_string(),
@@ -227,7 +646,11 @@ fn collect_schema_rows(
             let doc = ctx.doc;
             if let Some(resolved) = resolve_schema_reference(reference, doc) {
                 ref_stack.push(reference.clone());
+                let prior_schema = ctx
+                    .current_schema
+                    .replace(short_schema_reference(reference));
                 collect_schema_rows(resolved, field, required, rows, ref_stack, depth + 1, ctx);
+                ctx.current_schema = prior_schema;
                 ref_stack.pop();
             } else {
                 // Inline + unresolvable.
@@ -244,14 +667,26 @@ fn collect_schema_rows(
         // Linked mode + resolvable: emit one row pointing at the shared definition.
         Some(reference) if let Some(resolved) = resolve_schema_reference(reference, ctx.doc) => {
             let name = short_schema_reference(reference);
-            let description = resolved
-                .description
-                .clone()
-                .unwrap_or_else(|| "-".to_string());
+            let description = if ctx.selected {
+                schema
+                    .description
+                    .clone()
+                    .or_else(|| resolved.description.clone())
+            } else {
+                resolved.description.clone()
+            }
+            .unwrap_or_else(|| "-".to_string());
+            if ctx.max_depth.is_none() {
+                ctx.depths.entry(reference.clone()).or_insert(0);
+            }
             let anchor = ctx.register(reference);
             rows.push(SchemaRow {
                 field: field.to_string(),
-                type_name: format!("[{name}](#{anchor})"),
+                type_name: if ctx.external {
+                    format!("[{}]({anchor})", super::split::escape(&name))
+                } else {
+                    format!("[{name}](#{anchor})")
+                },
                 required: required_to_string(required).to_string(),
                 description,
             });
@@ -280,7 +715,16 @@ fn collect_schema_rows(
         // it once into the SchemaRow, which already owns a String.
         type_name: schema_type_label(schema).to_string(),
         required: required_to_string(required).to_string(),
-        description: description.to_string(),
+        description: {
+            let mut description = description.to_string();
+            append_enum(&mut description, schema, ctx.selected);
+            if ctx.selected
+                && let Some(title) = &schema.title
+            {
+                description.push_str(&format!("; {title}"));
+            }
+            description
+        },
     });
 
     if let Some(properties) = &schema.properties {
@@ -309,9 +753,33 @@ fn collect_schema_rows(
         collect_schema_rows(items, &item_field, None, rows, ref_stack, depth + 1, ctx);
     }
 
+    if (ctx.max_depth.is_some() || ctx.selected)
+        && let Some(AdditionalProperties::Schema(child)) = &schema.additional_properties
+    {
+        collect_schema_rows(
+            child,
+            &format!("{field}.*"),
+            None,
+            rows,
+            ref_stack,
+            depth + 1,
+            ctx,
+        );
+    }
+
     if let Some(all_of) = &schema.all_of {
         for (index, variant) in all_of.iter().enumerate() {
-            let variant_field = format!("{}.allOf[{}]", field, index);
+            let source_index = if ctx.selected {
+                variant
+                    .extensions
+                    .get("x-vimanam-selected-index")
+                    .and_then(serde_json::Value::as_u64)
+                    .map(|index| index as usize)
+                    .unwrap_or(index)
+            } else {
+                index
+            };
+            let variant_field = format!("{}.allOf[{}]", field, source_index);
             collect_schema_rows(
                 variant,
                 &variant_field,
@@ -326,7 +794,17 @@ fn collect_schema_rows(
 
     if let Some(one_of) = &schema.one_of {
         for (index, variant) in one_of.iter().enumerate() {
-            let variant_field = format!("{}.oneOf[{}]", field, index);
+            let source_index = if ctx.selected {
+                variant
+                    .extensions
+                    .get("x-vimanam-selected-index")
+                    .and_then(serde_json::Value::as_u64)
+                    .map(|index| index as usize)
+                    .unwrap_or(index)
+            } else {
+                index
+            };
+            let variant_field = format!("{}.oneOf[{}]", field, source_index);
             collect_schema_rows(
                 variant,
                 &variant_field,
@@ -341,7 +819,17 @@ fn collect_schema_rows(
 
     if let Some(any_of) = &schema.any_of {
         for (index, variant) in any_of.iter().enumerate() {
-            let variant_field = format!("{}.anyOf[{}]", field, index);
+            let source_index = if ctx.selected {
+                variant
+                    .extensions
+                    .get("x-vimanam-selected-index")
+                    .and_then(serde_json::Value::as_u64)
+                    .map(|index| index as usize)
+                    .unwrap_or(index)
+            } else {
+                index
+            };
+            let variant_field = format!("{}.anyOf[{}]", field, source_index);
             collect_schema_rows(
                 variant,
                 &variant_field,
@@ -352,6 +840,19 @@ fn collect_schema_rows(
                 ctx,
             );
         }
+    }
+}
+
+fn append_enum(description: &mut String, schema: &Schema, enabled: bool) {
+    if enabled && let Some(values) = &schema.enum_values {
+        description.push_str("; Enum: ");
+        description.push_str(
+            &values
+                .iter()
+                .map(serde_json::Value::to_string)
+                .collect::<Vec<_>>()
+                .join(", "),
+        );
     }
 }
 
@@ -436,7 +937,7 @@ fn required_to_string(required: Option<bool>) -> &'static str {
     }
 }
 
-fn short_schema_reference(reference: &str) -> String {
+pub(super) fn short_schema_reference(reference: &str) -> String {
     reference
         .rsplit('/')
         .next()

@@ -13,7 +13,7 @@ use crate::models::{ApiDocumentation, DocConfig, Endpoint, Service, SortMethod};
 use crate::utils::clean_for_id;
 
 use super::endpoint::{get_short_title, write_endpoint};
-use super::schema::{SchemaContext, render_schema_definitions};
+use super::schema::{SchemaContext, prediscover_rendered_endpoints, render_schema_definitions};
 
 /// The in-document anchor for an endpoint heading. `prefix` (a service name)
 /// scopes it so the same endpoint rendered under several services—as the
@@ -157,7 +157,7 @@ fn retain_selected_services(
 /// Writes the document preamble shared by every view: title, description, API
 /// version, and—when `--include-auth` is set—the server URLs and authentication
 /// schemes.
-fn write_preamble<W: Write>(
+pub(super) fn write_preamble<W: Write>(
     writer: &mut W,
     doc: &ApiDocumentation,
     config: &DocConfig,
@@ -262,7 +262,7 @@ pub(super) fn generate_by_service<W: Write>(
     writer: &mut W,
     doc: &ApiDocumentation,
     config: &DocConfig,
-) -> Result<()> {
+) -> Result<Vec<String>> {
     write_preamble(writer, doc, config)?;
 
     // Filter services if needed (case-insensitive)
@@ -318,7 +318,18 @@ pub(super) fn generate_by_service<W: Write>(
     }
 
     // Write each service section
-    let mut schema_ctx = SchemaContext::new(doc, config.inline_schemas);
+    let mut schema_ctx = SchemaContext::configured(doc, config, false);
+    prediscover_rendered_endpoints(
+        &mut schema_ctx,
+        config,
+        services.iter().flat_map(|service| {
+            service_endpoints
+                .get(service.name.as_str())
+                .into_iter()
+                .flatten()
+                .copied()
+        }),
+    );
     for service in &services {
         // Create anchor but use it directly in the writeln! call
         let anchor = clean_for_id(&service.name);
@@ -345,7 +356,7 @@ pub(super) fn generate_by_service<W: Write>(
 
     render_schema_definitions(writer, &mut schema_ctx)?;
 
-    Ok(())
+    Ok(schema_ctx.take_omissions())
 }
 
 /// Generates documentation grouped by HTTP method, one `##` section per method.
@@ -353,7 +364,7 @@ pub(super) fn generate_by_method<W: Write>(
     writer: &mut W,
     doc: &ApiDocumentation,
     config: &DocConfig,
-) -> Result<()> {
+) -> Result<Vec<String>> {
     write_preamble(writer, doc, config)?;
 
     // Group endpoints by method
@@ -386,7 +397,18 @@ pub(super) fn generate_by_method<W: Write>(
     }
 
     // Write each method section
-    let mut schema_ctx = SchemaContext::new(doc, config.inline_schemas);
+    let mut schema_ctx = SchemaContext::configured(doc, config, false);
+    prediscover_rendered_endpoints(
+        &mut schema_ctx,
+        config,
+        [
+            "GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD", "TRACE",
+        ]
+        .iter()
+        .filter_map(|method| method_endpoints.get(method))
+        .flatten()
+        .copied(),
+    );
     for method in [
         "GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD", "TRACE",
     ] {
@@ -409,7 +431,7 @@ pub(super) fn generate_by_method<W: Write>(
 
     render_schema_definitions(writer, &mut schema_ctx)?;
 
-    Ok(())
+    Ok(schema_ctx.take_omissions())
 }
 
 /// Generates documentation grouped by path (`--group-by path`), one `##`
@@ -419,7 +441,7 @@ pub(super) fn generate_by_path<W: Write>(
     writer: &mut W,
     doc: &ApiDocumentation,
     config: &DocConfig,
-) -> Result<()> {
+) -> Result<Vec<String>> {
     write_preamble(writer, doc, config)?;
 
     // Group endpoints by path. IndexMap keeps first-appearance (spec) order.
@@ -454,7 +476,12 @@ pub(super) fn generate_by_path<W: Write>(
     }
 
     // Write each path section
-    let mut schema_ctx = SchemaContext::new(doc, config.inline_schemas);
+    let mut schema_ctx = SchemaContext::configured(doc, config, false);
+    prediscover_rendered_endpoints(
+        &mut schema_ctx,
+        config,
+        path_endpoints.values().flatten().copied(),
+    );
     for (path, endpoints) in &path_endpoints {
         let anchor = clean_for_id(path);
         writeln!(writer, "## {} {{#{}}}", path, anchor)?;
@@ -469,7 +496,7 @@ pub(super) fn generate_by_path<W: Write>(
 
     render_schema_definitions(writer, &mut schema_ctx)?;
 
-    Ok(())
+    Ok(schema_ctx.take_omissions())
 }
 
 /// Generates a flat endpoint list (`--flat`) with no grouping hierarchy.
@@ -477,14 +504,15 @@ pub(super) fn generate_flat<W: Write>(
     writer: &mut W,
     doc: &ApiDocumentation,
     config: &DocConfig,
-) -> Result<()> {
+) -> Result<Vec<String>> {
     write_preamble(writer, doc, config)?;
 
     // Collect endpoints, applying the same filters as the grouped views
     let endpoints = visible_endpoints(doc, config);
 
     writeln!(writer, "## Endpoints\n")?;
-    let mut schema_ctx = SchemaContext::new(doc, config.inline_schemas);
+    let mut schema_ctx = SchemaContext::configured(doc, config, false);
+    prediscover_rendered_endpoints(&mut schema_ctx, config, endpoints.iter().copied());
     for endpoint in endpoints {
         let anchor = endpoint_anchor(None, endpoint);
         write_endpoint(writer, endpoint, config, Some(&anchor), &mut schema_ctx)?;
@@ -492,5 +520,5 @@ pub(super) fn generate_flat<W: Write>(
 
     render_schema_definitions(writer, &mut schema_ctx)?;
 
-    Ok(())
+    Ok(schema_ctx.take_omissions())
 }

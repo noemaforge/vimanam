@@ -60,7 +60,8 @@ pub struct Stats {
 /// `--max-tokens`).
 fn estimate_render(doc: &ApiDocumentation, config: &DocConfig) -> Result<usize> {
     let mut buffer = Vec::new();
-    render(&mut buffer, doc, config)?;
+    // Discard omission notices: stats sizes trial renders and must stay silent.
+    let _omissions = render(&mut buffer, doc, config)?;
     Ok(estimate_tokens(&buffer))
 }
 
