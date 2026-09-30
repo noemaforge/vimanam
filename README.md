@@ -27,6 +27,7 @@ Besides producing documentation for humans, Vimanam is built for **feeding API s
 - Spec diffing (`vimanam diff old.json new.json`): compares two versions of a spec on *resolved* schemas — a change behind a shared `$ref` is reported on every endpoint that uses it — and classifies each change as breaking, non-breaking or needing review, with an exit code for CI (`--fail-on-breaking`)
 - Spec hygiene report appended to every run (`--no-report` to skip): counts and lists operations missing a description, `operationId` or responses, deprecated and untagged operations, duplicate `operationId`s, and undescribed parameters
 - Schema expansion at `--detail full --include-schemas`: renders request/response schemas as nested field tables. Shared component schemas are expanded once into a trailing "Schema Definitions" section and linked from each use site, keeping output compact when schemas are reused across endpoints; `--inline-schemas` instead expands every `$ref` inline at each use site (larger, fully self-contained, with cycle detection)
+- Schema reads for oversized graphs: `--schema NAME` and `--schema-field NAME#POINTER` render one schema or subtree with its metadata, and `--schema-depth N` bounds expansion without dropping the selected fields
 - Example rendering at `--detail full --include-examples`: emits request/response examples as fenced JSON blocks, resolving `$ref`s into `components/examples`
 - Server URL information extraction and documentation
 - Authentication and security schemes documentation
@@ -272,12 +273,15 @@ Commands:
   help         Print this message or the help of the given subcommand(s)
 
 Arguments:
-  <FILE>  Path to the OpenAPI JSON file
+  <FILE>  Path to the OpenAPI JSON or YAML file
 
 Options:
-  -o, --output <FILE>                      Output file path
+  -o, --output <FILE>                      Output file path, or directory for split/skill output
+      --split <SPLIT>                      Write linked Markdown pages to the --output directory [service, tag, endpoint]
+      --output-mode <OUTPUT_MODE>          Write an agent-navigable SKILL.md tree to the --output directory [skill]
+      --overview-max-tokens <N>            Token budget for the split index or SKILL.md only; detail pages stay at the requested level
       --method                             Group endpoints by HTTP method instead of by service
-      --group-by <service|method|path>     Grouping method for endpoints
+      --group-by <service|method|path>     Grouping method for endpoints [default: service]
       --flat                               Generate a flat list without hierarchical structure
       --service-filter <SERVICE[,...]>     Include only specific services (comma-separated)
       --path-filter <PATTERN>              Filter endpoints by path pattern
@@ -289,20 +293,17 @@ Options:
       --detail <summary|basic|standard|full> Control amount of information [default: summary]
       --include-schemas                    Include request/response schemas
       --inline-schemas                     Fully inline every $ref schema instead of linking to a shared "Schema Definitions" section
+      --schema-depth <N>                   Maximum schema traversal edges from a root (0..=24). Zero retains only roots
+      --schema <NAME>                      Read a named schema directly (repeatable); full metadata, independent of reachability
+      --schema-field <NAME#POINTER>        Read a schema subtree and its ancestors (repeatable; JSON-pointer escaping)
       --include-examples                   Include request/response examples
       --include-auth                       Show authentication requirements
       --toc                                Include the table of contents (the default; when both are given, the later of --toc/--no-toc wins)
       --no-toc                             Skip table of contents
       --sort <alpha|path-length|none>      Sorting method [default: alpha]
-      --max-tokens <N>                     Fit output to a token budget, stepping detail down as needed (the hygiene report is appended outside the budget)
-      --split <SPLIT>                      Write linked pages to the --output directory [service, tag, endpoint]
-      --output-mode <OUTPUT_MODE>          Write an agent-navigable SKILL.md tree [skill]
-      --overview-max-tokens <N>            Estimated budget for the split index or SKILL.md only; detail remains available
-      --schema-depth <N>                   Limit schema expansion edges (0..=24)
-      --schema <NAME>                      Read a named schema directly (repeatable)
-      --schema-field <NAME#POINTER>        Read a schema subtree with ancestors (repeatable)
+      --max-tokens <N>                     Fit single-file output to a token budget, stepping detail down (full → summary). The hygiene report is outside the budget
       --no-report                          Skip the spec hygiene report appended after the documentation
-      --stats                              Dry run: print a per-service table of visible endpoints and estimated tokens instead of Markdown (TOTAL is one whole-document render, not the sum of the rows)
+      --stats                              Dry run: per-service endpoint counts and estimated tokens (chars/4). TOTAL is one whole-document render, not the sum of the rows
   -h, --help                               Print help
   -V, --version                            Print version
 ```
@@ -327,6 +328,23 @@ Options:
 ## Preparing API context for LLMs
 
 Large API specs are a poor fit for LLM context windows: a 3 MB swagger file is hundreds of thousands of tokens of JSON, most of it boilerplate. Vimanam's detail levels and filters act as a token-budget dial, letting you hand an LLM (or a coding agent) exactly the slice of the API it needs, as compact Markdown.
+
+For an agent that should choose its own reads, write a Skill tree instead of one file. `SKILL.md` is a compact map; service hubs, endpoint pages, and schema pages stay on disk at the requested detail, each with an approximate read cost. `--split` is the same idea as ordinary linked pages. When one schema is still too large, read it with `--schema` or `--schema-field`, or bound expansion with `--schema-depth`. Those reads keep field types, requiredness, descriptions, and enums. Single-file `--max-tokens` still steps detail down and can drop schema tables, so use it for a bounded overview, not for field research.
+
+```bash
+# Agent entry point: compact SKILL.md, full detail on the linked pages
+vimanam openapi.json --output-mode skill -o ./api-skill \
+  --detail full --include-schemas --include-examples
+
+# Linked pages with a small index and full endpoint files
+vimanam openapi.json --split endpoint -o ./api-docs \
+  --detail full --include-schemas --overview-max-tokens 2000
+
+# One field, or a depth-bounded operation, when a schema page is still too big
+vimanam openapi.json --schema-field 'Finding#/properties/tags'
+vimanam openapi.json --operation-id GetFinding --detail full \
+  --include-schemas --schema-depth 2 --no-report
+```
 
 ```bash
 # 20,000-ft view: every service and operation name, usually <1% the size of the spec.
@@ -454,7 +472,7 @@ vimanam diff old.json new.json --format json --report -o diff.json --fail-on-bre
 ```json
 {
   "schema_version": 1,
-  "generator": { "name": "vimanam", "version": "1.2.0" },
+  "generator": { "name": "vimanam", "version": "1.4.0" },
   "old": { "title": "Widgets API", "version": "1.0.0", "file_sha256": "<64 lowercase hex>" },
   "new": { "title": "Widgets API", "version": "1.1.0", "file_sha256": "<64 lowercase hex>" },
   "summary": {
@@ -578,11 +596,16 @@ The generated documentation includes:
 
 ## Roadmap
 
-Work is organized into [milestones](https://github.com/noemaforge/vimanam/milestones):
+Shipped:
 
-- **[v1.0.0](https://github.com/noemaforge/vimanam/milestone/1)** — first stable release: JSON + YAML input, plus code-quality polish, a security-audit CI gate, and broader test coverage before tagging.
-- **[v1.1.0](https://github.com/noemaforge/vimanam/milestone/2)** — LLM/token ergonomics: token-budget tooling and shell completions.
-- **[v1.2.0](https://github.com/noemaforge/vimanam/milestone/3)** — alternative output modes: multi-file cross-linked pages, an agent-navigable skill-tree mode, and spec diffing.
+- **[v1.0.0](https://github.com/noemaforge/vimanam/milestone/1)** — first stable release: JSON and YAML input.
+- **[v1.1.0](https://github.com/noemaforge/vimanam/milestone/2)** — token budgets, shell completions, the hygiene report, `--stats`, and `diff`.
+- **[v1.2.0](https://github.com/noemaforge/vimanam/milestone/3)** — `diff --format json` with stable change IDs.
+- **v1.3.0** — exact operation selection (`--operation`, `--operation-id`).
+- **v1.4.0** — linked multi-file output (`--split`), the agent-navigable Skill tree (`--output-mode skill`), and schema/field reads with `--schema-depth`.
+
+Still open:
+
 - **[Packaging](https://github.com/noemaforge/vimanam/milestone/4)** — distribution channels (Scoop, winget, Chocolatey, AUR, native `.deb`/`.rpm`), shipped independently of code releases.
 
 See the [open issues](https://github.com/noemaforge/vimanam/issues) for the full backlog.

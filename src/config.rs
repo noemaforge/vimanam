@@ -15,7 +15,7 @@ use crate::models::{DetailLevel, DocConfig, GroupBy, OperationRef, OperationSele
 #[command(subcommand_negates_reqs = true, args_conflicts_with_subcommands = true)]
 #[command(group(ArgGroup::new("tree_output").args(["split", "output_mode"])))]
 pub struct Cli {
-    /// Path to the OpenAPI JSON file
+    /// Path to the OpenAPI JSON or YAML file
     #[arg(value_name = "FILE", required = true)]
     pub input: Option<PathBuf>,
 
