@@ -10,7 +10,7 @@ use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 
 use crate::config::SplitArg;
-use crate::diff_json::sha256_hex;
+use crate::diff::json::sha256_hex;
 use crate::models::{ApiDocumentation, DetailLevel, DocConfig, Endpoint};
 use crate::utils::{clean_for_id, resolve_schema_reference};
 
