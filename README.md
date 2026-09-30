@@ -93,6 +93,15 @@ cargo build --release
 cargo install --path .
 ```
 
+### Development
+
+```bash
+cargo test
+cargo fmt && cargo clippy
+```
+
+Integration tests live in `tests/cli/` and `tests/split.rs` and run against `tests/fixtures/`. `scripts/compare-baseline.sh` compares a fresh build with a released binary across the CLI matrix — stdout, stderr, exit code, and written files — so a refactor can be checked for byte-for-byte output parity. Setup and the case list are in [`scripts/README.md`](scripts/README.md).
+
 ### Shell completions
 
 `vimanam completions <SHELL>` prints a completion script for `bash`, `zsh`, `fish`,
