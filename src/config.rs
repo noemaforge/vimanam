@@ -25,6 +25,15 @@ pub struct Cli {
     #[arg(short, long, value_name = "FILE")]
     pub output: Option<PathBuf>,
 
+    /// Write linked Markdown pages to the directory given by --output
+    #[arg(long, value_enum, requires = "output", conflicts_with_all = ["stats", "max_tokens", "inline_schemas"])]
+    pub split: Option<SplitArg>,
+
+    /// Estimated token budget for the compact split index only; full navigation
+    /// and detail pages remain available, without detail fallback
+    #[arg(long, value_name = "N", requires = "split")]
+    pub overview_max_tokens: Option<usize>,
+
     /// Group endpoints by HTTP method instead of by service
     #[arg(long)]
     pub method: bool,
@@ -199,6 +208,13 @@ pub enum GroupByArg {
     Path,
 }
 
+#[derive(Copy, Clone, PartialEq, Eq, ValueEnum, Debug)]
+pub enum SplitArg {
+    Service,
+    Tag,
+    Endpoint,
+}
+
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum, Debug)]
 pub enum DetailLevelArg {
     Summary,
@@ -370,6 +386,8 @@ mod tests {
             input: Some(PathBuf::from("spec.json")),
             command: None,
             output: None,
+            split: None,
+            overview_max_tokens: None,
             method: false,
             group_by: GroupByArg::Service,
             flat: false,

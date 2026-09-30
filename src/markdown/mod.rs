@@ -11,6 +11,7 @@
 mod endpoint;
 mod examples;
 mod schema;
+pub(crate) mod split;
 mod views;
 
 use std::io::Write;

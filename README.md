@@ -21,6 +21,7 @@ Besides producing documentation for humans, Vimanam is built for **feeding API s
 - Filter by service, path, or method
 - Multiple detail levels (summary, basic, standard, full)
 - Token-budget-aware output (`--max-tokens`): steps the detail level down until the rendering fits, and reports what was trimmed on stderr
+- Linked directory output (`--split service|tag|endpoint`): a compact overview alongside requested detail pages and shared schema files, with an independent overview budget
 - Token-budget dry run (`--stats`): a per-service table of endpoint counts and estimated token sizes, for sizing slices before choosing filters
 - Spec diffing (`vimanam diff old.json new.json`): compares two versions of a spec on *resolved* schemas — a change behind a shared `$ref` is reported on every endpoint that uses it — and classifies each change as breaking, non-breaking or needing review, with an exit code for CI (`--fail-on-breaking`)
 - Spec hygiene report appended to every run (`--no-report` to skip): counts and lists operations missing a description, `operationId` or responses, deprecated and untagged operations, duplicate `operationId`s, and undescribed parameters
@@ -208,6 +209,23 @@ Every run appends a short report after the documentation, separated by a horizon
 
 Pass `--no-report` to omit it. The report is not counted against `--max-tokens` — the budget fits the documentation body only — so combine `--max-tokens` with `--no-report` when the whole output must stay within the budget.
 
+### Linked pages with a compact overview
+
+Keep complete API detail available on disk while loading only the relevant pages:
+
+```bash
+vimanam openapi.json --split endpoint -o ./api-docs \
+  --detail full --include-schemas --include-examples --overview-max-tokens 2000
+```
+
+Start at `api-docs/index.md`. Its entries show method/path, operation ID and a brief description, and link to detail pages. The linked `api.md` retains the complete API description and global usage guidance outside the overview budget. Endpoint detail pages link to shared `schemas/*.md` files; each reachable schema is rendered once, including cyclic references. `--split service` produces one detail page per service, and `--split tag` uses the spec's tags (the parser's service names). Multi-tag operations appear under each selected service/tag. Endpoint splitting produces one page per operation. Filtering applies to the generated tree; omitted operations are disclosed in the overview with a command to retrieve the full tree.
+
+`--detail` controls detail pages; the overview stays compact independently. `--overview-max-tokens` uses the approximate chars/4 estimate only for `index.md`. When operation entries do not fit, `index-all.md` retains complete navigation. Even a tiny budget preserves the navigation notice and can therefore exceed the estimate. Linked detail pages keep the requested detail level and schema tables. The hygiene report, when enabled, is a separate `report.md` page.
+
+`--max-tokens` remains a single-document detail-fallback option and conflicts with `--split`; use `--overview-max-tokens` for a split overview. Split output uses shared schema links, so `--inline-schemas` also conflicts with `--split`. Schemas and examples still require `--detail full` and their respective inclusion flags. Each reduced-detail page tells the reader how to retrieve fuller detail into another directory.
+
+Generated paths combine a readable slug with a hash of the operation, service name or schema reference. They stay stable when filters or unrelated operations change. Regeneration uses `.vimanam-manifest.json` to track owned files: it removes obsolete generated pages only when their contents are unchanged, preserves unrelated files, and refuses to overwrite edited generated pages or unmanaged collisions. Move edited pages aside or use a fresh output directory before regenerating. Symlink output paths and parents are rejected; use their resolved paths (for example `/private/tmp` instead of `/tmp` on macOS). Keep the manifest alongside the generated tree.
+
 ## Options
 
 ```
@@ -243,6 +261,8 @@ Options:
       --no-toc                             Skip table of contents
       --sort <alpha|path-length|none>      Sorting method [default: alpha]
       --max-tokens <N>                     Fit output to a token budget, stepping detail down as needed (the hygiene report is appended outside the budget)
+      --split <SPLIT>                      Write linked pages to the --output directory [service, tag, endpoint]
+      --overview-max-tokens <N>            Estimated budget for the split index only; detail remains available
       --no-report                          Skip the spec hygiene report appended after the documentation
       --stats                              Dry run: print a per-service table of visible endpoints and estimated tokens instead of Markdown (TOTAL is one whole-document render, not the sum of the rows)
   -h, --help                               Print help

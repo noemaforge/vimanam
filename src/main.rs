@@ -203,6 +203,18 @@ fn run() -> Result<ExitCode> {
     }
 
     // Generate markdown
+    if let Some(split) = cli.split {
+        markdown::split::write_tree(
+            cli.output.as_ref().expect("clap requires --output"),
+            input,
+            &api_doc,
+            &config,
+            split,
+            cli.overview_max_tokens,
+        )?;
+        warn_filtered_out_selectors(&api_doc, &config);
+        return Ok(ExitCode::SUCCESS);
+    }
     if let Some(output_path) = &cli.output {
         // Write to file
         let mut writer = BufWriter::new(create_output_file(output_path)?);
