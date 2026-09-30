@@ -35,7 +35,7 @@ indexmap = { version = "2.14", features = ["serde"] }
 anyhow = "1.0"
 
 # SHA-256 for the diff JSON `file_sha256` fields and stable change IDs (#98)
-sha2 = "0.10"
+sha2 = "0.11"
 
 # Logging
 log = "0.4"
