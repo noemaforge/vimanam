@@ -20,6 +20,11 @@ use super::{detail_level_name, estimate_tokens, service_is_visible, visible_endp
 
 const MANIFEST: &str = ".vimanam-manifest.json";
 
+pub(crate) enum TreeLayout {
+    Split(SplitArg),
+    Skill,
+}
+
 /// Escape untrusted spec text used in generated navigation (including headings).
 pub(super) fn escape(value: &str) -> String {
     let mut result = String::new();
@@ -62,6 +67,34 @@ fn endpoint_anchor(endpoint: &Endpoint) -> String {
         "operation-{}",
         sha256_hex(endpoint_identity(endpoint).as_bytes())
     )
+}
+
+/// Skill names have stricter rules than Markdown heading IDs: ASCII hyphen
+/// case, no adjacent separators, and at most 64 bytes including the suffix.
+fn skill_name(title: &str) -> String {
+    let mut base = String::new();
+    let mut separator = false;
+    for ch in title.chars() {
+        if !ch.is_ascii_alphanumeric() {
+            separator = !base.is_empty();
+            continue;
+        }
+        if separator {
+            base.push('-');
+            separator = false;
+        }
+        base.push(ch.to_ascii_lowercase());
+        if base.len() >= 60 {
+            base.truncate(60);
+            break;
+        }
+    }
+    let base = base.trim_end_matches('-');
+    if base.is_empty() {
+        "api".to_string()
+    } else {
+        format!("{base}-api")
+    }
 }
 
 fn quote_shell(value: &str) -> String {
@@ -144,10 +177,17 @@ pub(crate) fn write_tree(
     input: &Path,
     doc: &ApiDocumentation,
     config: &DocConfig,
-    split: SplitArg,
+    layout: TreeLayout,
     overview_budget: Option<usize>,
 ) -> Result<()> {
-    let files = render_tree(input, doc, config, split, overview_budget)?;
+    let files = match layout {
+        TreeLayout::Split(split) => render_tree(input, doc, config, split, overview_budget)?,
+        TreeLayout::Skill => {
+            let mut files = render_tree(input, doc, config, SplitArg::Endpoint, None)?;
+            apply_skill_profile(&mut files, input, doc, config, overview_budget)?;
+            files
+        }
+    };
     write_files(output, &files)
 }
 
@@ -324,6 +364,192 @@ fn render_tree(
     Ok(files)
 }
 
+/// Skill output is a navigation profile over the endpoint tree. Details are
+/// finalized first, then measured in hubs, then hubs are measured in the root.
+/// Keeping estimates out of their target files avoids circular read costs.
+fn apply_skill_profile(
+    files: &mut BTreeMap<String, Vec<u8>>,
+    input: &Path,
+    doc: &ApiDocumentation,
+    config: &DocConfig,
+    overview_budget: Option<usize>,
+) -> Result<()> {
+    let endpoints = visible_endpoints(doc, config);
+    for (path, body) in files.iter_mut() {
+        if path.starts_with("endpoints/") {
+            writeln!(
+                body,
+                "\n[Operation directory](index.md) · [Schema directory](../schemas/index.md)\n"
+            )?;
+        } else if path.starts_with("schemas/") {
+            writeln!(body, "\n[Schema directory](index.md)\n")?;
+        }
+    }
+    let cost = |path: &str| estimate_tokens(&files[path]);
+    let cost_entry = |endpoint: &Endpoint, target: &str, path: &str| {
+        format!(
+            "{} — ~{} tokens\n",
+            entry(endpoint, target).trim_end(),
+            cost(path)
+        )
+    };
+    let mut endpoint_hub = String::from(
+        "# Operations\n\n[Skill entry point](../SKILL.md) · [Services](../services/index.md)\n\nEstimates use characters/4, rounded up, for the individual linked file only. Open an operation, then follow its schema links as needed.\n\n",
+    );
+    for endpoint in &endpoints {
+        let name = filename(&endpoint_identity(endpoint), &endpoint_identity(endpoint));
+        endpoint_hub.push_str(&cost_entry(endpoint, &name, &format!("endpoints/{name}")));
+    }
+    if endpoints.is_empty() {
+        endpoint_hub.push_str("No operations matched the requested scope.\n");
+    }
+    let mut schema_hub = String::from(
+        "# Schemas\n\n[Skill entry point](../SKILL.md) · [Operations](../endpoints/index.md)\n\nEstimates use characters/4, rounded up, for each individual file; referenced schemas are separate reads. This directory contains schemas reached by the selected operations under the requested detail options. Other schemas may still exist in the source spec.\n\n",
+    );
+    for (path, body) in files
+        .iter()
+        .filter(|(path, _)| path.starts_with("schemas/"))
+    {
+        let text = String::from_utf8_lossy(body);
+        let name = text
+            .lines()
+            .next()
+            .unwrap_or("# Schema")
+            .trim_start_matches("# ");
+        let target = path.strip_prefix("schemas/").expect("schema prefix");
+        schema_hub.push_str(&format!("- [{name}]({target}) — ~{} tokens\n", cost(path)));
+    }
+    if !files.keys().any(|path| path.starts_with("schemas/")) {
+        schema_hub.push_str(&format!(
+            "Schema tables are absent under these options or no component schemas were reached. Absence here does not mean the spec has no schemas. Retrieve full schema documentation:\n\n```sh\n{}\n```\n",
+            retrieval(input, SplitArg::Endpoint, None)
+        ));
+    }
+    let names: BTreeSet<&str> = endpoints
+        .iter()
+        .flat_map(|ep| ep.services.iter().map(String::as_str))
+        .filter(|name| service_is_visible(name, config))
+        .collect();
+    let mut service_pages = Vec::new();
+    for name in names {
+        let path = format!("services/{}", filename(name, name));
+        let mut body = format!(
+            "# {}\n\n[Services](index.md) · [Skill entry point](../SKILL.md)\n\nEstimates use characters/4, rounded up, for each individual linked file only.\n\n",
+            escape(name)
+        );
+        if let Some(description) = doc
+            .services
+            .iter()
+            .find(|service| service.name == name)
+            .and_then(|service| service.description.as_deref())
+        {
+            body.push_str(&format!("{description}\n\n"));
+        }
+        let members: Vec<_> = endpoints
+            .iter()
+            .filter(|ep| ep.services.iter().any(|service| service == name))
+            .collect();
+        for endpoint in &members {
+            let endpoint_path = format!(
+                "endpoints/{}",
+                filename(&endpoint_identity(endpoint), &endpoint_identity(endpoint))
+            );
+            body.push_str(&cost_entry(
+                endpoint,
+                &format!("../{endpoint_path}"),
+                &endpoint_path,
+            ));
+        }
+        service_pages.push((name, path, members.len(), body));
+    }
+    files.insert("endpoints/index.md".to_string(), endpoint_hub.into_bytes());
+    files.insert("schemas/index.md".to_string(), schema_hub.into_bytes());
+    let mut area_entries = Vec::new();
+    let mut service_hub = String::from(
+        "# Services\n\n[Skill entry point](../SKILL.md) · [All operations](../endpoints/index.md)\n\nEach hub lists method/path, operation ID, a short description and the cost of the individual endpoint read. Estimates use characters/4, rounded up.\n\n",
+    );
+    for (name, path, count, body) in service_pages {
+        let tokens = estimate_tokens(body.as_bytes());
+        area_entries.push(format!(
+            "- [{}]({path}) — {count} operations; ~{tokens} tokens\n",
+            escape(name)
+        ));
+        service_hub.push_str(&format!(
+            "- [{}]({}) — {count} operations; ~{tokens} tokens\n",
+            escape(name),
+            path.strip_prefix("services/").expect("service prefix")
+        ));
+        files.insert(path, body.into_bytes());
+    }
+    files.insert("services/index.md".to_string(), service_hub.into_bytes());
+    let name = skill_name(&doc.title);
+    let description = format!(
+        "Navigate {} API documentation by service, operation and schema; load only files relevant to the task.",
+        doc.title
+    );
+    // JSON quoted strings are valid YAML scalars, including untrusted spec text.
+    let mut header = format!(
+        "---\nname: {}\ndescription: {}\nversion: {}\n---\n\n# {}\n\nStart with this map. Choose a service hub or the operation directory, read the relevant endpoint, then follow schema links only as needed. Every read is optional and selected by the agent.\n\nThis map omits endpoint and schema content. Detail pages retain the requested **{}** level independently of this entry point's budget. Reduced-detail pages explain omissions and give a command to retrieve fuller detail. Missing documentation here does not mean a field or operation is absent from the spec.\n\nRead costs are approximate **characters/4**, rounded up, measured from the emitted individual file. They exclude linked files, which are separate reads.\n\n",
+        serde_json::to_string(&name)?,
+        serde_json::to_string(&description)?,
+        serde_json::to_string(&doc.version)?,
+        escape(&doc.title),
+        detail_level_name(&config.detail_level),
+    );
+    for (label, path) in [
+        ("API description and usage guidance", "api.md"),
+        ("Operation directory", "endpoints/index.md"),
+        ("Schema directory", "schemas/index.md"),
+        ("Service directory", "services/index.md"),
+    ] {
+        header.push_str(&format!(
+            "- [{label}]({path}) — ~{} tokens\n",
+            estimate_tokens(&files[path])
+        ));
+    }
+    if let Some(report) = files.get("report.md") {
+        header.push_str(&format!(
+            "- [Spec hygiene report](report.md) — ~{} tokens\n",
+            estimate_tokens(report)
+        ));
+    }
+    let omitted = doc.endpoints.len().saturating_sub(endpoints.len());
+    if omitted > 0 {
+        header.push_str(&format!("\n> Filters/selectors omitted {omitted} operations from this tree; they remain in the spec. Retrieve all operations without filters:\n\n```sh\n{}\n```\n", retrieval(input, SplitArg::Endpoint, None)));
+    }
+    let full = format!("{header}\n## Services\n\n{}", area_entries.concat());
+    let budget = overview_budget.unwrap_or(1600);
+    let mut skill = full;
+    if estimate_tokens(skill.as_bytes()) > budget {
+        skill = format!(
+            "{header}\n> Service entries are omitted for the requested {budget}-token estimate. [Complete map](index.md) retains every service; endpoint and schema files are unchanged.\n\n## Services\n\n"
+        );
+        for entry in &area_entries {
+            if estimate_tokens(format!("{skill}{entry}").as_bytes()) > budget {
+                break;
+            }
+            skill.push_str(entry);
+        }
+        if estimate_tokens(skill.as_bytes()) > budget {
+            eprintln!(
+                "vimanam: skill navigation needs ~{} tokens, over the {budget}-token estimate; detail pages are unchanged",
+                estimate_tokens(skill.as_bytes())
+            );
+        }
+    }
+    let mut index = format!(
+        "# {} — Complete map\n\n[Skill entry point](SKILL.md) · [All operations](endpoints/index.md) · [All rendered schemas](schemas/index.md)\n\n## Services\n\n{}",
+        escape(&doc.title),
+        area_entries.concat()
+    );
+    if endpoints.is_empty() {
+        index.push_str("No operations matched the requested scope.\n");
+    }
+    files.insert("index.md".to_string(), index.into_bytes());
+    files.insert("SKILL.md".to_string(), skill.into_bytes());
+    Ok(())
+}
+
 fn write_detail(
     body: &mut Vec<u8>,
     endpoint: &Endpoint,
@@ -363,6 +589,7 @@ struct Manifest {
 
 fn validate_relative(path: &str) -> Result<()> {
     let valid = path == "index.md"
+        || path == "SKILL.md"
         || path == "index-all.md"
         || path == "report.md"
         || path == "api.md"

@@ -5,6 +5,261 @@ use std::path::{Path, PathBuf};
 
 const REFS: &str = "tests/fixtures/schema_refs_oas3.json";
 
+fn skill_command(spec: &str, directory: &Path) -> Command {
+    let mut command = Command::cargo_bin("vimanam").unwrap();
+    command
+        .arg(spec)
+        .args([
+            "--output-mode",
+            "skill",
+            "--detail",
+            "full",
+            "--include-schemas",
+            "--no-report",
+            "-o",
+        ])
+        .arg(directory);
+    command
+}
+
+fn assert_read_costs(directory: &Path, files: &BTreeMap<PathBuf, String>) {
+    let mut checked = 0;
+    for (path, text) in files
+        .iter()
+        .filter(|(path, _)| path.extension().is_some_and(|ext| ext == "md"))
+    {
+        for line in text
+            .lines()
+            .filter(|line| line.starts_with("- [") && line.ends_with(" tokens"))
+        {
+            let target = line.split("](").nth(1).unwrap().split(')').next().unwrap();
+            let expected: usize = line
+                .rsplit('~')
+                .next()
+                .unwrap()
+                .split_whitespace()
+                .next()
+                .unwrap()
+                .parse()
+                .unwrap();
+            let contents =
+                fs::read_to_string(directory.join(path.parent().unwrap()).join(target)).unwrap();
+            assert_eq!(
+                expected,
+                contents.chars().count().div_ceil(4),
+                "cost in {} for {target}",
+                path.display()
+            );
+            checked += 1;
+        }
+    }
+    assert!(checked > 5);
+}
+
+#[test]
+fn skill_tree_supports_selected_reads_frontmatter_and_exact_individual_costs() {
+    let temporary = tempfile::tempdir().unwrap();
+    let directory = temporary.path().canonicalize().unwrap().join("skill");
+    skill_command(REFS, &directory).assert().success();
+    let files = tree(&directory);
+    assert_links(&directory, &files);
+    assert_read_costs(&directory, &files);
+    let root = &files[Path::new("SKILL.md")];
+    assert!(root.starts_with("---\nname: "));
+    assert!(root.contains("\ndescription: "));
+    assert!(root.contains("\nversion: "));
+    assert!(root.contains("characters/4"));
+    assert!(root.contains("individual file"));
+    assert!(!root.contains("Category.identifier"));
+    let operations = &files[Path::new("endpoints/index.md")];
+    let chosen = operations
+        .lines()
+        .find(|line| line.contains("Pets\\_CreatePet"))
+        .unwrap();
+    assert!(chosen.contains("POST /pets"));
+    let endpoint_name = chosen
+        .split("](")
+        .nth(1)
+        .unwrap()
+        .split(')')
+        .next()
+        .unwrap();
+    let endpoint = &files[&PathBuf::from("endpoints").join(endpoint_name)];
+    assert!(endpoint.contains("../schemas/pet-"));
+    assert!(!endpoint.contains("Node.next"));
+    assert!(!endpoint.contains("Category.identifier"));
+    let pet_link = endpoint
+        .split("](../schemas/")
+        .nth(1)
+        .unwrap()
+        .split(')')
+        .next()
+        .unwrap();
+    let pet = &files[&PathBuf::from("schemas").join(pet_link)];
+    assert!(pet.contains("CreatePetRequest.category"));
+    let category_link = pet
+        .split("](../schemas/")
+        .nth(1)
+        .unwrap()
+        .split(')')
+        .next()
+        .unwrap();
+    assert!(files[&PathBuf::from("schemas").join(category_link)].contains("Category.id"));
+    skill_command(REFS, &directory).assert().success();
+    assert_eq!(tree(&directory), files);
+}
+
+#[test]
+fn skill_overview_budget_preserves_every_other_artifact() {
+    let temporary = tempfile::tempdir().unwrap();
+    let root = temporary.path().canonicalize().unwrap();
+    let full = root.join("full");
+    let compact = root.join("compact");
+    skill_command(REFS, &full).assert().success();
+    skill_command(REFS, &compact)
+        .args(["--overview-max-tokens", "1"])
+        .assert()
+        .success();
+    let compact_files = tree(&compact);
+    assert_links(&compact, &compact_files);
+    assert_read_costs(&compact, &compact_files);
+    assert!(compact_files[Path::new("SKILL.md")].contains("[Complete map](index.md)"));
+    for (path, bytes) in tree(&full) {
+        if path != Path::new("SKILL.md") && path != Path::new(".vimanam-manifest.json") {
+            assert_eq!(compact_files[&path], bytes);
+        }
+    }
+}
+
+#[test]
+fn skill_names_are_bounded_ascii_hyphen_case_and_metadata_round_trips() {
+    let temporary = tempfile::tempdir().unwrap();
+    let root = temporary.path().canonicalize().unwrap();
+    let titles = [
+        "Endor_Labs API".to_string(),
+        "文档".to_string(),
+        "!".to_string(),
+        format!("API {}", "A".repeat(80)),
+        format!("{} XYZ", "A".repeat(59)),
+        "--Hostile_\"API\"\nversion: injected--".to_string(),
+    ];
+    let version = "1.0:\n\"release\"";
+    let mut spec: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(REFS).unwrap()).unwrap();
+    for (index, title) in titles.iter().enumerate() {
+        spec["info"]["title"] = serde_json::json!(title);
+        spec["info"]["version"] = serde_json::json!(version);
+        let input = root.join(format!("spec{index}.json"));
+        let directory = root.join(format!("skill{index}"));
+        fs::write(&input, serde_json::to_vec(&spec).unwrap()).unwrap();
+        skill_command(input.to_str().unwrap(), &directory)
+            .assert()
+            .success();
+        let contents = fs::read_to_string(directory.join("SKILL.md")).unwrap();
+        let frontmatter = contents.split("---\n").nth(1).unwrap();
+        let metadata: serde_norway::Value = serde_norway::from_str(frontmatter).unwrap();
+        let name = metadata["name"].as_str().unwrap();
+        assert!(!name.is_empty() && name.len() <= 64, "{title}: {name}");
+        assert!(
+            name.bytes()
+                .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-'),
+            "{title}: {name}"
+        );
+        assert!(
+            !name.starts_with('-') && !name.ends_with('-') && !name.contains("--"),
+            "{title}: {name}"
+        );
+        assert_eq!(
+            metadata["description"].as_str().unwrap(),
+            format!(
+                "Navigate {title} API documentation by service, operation and schema; load only files relevant to the task."
+            )
+        );
+        assert_eq!(metadata["version"].as_str().unwrap(), version);
+        skill_command(input.to_str().unwrap(), &directory)
+            .assert()
+            .success();
+        assert_eq!(
+            fs::read_to_string(directory.join("SKILL.md")).unwrap(),
+            contents
+        );
+    }
+}
+
+#[test]
+fn skill_filters_multitags_and_reduced_details_preserve_navigation_and_retrieval() {
+    let temporary = tempfile::tempdir().unwrap();
+    let root = temporary.path().canonicalize().unwrap();
+    let directory = root.join("skill");
+    skill_command("tests/fixtures/multi_tag_oas3.json", &directory)
+        .assert()
+        .success();
+    let full = tree(&directory);
+    assert_links(&directory, &full);
+    assert_eq!(
+        full.keys()
+            .filter(|path| path.starts_with("endpoints") && path.file_name().unwrap() != "index.md")
+            .count(),
+        1
+    );
+    assert_eq!(
+        full.keys()
+            .filter(|path| path.starts_with("services") && path.file_name().unwrap() != "index.md")
+            .count(),
+        2
+    );
+    let filtered = root.join("filtered");
+    Command::cargo_bin("vimanam")
+        .unwrap()
+        .arg(REFS)
+        .args([
+            "--output-mode",
+            "skill",
+            "--operation-id",
+            "Pets_CreatePet",
+            "--detail",
+            "summary",
+            "-o",
+        ])
+        .arg(&filtered)
+        .assert()
+        .success();
+    let files = tree(&filtered);
+    assert_links(&filtered, &files);
+    assert!(files[Path::new("SKILL.md")].contains("omitted 1 operations"));
+    assert!(files[Path::new("schemas/index.md")].contains("Retrieve full schema documentation"));
+    let endpoint = files
+        .iter()
+        .find(|(path, _)| path.starts_with("endpoints") && path.file_name().unwrap() != "index.md")
+        .unwrap()
+        .1;
+    assert!(endpoint.contains("Retrieve fuller detail"));
+    assert!(endpoint.contains("--operation 'POST /pets'"));
+    assert!(!endpoint.contains("#### Parameters"));
+    skill_command("tests/fixtures/petstore_oas2.json", &root.join("oas2"))
+        .assert()
+        .success();
+    assert_links(&root.join("oas2"), &tree(&root.join("oas2")));
+}
+
+#[test]
+fn skill_requires_directory_and_rejects_conflicting_output_options() {
+    for args in [
+        vec!["--output-mode", "skill"],
+        vec!["--output-mode", "skill", "-o", "x", "--split", "endpoint"],
+        vec!["--output-mode", "skill", "-o", "x", "--max-tokens", "8"],
+        vec!["--output-mode", "skill", "-o", "x", "--inline-schemas"],
+        vec!["--output-mode", "skill", "-o", "x", "--stats"],
+    ] {
+        Command::cargo_bin("vimanam")
+            .unwrap()
+            .arg(REFS)
+            .args(args)
+            .assert()
+            .code(2);
+    }
+}
+
 fn command(spec: &str, directory: &Path, mode: &str) -> Command {
     let mut command = Command::cargo_bin("vimanam").unwrap();
     command

@@ -22,6 +22,7 @@ Besides producing documentation for humans, Vimanam is built for **feeding API s
 - Multiple detail levels (summary, basic, standard, full)
 - Token-budget-aware output (`--max-tokens`): steps the detail level down until the rendering fits, and reports what was trimmed on stderr
 - Linked directory output (`--split service|tag|endpoint`): a compact overview alongside requested detail pages and shared schema files, with an independent overview budget
+- Agent navigation (`--output-mode skill`): a compact `SKILL.md`, service/operation/schema hubs and individual-file read costs
 - Token-budget dry run (`--stats`): a per-service table of endpoint counts and estimated token sizes, for sizing slices before choosing filters
 - Spec diffing (`vimanam diff old.json new.json`): compares two versions of a spec on *resolved* schemas — a change behind a shared `$ref` is reported on every endpoint that uses it — and classifies each change as breaking, non-breaking or needing review, with an exit code for CI (`--fail-on-breaking`)
 - Spec hygiene report appended to every run (`--no-report` to skip): counts and lists operations missing a description, `operationId` or responses, deprecated and untagged operations, duplicate `operationId`s, and undescribed parameters
@@ -226,6 +227,20 @@ Start at `api-docs/index.md`. Its entries show method/path, operation ID and a b
 
 Generated paths combine a readable slug with a hash of the operation, service name or schema reference. They stay stable when filters or unrelated operations change. Regeneration uses `.vimanam-manifest.json` to track owned files: it removes obsolete generated pages only when their contents are unchanged, preserves unrelated files, and refuses to overwrite edited generated pages or unmanaged collisions. Move edited pages aside or use a fresh output directory before regenerating. Symlink output paths and parents are rejected; use their resolved paths (for example `/private/tmp` instead of `/tmp` on macOS). Keep the manifest alongside the generated tree.
 
+### Agent-navigable Skill tree
+
+```bash
+vimanam openapi.json --output-mode skill -o ./api-skill \
+  --detail full --include-schemas --include-examples --include-auth \
+  --overview-max-tokens 1600
+```
+
+Start with `api-skill/SKILL.md`, which has YAML frontmatter (`name`, `description`, API `version`) and explains how to choose reads. Follow a service hub to select an endpoint by method/path, operation ID and short description, then follow that endpoint's schema links as needed. `endpoints/index.md` lists all selected operations; `schemas/index.md` lists reachable shared schemas; `services/index.md` lists service hubs. Multi-tag operations share one endpoint file. `api.md` retains global API guidance.
+
+Hub entries show the approximate cost of each linked file, using characters/4 rounded up from its final emitted contents. An endpoint estimate covers that endpoint file alone; reading linked schemas incurs their separate costs. Estimates help the agent choose what to load without loading the full referenced graph first.
+
+`--overview-max-tokens` affects only `SKILL.md` (default estimate: 1600). When service entries do not fit, the root links to the complete `index.md` map; all detail files and directory hubs stay unchanged. Essential navigation may exceed an extremely small budget. Existing filters, sorting, detail levels and schema/example flags apply to detail files. Reduced-detail pages include retrieval commands, and omitted documentation is distinguished from content absent in the source spec. Schema tables still require `--detail full --include-schemas`. This profile uses the same stable paths and ownership protections as split output and conflicts with `--split`, `--max-tokens`, `--stats` and `--inline-schemas`.
+
 ## Options
 
 ```
@@ -262,7 +277,8 @@ Options:
       --sort <alpha|path-length|none>      Sorting method [default: alpha]
       --max-tokens <N>                     Fit output to a token budget, stepping detail down as needed (the hygiene report is appended outside the budget)
       --split <SPLIT>                      Write linked pages to the --output directory [service, tag, endpoint]
-      --overview-max-tokens <N>            Estimated budget for the split index only; detail remains available
+      --output-mode <OUTPUT_MODE>          Write an agent-navigable SKILL.md tree [skill]
+      --overview-max-tokens <N>            Estimated budget for the split index or SKILL.md only; detail remains available
       --no-report                          Skip the spec hygiene report appended after the documentation
       --stats                              Dry run: print a per-service table of visible endpoints and estimated tokens instead of Markdown (TOTAL is one whole-document render, not the sum of the rows)
   -h, --help                               Print help
