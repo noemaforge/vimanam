@@ -15,10 +15,15 @@ use crate::models::{ApiDocumentation, DetailLevel, DocConfig, Endpoint};
 use crate::utils::{clean_for_id, resolve_schema_reference};
 
 use super::endpoint::write_endpoint;
-use super::schema::{SchemaContext, short_schema_reference, write_schema_table_at};
+use super::schema::{
+    SchemaContext, emit_omissions, response_schema, short_schema_reference, write_schema_table_at,
+};
 use super::{detail_level_name, estimate_tokens, service_is_visible, visible_endpoints};
 
 const MANIFEST: &str = ".vimanam-manifest.json";
+
+type TreeFiles = BTreeMap<String, Vec<u8>>;
+type RenderedTree = (TreeFiles, Vec<String>);
 
 pub(crate) enum TreeLayout {
     Split(SplitArg),
@@ -180,15 +185,41 @@ pub(crate) fn write_tree(
     layout: TreeLayout,
     overview_budget: Option<usize>,
 ) -> Result<()> {
-    let files = match layout {
+    let (files, omissions) = match layout {
         TreeLayout::Split(split) => render_tree(input, doc, config, split, overview_budget)?,
         TreeLayout::Skill => {
-            let mut files = render_tree(input, doc, config, SplitArg::Endpoint, None)?;
+            let (mut files, omissions) = render_tree(input, doc, config, SplitArg::Endpoint, None)?;
             apply_skill_profile(&mut files, input, doc, config, overview_budget)?;
-            files
+            (files, omissions)
         }
     };
-    write_files(output, &files)
+    write_files(output, &files)?;
+    emit_omissions(&omissions);
+    Ok(())
+}
+
+fn prediscover_emitted_depths(
+    doc: &ApiDocumentation,
+    config: &DocConfig,
+    endpoints: &[&crate::models::Endpoint],
+) -> indexmap::IndexMap<String, usize> {
+    let mut ctx = SchemaContext::configured(doc, config, true);
+    for endpoint in endpoints {
+        if let Some(schema) = endpoint
+            .parameters
+            .iter()
+            .find(|parameter| parameter.parameter_in == "body")
+            .and_then(|parameter| parameter.schema.as_ref())
+        {
+            ctx.discover_root(schema, 0);
+        }
+        for response in endpoint.responses.values() {
+            if let Some(schema) = response_schema(response) {
+                ctx.discover_root(schema, 0);
+            }
+        }
+    }
+    ctx.discovered_depths()
 }
 
 fn render_tree(
@@ -197,8 +228,9 @@ fn render_tree(
     config: &DocConfig,
     split: SplitArg,
     overview_budget: Option<usize>,
-) -> Result<BTreeMap<String, Vec<u8>>> {
-    let mut files = BTreeMap::new();
+) -> Result<RenderedTree> {
+    let mut files = TreeFiles::new();
+    let mut omissions = Vec::new();
     // Global guidance can be essential to interpreting an operation. Preserve
     // the full preamble in a linked page instead of loading it into the overview.
     let mut api_details = Vec::new();
@@ -206,6 +238,7 @@ fn render_tree(
     writeln!(api_details, "[Overview](index.md)\n")?;
     files.insert("api.md".to_string(), api_details);
     let endpoints = visible_endpoints(doc, config);
+    let emitted_depths = prediscover_emitted_depths(doc, config, &endpoints);
     let mut overview_entries = Vec::new();
     let mut references = BTreeMap::new();
 
@@ -223,7 +256,15 @@ fn render_tree(
                     "# {}\n\n[Overview](../index.md)\n",
                     escape(&endpoint_identity(endpoint))
                 )?;
-                write_detail(&mut body, endpoint, doc, config, &mut references)?;
+                write_detail(
+                    &mut body,
+                    endpoint,
+                    doc,
+                    config,
+                    &emitted_depths,
+                    &mut references,
+                    &mut omissions,
+                )?;
                 body.extend(page_notice(input, split, config, Some(endpoint)).as_bytes());
                 files.insert(path, body);
             }
@@ -270,7 +311,15 @@ fn render_tree(
                         endpoint,
                         &format!("{path}#{}", endpoint_anchor(endpoint)),
                     ));
-                    write_detail(&mut body, endpoint, doc, config, &mut references)?;
+                    write_detail(
+                        &mut body,
+                        endpoint,
+                        doc,
+                        config,
+                        &emitted_depths,
+                        &mut references,
+                        &mut omissions,
+                    )?;
                 }
                 body.extend(page_notice(input, split, config, None).as_bytes());
                 files.insert(path, body);
@@ -298,8 +347,10 @@ fn render_tree(
         let mut body = Vec::new();
         writeln!(body, "# {}\n\n[Overview](../index.md)\n", escape(&name))?;
         let mut ctx = SchemaContext::configured(doc, config, true);
+        ctx.set_emitted_depths(emitted_depths.clone());
         ctx.set_current_schema(&name);
         write_schema_table_at(&mut body, schema, &name, depth, &mut ctx)?;
+        omissions.extend(ctx.take_omissions());
         for (child, child_depth) in ctx
             .references()
             .filter(|(reference, _)| !seen.contains(*reference))
@@ -381,7 +432,7 @@ fn render_tree(
         }
     }
     files.insert("index.md".to_string(), index.into_bytes());
-    Ok(files)
+    Ok((files, omissions))
 }
 
 /// Skill output is a navigation profile over the endpoint tree. Details are
@@ -575,7 +626,9 @@ fn write_detail(
     endpoint: &Endpoint,
     doc: &ApiDocumentation,
     config: &DocConfig,
+    emitted_depths: &indexmap::IndexMap<String, usize>,
     references: &mut BTreeMap<String, usize>,
+    omissions: &mut Vec<String>,
 ) -> Result<()> {
     if config.detail_level == DetailLevel::Summary {
         // Summary never invokes write_endpoint (whose lowest body level is Basic).
@@ -589,6 +642,7 @@ fn write_detail(
         return Ok(());
     }
     let mut ctx = SchemaContext::configured(doc, config, true);
+    ctx.set_emitted_depths(emitted_depths.clone());
     write_endpoint(
         body,
         endpoint,
@@ -596,6 +650,7 @@ fn write_detail(
         Some(&endpoint_anchor(endpoint)),
         &mut ctx,
     )?;
+    omissions.extend(ctx.take_omissions());
     for (reference, depth) in ctx.references() {
         references
             .entry(reference.clone())

@@ -191,7 +191,7 @@ pub(super) fn render<W: Write>(
     writer: &mut W,
     doc: &ApiDocumentation,
     config: &DocConfig,
-) -> Result<()> {
+) -> Result<Vec<String>> {
     writeln!(
         writer,
         "# {} — Selected schemas\n",
@@ -215,6 +215,11 @@ pub(super) fn render<W: Write>(
     for (label, selected) in selections(doc, config)? {
         let name = label.split('#').next().expect("schema name");
         ctx.set_current_schema(name);
+        ctx.set_active_selector(if label.contains('#') {
+            Some(label.clone())
+        } else {
+            None
+        });
         // Explicit ancestor paths and their leaf metadata must survive even a
         // zero expansion allowance; depth limits govern expansion beyond them.
         let protected_depth = label
@@ -248,5 +253,7 @@ pub(super) fn render<W: Write>(
             "\nRetrieve the complete named schema without selection/depth limits:\n\n```sh\n{command}\n```\n"
         )?;
     }
-    render_schema_definitions(writer, &mut ctx)
+    ctx.set_active_selector(None);
+    render_schema_definitions(writer, &mut ctx)?;
+    Ok(ctx.take_omissions())
 }
