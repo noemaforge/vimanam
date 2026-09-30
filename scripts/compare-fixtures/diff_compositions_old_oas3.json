@@ -1,0 +1,145 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Composition Diff API",
+    "version": "1.0.0"
+  },
+  "tags": [
+    { "name": "Shapes", "description": "Shape operations" },
+    { "name": "Trees", "description": "Tree operations" }
+  ],
+  "paths": {
+    "/shapes": {
+      "post": {
+        "tags": ["Shapes"],
+        "summary": "Create a shape",
+        "operationId": "Shapes_Create",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/AnyShape" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "ok",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/OneShape" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/trees": {
+      "get": {
+        "tags": ["Trees"],
+        "summary": "Get tree",
+        "operationId": "Trees_Get",
+        "responses": {
+          "200": {
+            "description": "ok",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/AllShape" }
+              }
+            }
+          },
+          "201": {
+            "description": "recursive",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/RecursiveNode" }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "RefMember": {
+        "type": "object",
+        "title": "RefMember",
+        "required": ["code"],
+        "properties": {
+          "code": { "type": "integer" },
+          "label": {
+            "type": "string",
+            "enum": ["A", "B"]
+          }
+        }
+      },
+      "AnyShape": {
+        "anyOf": [
+          {
+            "type": "object",
+            "title": "AnyInline",
+            "properties": {
+              "tag": {
+                "type": "string",
+                "enum": ["x", "y"]
+              }
+            }
+          },
+          { "$ref": "#/components/schemas/RefMember" },
+          {
+            "type": "boolean",
+            "title": "AnyBool"
+          }
+        ]
+      },
+      "OneShape": {
+        "oneOf": [
+          {
+            "type": "object",
+            "title": "OneInline",
+            "properties": {
+              "n": { "type": "integer" }
+            }
+          },
+          {
+            "type": "object",
+            "title": "OneAlt",
+            "properties": {
+              "s": { "type": "string" }
+            }
+          }
+        ]
+      },
+      "BaseThing": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" }
+        }
+      },
+      "AllShape": {
+        "allOf": [
+          { "$ref": "#/components/schemas/BaseThing" },
+          {
+            "type": "object",
+            "title": "AllExtra",
+            "required": ["extra"],
+            "properties": {
+              "extra": { "type": "string" },
+              "count": { "type": "integer" }
+            }
+          }
+        ]
+      },
+      "RecursiveNode": {
+        "type": "object",
+        "properties": {
+          "value": { "type": "string" },
+          "next": {
+            "$ref": "#/components/schemas/RecursiveNode"
+          }
+        }
+      }
+    }
+  }
+}

@@ -548,7 +548,6 @@ fn write_rows<W: Write>(writer: &mut W, rows: &[SchemaRow], external: bool) -> R
         } else {
             format!("`{}`", row.field)
         };
-        // #74: escape_table_cell now returns impl Display — no intermediate String.
         writeln!(
             writer,
             "| {} | {} | {} | {} |",
@@ -560,6 +559,67 @@ fn write_rows<W: Write>(writer: &mut W, rows: &[SchemaRow], external: bool) -> R
     }
 
     Ok(())
+}
+
+fn push_cutoff_row(
+    schema: &Schema,
+    field: &str,
+    required: Option<bool>,
+    rows: &mut Vec<SchemaRow>,
+    depth: usize,
+    ctx: &mut SchemaContext,
+) {
+    let metadata = schema
+        .reference
+        .as_deref()
+        .and_then(|reference| resolve_schema_reference(reference, ctx.doc))
+        .unwrap_or(schema);
+    let mut description = schema
+        .description
+        .clone()
+        .or_else(|| metadata.description.clone())
+        .unwrap_or_else(|| "-".into());
+    // Depth-limited rows always keep enums; this branch is only reached when
+    // max_depth or selected is set, so default output is unchanged.
+    append_enum(&mut description, metadata, true);
+    let expandable = schema.reference.is_some()
+        || schema.properties.as_ref().is_some_and(|v| !v.is_empty())
+        || schema.items.is_some()
+        || matches!(
+            schema.additional_properties,
+            Some(AdditionalProperties::Schema(_))
+        )
+        || schema.all_of.is_some()
+        || schema.one_of.is_some()
+        || schema.any_of.is_some();
+    if expandable {
+        let command = ctx.retrieval(schema.reference.as_deref());
+        description.push_str(&format!(
+            "; Omitted nested expansion at schema depth {depth}. Retrieve full detail: {command}"
+        ));
+        ctx.omissions.push(format!(
+            "vimanam: omitted nested schema expansion at depth {depth} for {field}; retrieve full detail: {command}"
+        ));
+    }
+    rows.push(SchemaRow {
+        field: field.to_string(),
+        type_name: ctx.cutoff_type_name(schema),
+        required: required_to_string(required).to_string(),
+        description,
+    });
+}
+
+fn composition_source_index(variant: &Schema, index: usize, selected: bool) -> usize {
+    if selected {
+        variant
+            .extensions
+            .get("x-vimanam-selected-index")
+            .and_then(serde_json::Value::as_u64)
+            .map(|index| index as usize)
+            .unwrap_or(index)
+    } else {
+        index
+    }
 }
 
 fn collect_schema_rows(
@@ -578,42 +638,7 @@ fn collect_schema_rows(
         .is_some_and(|limit| depth >= limit.max(ctx.protected_depth))
         || (ctx.selected && depth >= MAX_DEPTH.max(ctx.protected_depth))
     {
-        let metadata = schema
-            .reference
-            .as_deref()
-            .and_then(|reference| resolve_schema_reference(reference, ctx.doc))
-            .unwrap_or(schema);
-        let mut description = schema
-            .description
-            .clone()
-            .or_else(|| metadata.description.clone())
-            .unwrap_or_else(|| "-".into());
-        // Depth-limited rows always keep enums; this branch is only reached when
-        // max_depth or selected is set, so default output is unchanged.
-        append_enum(&mut description, metadata, true);
-        let expandable = schema.reference.is_some()
-            || schema.properties.as_ref().is_some_and(|v| !v.is_empty())
-            || schema.items.is_some()
-            || matches!(
-                schema.additional_properties,
-                Some(AdditionalProperties::Schema(_))
-            )
-            || schema.all_of.is_some()
-            || schema.one_of.is_some()
-            || schema.any_of.is_some();
-        if expandable {
-            let command = ctx.retrieval(schema.reference.as_deref());
-            description.push_str(&format!("; Omitted nested expansion at schema depth {depth}. Retrieve full detail: {command}"));
-            ctx.omissions.push(format!(
-                "vimanam: omitted nested schema expansion at depth {depth} for {field}; retrieve full detail: {command}"
-            ));
-        }
-        rows.push(SchemaRow {
-            field: field.to_string(),
-            type_name: ctx.cutoff_type_name(schema),
-            required: required_to_string(required).to_string(),
-            description,
-        });
+        push_cutoff_row(schema, field, required, rows, depth, ctx);
         return;
     }
 
@@ -627,8 +652,6 @@ fn collect_schema_rows(
         return;
     }
 
-    // #75: flatten the four $ref cases into a single match with if-let guards,
-    // reducing nesting depth by one level throughout.
     match &schema.reference {
         // Inline mode + cycle detected.
         Some(reference) if ctx.inline && ref_stack.contains(reference) => {
@@ -711,8 +734,6 @@ fn collect_schema_rows(
     let description = schema.description.as_deref().unwrap_or("-");
     rows.push(SchemaRow {
         field: field.to_string(),
-        // #74: schema_type_label returns impl Display; .to_string() materialises
-        // it once into the SchemaRow, which already owns a String.
         type_name: schema_type_label(schema).to_string(),
         required: required_to_string(required).to_string(),
         description: {
@@ -767,78 +788,25 @@ fn collect_schema_rows(
         );
     }
 
-    if let Some(all_of) = &schema.all_of {
-        for (index, variant) in all_of.iter().enumerate() {
-            let source_index = if ctx.selected {
-                variant
-                    .extensions
-                    .get("x-vimanam-selected-index")
-                    .and_then(serde_json::Value::as_u64)
-                    .map(|index| index as usize)
-                    .unwrap_or(index)
-            } else {
-                index
-            };
-            let variant_field = format!("{}.allOf[{}]", field, source_index);
-            collect_schema_rows(
-                variant,
-                &variant_field,
-                required,
-                rows,
-                ref_stack,
-                depth + 1,
-                ctx,
-            );
-        }
-    }
-
-    if let Some(one_of) = &schema.one_of {
-        for (index, variant) in one_of.iter().enumerate() {
-            let source_index = if ctx.selected {
-                variant
-                    .extensions
-                    .get("x-vimanam-selected-index")
-                    .and_then(serde_json::Value::as_u64)
-                    .map(|index| index as usize)
-                    .unwrap_or(index)
-            } else {
-                index
-            };
-            let variant_field = format!("{}.oneOf[{}]", field, source_index);
-            collect_schema_rows(
-                variant,
-                &variant_field,
-                required,
-                rows,
-                ref_stack,
-                depth + 1,
-                ctx,
-            );
-        }
-    }
-
-    if let Some(any_of) = &schema.any_of {
-        for (index, variant) in any_of.iter().enumerate() {
-            let source_index = if ctx.selected {
-                variant
-                    .extensions
-                    .get("x-vimanam-selected-index")
-                    .and_then(serde_json::Value::as_u64)
-                    .map(|index| index as usize)
-                    .unwrap_or(index)
-            } else {
-                index
-            };
-            let variant_field = format!("{}.anyOf[{}]", field, source_index);
-            collect_schema_rows(
-                variant,
-                &variant_field,
-                required,
-                rows,
-                ref_stack,
-                depth + 1,
-                ctx,
-            );
+    for (label, variants) in [
+        ("allOf", &schema.all_of),
+        ("oneOf", &schema.one_of),
+        ("anyOf", &schema.any_of),
+    ] {
+        if let Some(variants) = variants {
+            for (index, variant) in variants.iter().enumerate() {
+                let source_index = composition_source_index(variant, index, ctx.selected);
+                let variant_field = format!("{field}.{label}[{source_index}]");
+                collect_schema_rows(
+                    variant,
+                    &variant_field,
+                    required,
+                    rows,
+                    ref_stack,
+                    depth + 1,
+                    ctx,
+                );
+            }
         }
     }
 }

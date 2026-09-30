@@ -1,6 +1,5 @@
 mod config;
 mod diff;
-mod diff_json;
 mod markdown;
 mod models;
 mod parser;
@@ -72,8 +71,8 @@ fn run_diff(args: &DiffArgs) -> Result<ExitCode> {
         .with_context(|| format!("Failed to parse OpenAPI file: {:?}", args.old))?;
     let new_bytes = fs::read(&args.new)
         .with_context(|| format!("Failed to parse OpenAPI file: {:?}", args.new))?;
-    let old_sha = diff_json::sha256_hex(&old_bytes);
-    let new_sha = diff_json::sha256_hex(&new_bytes);
+    let old_sha = diff::json::sha256_hex(&old_bytes);
+    let new_sha = diff::json::sha256_hex(&new_bytes);
 
     let old = parse_openapi_bytes(&old_bytes, &file_extension(&args.old), Some(&args.old))
         .with_context(|| format!("Failed to parse OpenAPI file: {:?}", args.old))?;
@@ -96,7 +95,7 @@ fn run_diff(args: &DiffArgs) -> Result<ExitCode> {
             info!("Diff written to: {:?}", output_path);
         }
         (Some(output_path), DiffFormatArg::Json) => {
-            let document = diff_json::to_json(&spec_diff, deltas.as_ref(), &old_sha, &new_sha);
+            let document = diff::json::to_json(&spec_diff, deltas.as_ref(), &old_sha, &new_sha);
             let mut writer = BufWriter::new(create_output_file(output_path)?);
             write_json_diff(&mut writer, &document)?;
             info!("Diff written to: {:?}", output_path);
@@ -107,7 +106,7 @@ fn run_diff(args: &DiffArgs) -> Result<ExitCode> {
             stdout().flush().context("Failed to write diff")?;
         }
         (None, DiffFormatArg::Json) => {
-            let document = diff_json::to_json(&spec_diff, deltas.as_ref(), &old_sha, &new_sha);
+            let document = diff::json::to_json(&spec_diff, deltas.as_ref(), &old_sha, &new_sha);
             write_json_diff(&mut stdout(), &document)?;
         }
     }
@@ -131,7 +130,7 @@ fn file_extension(path: &Path) -> String {
 
 /// Pretty-prints the JSON diff with a trailing newline, flushing before
 /// returning so the exit-code check can never truncate the document.
-fn write_json_diff<W: Write>(writer: &mut W, document: &diff_json::JsonDiff) -> Result<()> {
+fn write_json_diff<W: Write>(writer: &mut W, document: &diff::json::JsonDiff) -> Result<()> {
     serde_json::to_writer_pretty(&mut *writer, document).context("Failed to write diff")?;
     writer.write_all(b"\n").context("Failed to write diff")?;
     writer.flush().context("Failed to write diff")

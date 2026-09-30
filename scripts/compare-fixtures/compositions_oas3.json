@@ -1,0 +1,210 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Compositions API",
+    "version": "1.0.0"
+  },
+  "tags": [
+    { "name": "Shapes", "description": "Shape composition operations" },
+    { "name": "Trees", "description": "Nested composition operations" },
+    { "name": "Maps", "description": "Map and recursive operations" }
+  ],
+  "paths": {
+    "/shapes": {
+      "post": {
+        "tags": ["Shapes"],
+        "summary": "Create a shape",
+        "operationId": "Shapes_Create",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/AnyShape" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Accepted shape",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/OneShape" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/trees": {
+      "get": {
+        "tags": ["Trees"],
+        "summary": "Get a nested allOf tree",
+        "operationId": "Trees_Get",
+        "responses": {
+          "200": {
+            "description": "Nested composition payload",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/AllShape" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/maps": {
+      "put": {
+        "tags": ["Maps"],
+        "summary": "Put a keyed bag",
+        "operationId": "Maps_Put",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/KeyedBag" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Recursive composition payload",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/RecursiveViaAny" }
+              }
+            }
+          },
+          "404": {
+            "description": "Unresolved reference rendering",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/BrokenRef" }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "InlineMember": {
+        "type": "object",
+        "title": "InlineMember",
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": ["inline", "named"]
+          }
+        }
+      },
+      "RefMember": {
+        "type": "object",
+        "title": "RefMember",
+        "required": ["code"],
+        "properties": {
+          "code": { "type": "integer" },
+          "label": {
+            "type": "string",
+            "enum": ["A", "B"]
+          }
+        }
+      },
+      "AnyShape": {
+        "anyOf": [
+          {
+            "type": "object",
+            "title": "AnyInline",
+            "properties": {
+              "tag": {
+                "type": "string",
+                "enum": ["x", "y"]
+              }
+            }
+          },
+          { "$ref": "#/components/schemas/RefMember" }
+        ]
+      },
+      "OneShape": {
+        "oneOf": [
+          {
+            "type": "object",
+            "title": "OneInline",
+            "properties": {
+              "n": { "type": "integer" }
+            }
+          },
+          { "$ref": "#/components/schemas/InlineMember" }
+        ]
+      },
+      "BaseThing": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" }
+        }
+      },
+      "AllShape": {
+        "allOf": [
+          { "$ref": "#/components/schemas/BaseThing" },
+          {
+            "type": "object",
+            "title": "AllExtra",
+            "required": ["extra"],
+            "properties": {
+              "extra": { "type": "string" },
+              "nested": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "title": "NestedLeft",
+                    "enum": ["left", "right"]
+                  },
+                  { "$ref": "#/components/schemas/RefMember" }
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "KeyedBag": {
+        "type": "object",
+        "properties": {
+          "entries": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/RefMember"
+            }
+          }
+        }
+      },
+      "RecursiveViaAny": {
+        "anyOf": [
+          {
+            "type": "object",
+            "title": "RecLeaf",
+            "properties": {
+              "value": { "type": "string" }
+            }
+          },
+          {
+            "type": "object",
+            "title": "RecNode",
+            "properties": {
+              "child": {
+                "$ref": "#/components/schemas/RecursiveViaAny"
+              }
+            }
+          }
+        ]
+      },
+      "BrokenRef": {
+        "type": "object",
+        "properties": {
+          "missing": {
+            "$ref": "#/components/schemas/DoesNotExist"
+          }
+        }
+      }
+    }
+  }
+}
