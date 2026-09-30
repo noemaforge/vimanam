@@ -5,6 +5,15 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.1] - 2026-09-30
+
+### Changed
+
+- Refresh transitive crates in `Cargo.lock` to the latest versions compatible
+  with Rust 1.96. Direct dependency requirements are unchanged, and generated
+  Markdown is unchanged. This is the baseline for later refactors that must
+  keep byte-for-byte output parity.
+
 ## [1.4.0] - 2026-09-30
 
 ### Added
@@ -337,6 +346,7 @@ already on `main`; only the version bump was missing.
 - Initial release: OpenAPI 2.0 (Swagger) JSON to Markdown with grouping,
   filtering, sorting, and detail levels
 
+[1.4.1]: https://github.com/noemaforge/vimanam/compare/v1.4.0...v1.4.1
 [1.4.0]: https://github.com/noemaforge/vimanam/compare/v1.3.0...v1.4.0
 [1.3.0]: https://github.com/noemaforge/vimanam/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/noemaforge/vimanam/compare/v1.1.0...v1.2.0
