@@ -726,7 +726,8 @@ fn depth_limits_apply_to_split_and_skill_reference_graphs_with_valid_links() {
                     .find(|(_, text)| text.starts_with("# Root\n"))
                     .expect("Root schema page");
                 assert!(
-                    root.1.contains("[Shared](../schemas/shared-"),
+                    root.1
+                        .contains("| ` Root.deep.hop ` | [Shared](../schemas/shared-"),
                     "cutoff hop should link to emitted Shared: {}",
                     root.1
                 );
@@ -773,4 +774,111 @@ fn depth_limits_apply_to_split_and_skill_reference_graphs_with_valid_links() {
             assert_eq!(tree(&directory), files);
         }
     }
+}
+
+#[test]
+fn schema_depth_split_does_not_emit_non_2xx_only_schemas() {
+    let temporary = tempfile::tempdir().unwrap();
+    let root = temporary.path().canonicalize().unwrap();
+    let spec = root.join("spec.json");
+    let directory = root.join("docs");
+    fs::write(
+        &spec,
+        serde_json::to_vec(&serde_json::json!({
+            "openapi": "3.0.3",
+            "info": {"title": "Errors", "version": "1"},
+            "paths": {
+                "/item": {
+                    "get": {
+                        "operationId": "GetItem",
+                        "tags": ["Items"],
+                        "responses": {
+                            "200": {
+                                "description": "ok",
+                                "content": {
+                                    "application/json": {
+                                        "schema": {
+                                            "type": "object",
+                                            "properties": {
+                                                "l1": {
+                                                    "type": "object",
+                                                    "properties": {
+                                                        "l2": {
+                                                            "type": "object",
+                                                            "properties": {
+                                                                "hop": {
+                                                                    "$ref": "#/components/schemas/ErrorOnly"
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            },
+                            "400": {
+                                "description": "bad",
+                                "content": {
+                                    "application/json": {
+                                        "schema": {"$ref": "#/components/schemas/ErrorOnly"}
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            "components": {
+                "schemas": {
+                    "ErrorOnly": {
+                        "type": "object",
+                        "properties": {"message": {"type": "string"}}
+                    }
+                }
+            }
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    Command::cargo_bin("vimanam")
+        .unwrap()
+        .args([
+            spec.to_str().unwrap(),
+            "--split",
+            "endpoint",
+            "--detail",
+            "full",
+            "--include-schemas",
+            "--schema-depth",
+            "3",
+            "-o",
+        ])
+        .arg(&directory)
+        .assert()
+        .success();
+
+    let files = tree(&directory);
+    assert_links(&directory, &files);
+    assert!(
+        !files
+            .keys()
+            .any(|path| path.starts_with("schemas") && path.file_name().unwrap() != "index.md"),
+        "non-2xx-only schema must not get a schemas page: {:?}",
+        files.keys().collect::<Vec<_>>()
+    );
+    let detail = files
+        .values()
+        .find(|text| text.contains("### GetItem") || text.contains("# GetItem"))
+        .expect("endpoint detail");
+    assert!(
+        detail.contains("| ` response.l1.l2.hop ` | ref ErrorOnly |"),
+        "cutoff must stay an unlinked ref: {detail}"
+    );
+    assert!(
+        !detail.contains("[ErrorOnly]"),
+        "must not invent a link to an unemitted schema: {detail}"
+    );
 }

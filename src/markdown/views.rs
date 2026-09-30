@@ -13,7 +13,7 @@ use crate::models::{ApiDocumentation, DocConfig, Endpoint, Service, SortMethod};
 use crate::utils::clean_for_id;
 
 use super::endpoint::{get_short_title, write_endpoint};
-use super::schema::{SchemaContext, render_schema_definitions};
+use super::schema::{SchemaContext, prediscover_rendered_endpoints, render_schema_definitions};
 
 /// The in-document anchor for an endpoint heading. `prefix` (a service name)
 /// scopes it so the same endpoint rendered under several services—as the
@@ -319,6 +319,17 @@ pub(super) fn generate_by_service<W: Write>(
 
     // Write each service section
     let mut schema_ctx = SchemaContext::configured(doc, config, false);
+    prediscover_rendered_endpoints(
+        &mut schema_ctx,
+        config,
+        services.iter().flat_map(|service| {
+            service_endpoints
+                .get(service.name.as_str())
+                .into_iter()
+                .flatten()
+                .copied()
+        }),
+    );
     for service in &services {
         // Create anchor but use it directly in the writeln! call
         let anchor = clean_for_id(&service.name);
@@ -387,6 +398,17 @@ pub(super) fn generate_by_method<W: Write>(
 
     // Write each method section
     let mut schema_ctx = SchemaContext::configured(doc, config, false);
+    prediscover_rendered_endpoints(
+        &mut schema_ctx,
+        config,
+        [
+            "GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD", "TRACE",
+        ]
+        .iter()
+        .filter_map(|method| method_endpoints.get(method))
+        .flatten()
+        .copied(),
+    );
     for method in [
         "GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD", "TRACE",
     ] {
@@ -455,6 +477,11 @@ pub(super) fn generate_by_path<W: Write>(
 
     // Write each path section
     let mut schema_ctx = SchemaContext::configured(doc, config, false);
+    prediscover_rendered_endpoints(
+        &mut schema_ctx,
+        config,
+        path_endpoints.values().flatten().copied(),
+    );
     for (path, endpoints) in &path_endpoints {
         let anchor = clean_for_id(path);
         writeln!(writer, "## {} {{#{}}}", path, anchor)?;
@@ -485,6 +512,7 @@ pub(super) fn generate_flat<W: Write>(
 
     writeln!(writer, "## Endpoints\n")?;
     let mut schema_ctx = SchemaContext::configured(doc, config, false);
+    prediscover_rendered_endpoints(&mut schema_ctx, config, endpoints.iter().copied());
     for endpoint in endpoints {
         let anchor = endpoint_anchor(None, endpoint);
         write_endpoint(writer, endpoint, config, Some(&anchor), &mut schema_ctx)?;
