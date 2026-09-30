@@ -157,7 +157,7 @@ fn retain_selected_services(
 /// Writes the document preamble shared by every view: title, description, API
 /// version, and—when `--include-auth` is set—the server URLs and authentication
 /// schemes.
-fn write_preamble<W: Write>(
+pub(super) fn write_preamble<W: Write>(
     writer: &mut W,
     doc: &ApiDocumentation,
     config: &DocConfig,

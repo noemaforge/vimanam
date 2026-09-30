@@ -41,6 +41,8 @@ pub(super) struct SchemaContext<'a> {
     anchors: IndexMap<String, String>,
     /// Anchors already handed out, so colliding name slugs get a unique suffix.
     used_anchors: HashSet<String>,
+    /// Split pages link definitions to separate files, never local anchors.
+    external: bool,
 }
 
 impl<'a> SchemaContext<'a> {
@@ -50,7 +52,18 @@ impl<'a> SchemaContext<'a> {
             inline,
             anchors: IndexMap::new(),
             used_anchors: HashSet::new(),
+            external: false,
         }
+    }
+
+    pub(super) fn external(doc: &'a ApiDocumentation) -> Self {
+        let mut ctx = Self::new(doc, false);
+        ctx.external = true;
+        ctx
+    }
+
+    pub(super) fn references(&self) -> impl Iterator<Item = &String> {
+        self.anchors.keys()
     }
 
     /// The documentation being rendered, for callers that need it alongside the
@@ -64,6 +77,12 @@ impl<'a> SchemaContext<'a> {
     fn register(&mut self, reference: &str) -> String {
         if let Some(anchor) = self.anchors.get(reference) {
             return anchor.clone();
+        }
+
+        if self.external {
+            let target = format!("../schemas/{}", super::split::schema_filename(reference));
+            self.anchors.insert(reference.to_string(), target.clone());
+            return target;
         }
 
         let base = format!(
@@ -111,7 +130,7 @@ pub(super) fn write_schema_table<W: Write>(
     let mut rows = Vec::new();
     let mut ref_stack = Vec::new();
     collect_schema_rows(schema, root_label, None, &mut rows, &mut ref_stack, 0, ctx);
-    write_rows(writer, &rows)
+    write_rows(writer, &rows, ctx.external)
 }
 
 /// Renders the trailing "Schema Definitions" section: every component schema
@@ -157,14 +176,14 @@ pub(super) fn render_schema_definitions<W: Write>(
             }),
         }
 
-        write_rows(writer, &rows)?;
+        write_rows(writer, &rows, false)?;
         writeln!(writer)?;
     }
 
     Ok(())
 }
 
-fn write_rows<W: Write>(writer: &mut W, rows: &[SchemaRow]) -> Result<()> {
+fn write_rows<W: Write>(writer: &mut W, rows: &[SchemaRow], external: bool) -> Result<()> {
     if rows.is_empty() {
         writeln!(writer, "*No schema fields available*")?;
         return Ok(());
@@ -173,11 +192,26 @@ fn write_rows<W: Write>(writer: &mut W, rows: &[SchemaRow]) -> Result<()> {
     writeln!(writer, "| Field | Type | Required | Description |")?;
     writeln!(writer, "|------|------|---------:|-------------|")?;
     for row in rows {
+        // Split navigation supports arbitrary component/property names. Use a
+        // sufficiently long code delimiter and escape table pipes/newlines.
+        // Preserve existing single-document bytes.
+        let field = if external {
+            let longest_run = row
+                .field
+                .split(|ch| ch != '`')
+                .map(str::len)
+                .max()
+                .unwrap_or(0);
+            let delimiter = "`".repeat(longest_run + 1);
+            format!("{delimiter} {} {delimiter}", escape_table_cell(&row.field))
+        } else {
+            format!("`{}`", row.field)
+        };
         // #74: escape_table_cell now returns impl Display — no intermediate String.
         writeln!(
             writer,
-            "| `{}` | {} | {} | {} |",
-            row.field,
+            "| {} | {} | {} | {} |",
+            field,
             escape_table_cell(&row.type_name),
             row.required,
             escape_table_cell(&row.description)
@@ -251,7 +285,11 @@ fn collect_schema_rows(
             let anchor = ctx.register(reference);
             rows.push(SchemaRow {
                 field: field.to_string(),
-                type_name: format!("[{name}](#{anchor})"),
+                type_name: if ctx.external {
+                    format!("[{}]({anchor})", super::split::escape(&name))
+                } else {
+                    format!("[{name}](#{anchor})")
+                },
                 required: required_to_string(required).to_string(),
                 description,
             });
@@ -436,7 +474,7 @@ fn required_to_string(required: Option<bool>) -> &'static str {
     }
 }
 
-fn short_schema_reference(reference: &str) -> String {
+pub(super) fn short_schema_reference(reference: &str) -> String {
     reference
         .rsplit('/')
         .next()
