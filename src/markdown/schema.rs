@@ -364,12 +364,18 @@ pub(crate) fn response_schema(response: &Response) -> Option<&Schema> {
 }
 
 /// Request-body schema an endpoint's full-detail schema section expands, if any.
+///
+/// The parser emits one synthetic `in: body` parameter per requestBody media
+/// type (and Swagger 2 may carry multiple body parameters). Prefer the first
+/// that has a schema — same rule as [`response_schema`] for content media types
+/// — so a schema-less `application/octet-stream` ahead of `application/json`
+/// does not suppress the JSON table.
 pub(super) fn request_body_schema(endpoint: &Endpoint) -> Option<&Schema> {
     endpoint
         .parameters
         .iter()
-        .find(|parameter| parameter.parameter_in == "body")
-        .and_then(|parameter| parameter.schema.as_ref())
+        .filter(|parameter| parameter.parameter_in == "body")
+        .find_map(|parameter| parameter.schema.as_ref())
 }
 
 /// First 2xx response in spec order — the only success body the renderer expands.
@@ -400,7 +406,8 @@ pub(super) fn rendered_endpoint_schemas(endpoint: &Endpoint) -> Vec<&Schema> {
 
 /// Pre-discover every schema this document will expand so cutoff rows can link
 /// to definitions regardless of endpoint write order. No-op without
-/// `--schema-depth`, and no-op unless the renderer will expand schemas
+/// `--schema-depth`, no-op in `--inline-schemas` mode (no Schema Definitions
+/// section to link to), and no-op unless the renderer will expand schemas
 /// (`--detail full --include-schemas`), so lower-detail budget trials and
 /// default output stay unchanged.
 pub(super) fn prediscover_rendered_endpoints<'a>(
@@ -408,7 +415,8 @@ pub(super) fn prediscover_rendered_endpoints<'a>(
     config: &DocConfig,
     endpoints: impl IntoIterator<Item = &'a Endpoint>,
 ) {
-    if ctx.max_depth.is_none()
+    if ctx.inline
+        || ctx.max_depth.is_none()
         || config.detail_level != DetailLevel::Full
         || !config.include_schemas
     {

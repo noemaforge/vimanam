@@ -3615,6 +3615,79 @@ fn schema_depth_field_selector_retrieval_uses_same_schema_field() {
         ));
 }
 
+// Schema-less media types ahead of a schema-bearing one must not suppress the
+// request schema table (mirrors response_schema's first-with-schema rule).
+#[test]
+fn request_schema_skips_schema_less_media_type() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = write_spec(
+        &dir,
+        "octet_then_json.json",
+        &serde_json::json!({
+            "openapi": "3.0.3",
+            "info": {"title": "Upload", "version": "1"},
+            "paths": {
+                "/upload": {
+                    "post": {
+                        "operationId": "Upload",
+                        "tags": ["Files"],
+                        "requestBody": {
+                            "required": true,
+                            "content": {
+                                "application/octet-stream": {},
+                                "application/json": {
+                                    "schema": {
+                                        "type": "object",
+                                        "required": ["name"],
+                                        "properties": {
+                                            "name": {
+                                                "type": "string",
+                                                "description": "File name"
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        },
+                        "responses": {
+                            "204": {"description": "ok"}
+                        }
+                    }
+                }
+            }
+        }),
+    );
+
+    let assert_json_table = |extra: &[&str]| {
+        let mut args = vec![
+            path.as_str(),
+            "--detail",
+            "full",
+            "--include-schemas",
+            "--no-report",
+        ];
+        args.extend_from_slice(extra);
+        let output = vimanam().args(&args).output().unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let text = String::from_utf8(output.stdout).unwrap();
+        assert!(
+            !text.contains("*No request schema available*"),
+            "must not skip the JSON body when octet-stream is first: {text}"
+        );
+        assert!(
+            text.contains("| `request.name` | string | Yes | File name |"),
+            "JSON request schema table missing: {text}"
+        );
+    };
+
+    assert_json_table(&[]);
+    assert_json_table(&["--schema-depth", "2"]);
+}
+
 #[test]
 fn schema_depth_cutoff_links_to_emitted_schema_not_missing_ones() {
     vimanam()
@@ -3638,13 +3711,9 @@ fn schema_depth_cutoff_links_to_emitted_schema_not_missing_ones() {
         .stdout(predicate::str::contains("### Tag").not());
 }
 
-#[test]
-fn schema_depth_cutoff_links_shared_schema_discovered_by_later_endpoint() {
-    // Early hits Shared only at the depth cutoff; Late reaches it inside the
-    // limit. Pre-discovery must make Early's cutoff link regardless of write order.
-    let dir = tempfile::tempdir().unwrap();
-    let path = write_spec(
-        &dir,
+fn order_shared_schema_spec(dir: &tempfile::TempDir) -> String {
+    write_spec(
+        dir,
         "order.json",
         &serde_json::json!({
             "openapi": "3.0.3",
@@ -3709,7 +3778,15 @@ fn schema_depth_cutoff_links_shared_schema_discovered_by_later_endpoint() {
                 }
             }
         }),
-    );
+    )
+}
+
+#[test]
+fn schema_depth_cutoff_links_shared_schema_discovered_by_later_endpoint() {
+    // Early hits Shared only at the depth cutoff; Late reaches it inside the
+    // limit. Pre-discovery must make Early's cutoff link regardless of write order.
+    let dir = tempfile::tempdir().unwrap();
+    let path = order_shared_schema_spec(&dir);
 
     let output = vimanam()
         .args([
@@ -3743,6 +3820,51 @@ fn schema_depth_cutoff_links_shared_schema_discovered_by_later_endpoint() {
         "Early cutoff must link to Shared discovered via Late: {early}"
     );
     assert!(text.contains("### Shared {#schema-shared}"), "{text}");
+}
+
+#[test]
+fn schema_depth_inline_cutoff_stays_plain_ref_without_schema_link() {
+    // Inline mode never emits Schema Definitions; pre-discovery must not
+    // invent #schema- anchors that would leave broken cutoff links.
+    let dir = tempfile::tempdir().unwrap();
+    let path = order_shared_schema_spec(&dir);
+
+    let output = vimanam()
+        .args([
+            &path,
+            "--flat",
+            "--detail",
+            "full",
+            "--include-schemas",
+            "--inline-schemas",
+            "--schema-depth",
+            "3",
+            "--no-report",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let text = String::from_utf8(output.stdout).unwrap();
+    let early = text
+        .find("### Early")
+        .and_then(|start| {
+            text[start..]
+                .find("### Late")
+                .map(|end| &text[start..start + end])
+        })
+        .expect("Early section before Late");
+    assert!(
+        early.contains("| `response.l1.l2.hop` | ref Shared |"),
+        "inline cutoff must stay a plain ref: {early}"
+    );
+    assert!(
+        !text.contains("#schema-"),
+        "inline mode must not invent schema definition links: {text}"
+    );
 }
 
 #[test]
