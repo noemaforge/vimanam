@@ -26,6 +26,7 @@
 output.md
 *.md
 !README.md
+!AGENTS.md
 !CLAUDE.md
 !CHANGELOG.md
 !SECURITY.md
@@ -39,6 +40,10 @@ swagger*.json
 
 # Test fixtures are tracked despite the patterns above
 !tests/fixtures/**
+
+# Comparison-only fixtures (guard against *.md / openapi*.json patterns)
+!scripts/compare-fixtures/**
+!scripts/README.md
 
 # Temporary files
 tmp/
