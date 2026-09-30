@@ -318,7 +318,7 @@ pub(super) fn generate_by_service<W: Write>(
     }
 
     // Write each service section
-    let mut schema_ctx = SchemaContext::new(doc, config.inline_schemas);
+    let mut schema_ctx = SchemaContext::configured(doc, config, false);
     for service in &services {
         // Create anchor but use it directly in the writeln! call
         let anchor = clean_for_id(&service.name);
@@ -386,7 +386,7 @@ pub(super) fn generate_by_method<W: Write>(
     }
 
     // Write each method section
-    let mut schema_ctx = SchemaContext::new(doc, config.inline_schemas);
+    let mut schema_ctx = SchemaContext::configured(doc, config, false);
     for method in [
         "GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD", "TRACE",
     ] {
@@ -454,7 +454,7 @@ pub(super) fn generate_by_path<W: Write>(
     }
 
     // Write each path section
-    let mut schema_ctx = SchemaContext::new(doc, config.inline_schemas);
+    let mut schema_ctx = SchemaContext::configured(doc, config, false);
     for (path, endpoints) in &path_endpoints {
         let anchor = clean_for_id(path);
         writeln!(writer, "## {} {{#{}}}", path, anchor)?;
@@ -484,7 +484,7 @@ pub(super) fn generate_flat<W: Write>(
     let endpoints = visible_endpoints(doc, config);
 
     writeln!(writer, "## Endpoints\n")?;
-    let mut schema_ctx = SchemaContext::new(doc, config.inline_schemas);
+    let mut schema_ctx = SchemaContext::configured(doc, config, false);
     for endpoint in endpoints {
         let anchor = endpoint_anchor(None, endpoint);
         write_endpoint(writer, endpoint, config, Some(&anchor), &mut schema_ctx)?;

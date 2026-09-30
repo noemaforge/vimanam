@@ -423,6 +423,10 @@ pub struct DocConfig {
     // Expand every `$ref` inline at each use site instead of linking to a shared
     // "Schema Definitions" section (the fully self-contained output).
     pub inline_schemas: bool,
+    pub schema_depth: Option<usize>,
+    pub schema_names: Vec<String>,
+    pub schema_fields: Vec<String>,
+    pub source_path: Option<String>,
     pub include_examples: bool,
     pub include_auth: bool,
     pub include_toc: bool,
@@ -452,6 +456,10 @@ impl DocConfig {
             detail_level: DetailLevel::Full,
             include_schemas: true,
             inline_schemas: false,
+            schema_depth: None,
+            schema_names: Vec::new(),
+            schema_fields: Vec::new(),
+            source_path: None,
             include_examples: false,
             include_auth: false,
             include_toc: true,

@@ -192,6 +192,8 @@ fn run() -> Result<ExitCode> {
         bail!(message);
     }
 
+    markdown::schema_selection::validate(&api_doc, &config)?;
+
     // `--stats` is a dry run: print the per-service size table to stdout
     // instead of the documentation. clap rejects `-o` and `--max-tokens`
     // alongside it, and the hygiene report is never emitted in this mode.

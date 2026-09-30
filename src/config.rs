@@ -96,6 +96,21 @@ pub struct Cli {
     #[arg(long)]
     pub inline_schemas: bool,
 
+    /// Maximum schema traversal edges from a root (properties/items/composition/$ref).
+    /// Zero retains only roots. Without selectors requires full detail with schemas.
+    #[arg(long, value_name = "N")]
+    pub schema_depth: Option<usize>,
+
+    /// Read a named schema directly (repeatable); independent of endpoint reachability.
+    /// Always renders full schema metadata, regardless of --detail.
+    #[arg(long = "schema", value_name = "NAME", conflicts_with_all = ["split", "output_mode", "stats"])]
+    pub schema_names: Vec<String>,
+
+    /// Read a schema subtree and its ancestors, as NAME#/properties/FIELD (repeatable).
+    /// JSON-pointer escaping applies. Referenced schemas may be traversed by the pointer.
+    #[arg(long = "schema-field", value_name = "NAME#POINTER", conflicts_with_all = ["split", "output_mode", "stats"])]
+    pub schema_fields: Vec<String>,
+
     /// Include request/response examples
     #[arg(long)]
     pub include_examples: bool,
@@ -305,9 +320,22 @@ pub fn build_config(cli: &Cli) -> DocConfig {
         },
         exclude_deprecated: cli.exclude_deprecated,
         required_only: cli.required_only,
-        detail_level: cli.detail.into(),
-        include_schemas: cli.include_schemas,
+        detail_level: if cli.schema_names.is_empty() && cli.schema_fields.is_empty() {
+            cli.detail.into()
+        } else {
+            DetailLevel::Full
+        },
+        include_schemas: cli.include_schemas
+            || !cli.schema_names.is_empty()
+            || !cli.schema_fields.is_empty(),
         inline_schemas: cli.inline_schemas,
+        schema_depth: cli.schema_depth,
+        schema_names: cli.schema_names.clone(),
+        schema_fields: cli.schema_fields.clone(),
+        source_path: cli
+            .input
+            .as_ref()
+            .map(|path| path.to_string_lossy().into_owned()),
         include_examples: cli.include_examples,
         include_auth: cli.include_auth,
         // `--toc`/`--no-toc` override each other (last one wins), so at most
@@ -315,7 +343,9 @@ pub fn build_config(cli: &Cli) -> DocConfig {
         include_toc: cli.toc || !cli.no_toc,
         sort_method: cli.sort.into(),
         max_tokens: cli.max_tokens,
-        include_report: !cli.no_report,
+        include_report: !cli.no_report
+            && cli.schema_names.is_empty()
+            && cli.schema_fields.is_empty(),
     };
 
     // Warn if --include-schemas or --include-examples is set but detail is not
@@ -412,6 +442,9 @@ mod tests {
             detail: DetailLevelArg::Summary,
             include_schemas: false,
             inline_schemas: false,
+            schema_depth: None,
+            schema_names: Vec::new(),
+            schema_fields: Vec::new(),
             include_examples: false,
             include_auth: false,
             toc: false,
