@@ -1,4 +1,4 @@
-use clap::{Args, Parser, Subcommand, ValueEnum};
+use clap::{ArgGroup, Args, Parser, Subcommand, ValueEnum};
 use clap_complete::Shell;
 use std::path::PathBuf;
 
@@ -13,6 +13,7 @@ use crate::models::{DetailLevel, DocConfig, GroupBy, OperationRef, OperationSele
 // positional `required` and let the subcommand negate that requirement.
 // Conversion flags are meaningless alongside a subcommand, so they conflict.
 #[command(subcommand_negates_reqs = true, args_conflicts_with_subcommands = true)]
+#[command(group(ArgGroup::new("tree_output").args(["split", "output_mode"])))]
 pub struct Cli {
     /// Path to the OpenAPI JSON file
     #[arg(value_name = "FILE", required = true)]
@@ -21,7 +22,7 @@ pub struct Cli {
     #[command(subcommand)]
     pub command: Option<Commands>,
 
-    /// Output file path
+    /// Output file path, or directory for split/skill output
     #[arg(short, long, value_name = "FILE")]
     pub output: Option<PathBuf>,
 
@@ -29,9 +30,13 @@ pub struct Cli {
     #[arg(long, value_enum, requires = "output", conflicts_with_all = ["stats", "max_tokens", "inline_schemas"])]
     pub split: Option<SplitArg>,
 
-    /// Estimated token budget for the compact split index only; full navigation
+    /// Write an agent-navigable SKILL.md tree to the --output directory
+    #[arg(long, value_enum, requires = "output", conflicts_with_all = ["stats", "max_tokens", "inline_schemas"])]
+    pub output_mode: Option<OutputModeArg>,
+
+    /// Estimated token budget for the compact split index or SKILL.md only; full navigation
     /// and detail pages remain available, without detail fallback
-    #[arg(long, value_name = "N", requires = "split")]
+    #[arg(long, value_name = "N", requires = "tree_output")]
     pub overview_max_tokens: Option<usize>,
 
     /// Group endpoints by HTTP method instead of by service
@@ -215,6 +220,11 @@ pub enum SplitArg {
     Endpoint,
 }
 
+#[derive(Copy, Clone, PartialEq, Eq, ValueEnum, Debug)]
+pub enum OutputModeArg {
+    Skill,
+}
+
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum, Debug)]
 pub enum DetailLevelArg {
     Summary,
@@ -387,6 +397,7 @@ mod tests {
             command: None,
             output: None,
             split: None,
+            output_mode: None,
             overview_max_tokens: None,
             method: false,
             group_by: GroupByArg::Service,

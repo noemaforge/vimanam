@@ -203,13 +203,17 @@ fn run() -> Result<ExitCode> {
     }
 
     // Generate markdown
-    if let Some(split) = cli.split {
+    let tree_layout = cli
+        .split
+        .map(markdown::split::TreeLayout::Split)
+        .or_else(|| cli.output_mode.map(|_| markdown::split::TreeLayout::Skill));
+    if let Some(layout) = tree_layout {
         markdown::split::write_tree(
             cli.output.as_ref().expect("clap requires --output"),
             input,
             &api_doc,
             &config,
-            split,
+            layout,
             cli.overview_max_tokens,
         )?;
         warn_filtered_out_selectors(&api_doc, &config);
