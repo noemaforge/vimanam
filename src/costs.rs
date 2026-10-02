@@ -17,12 +17,15 @@
 //!   service, while a service-grouped document renders it once per tag.
 //! * **Schema rows** — the linked-mode definition cost (read once) and, as a
 //!   separate clearly-labeled analysis, the modeled cost of inline expansion:
-//!   use sites × one measured inline expansion (cycle-guarded, so real
-//!   `--inline-schemas` output is smaller for cyclic schemas).
+//!   use sites × one measured, cycle-guarded expansion. Use sites are the
+//!   linked render's rows — body rows plus the reference rows inside each
+//!   rendered definition — so the model can differ from real
+//!   `--inline-schemas` output in either direction (see `write_costs`).
 //!
 //! Like the hygiene report, [`CostReport`] is data-only so other front ends
 //! can reuse the analysis; [`write_costs`] renders it deterministically.
 
+use std::cmp::Ordering;
 use std::io::Write;
 
 use anyhow::Result;
@@ -75,8 +78,7 @@ pub struct SchemaCost {
     /// the definition renders empty.
     pub amplification: Option<f64>,
     /// The schema participates in a reference cycle (transitively reaches
-    /// itself). Real inline output cuts such cycles with a one-row notice, so
-    /// the inline model overestimates those schemas.
+    /// itself). Inline expansion cuts such cycles with a one-row notice.
     pub cyclic: bool,
 }
 
@@ -96,8 +98,9 @@ pub struct CostReport {
     pub schemas: Vec<SchemaCost>,
     /// Indices into `endpoints`, most expensive first (ties keep row order).
     pub endpoint_hotspots: Vec<usize>,
-    /// Indices into `schemas` by descending `inline_total_tokens`, then
-    /// `definition_tokens`, then first-encounter order.
+    /// Indices into `schemas` by descending amplification ratio (schemas with
+    /// no ratio — empty definitions — last), then `inline_total_tokens`, then
+    /// `definition_tokens`, all descending, then first-encounter order.
     pub schema_hotspots: Vec<usize>,
 }
 
@@ -136,9 +139,7 @@ pub fn compute(doc: &ApiDocumentation, config: &DocConfig) -> Result<CostReport>
     }
 
     let endpoint_hotspots = hotspot_indices(&endpoints, HOTSPOT_LIMIT, |cost| (cost.tokens, 0));
-    let schema_hotspots = hotspot_indices(&schemas, HOTSPOT_LIMIT, |cost| {
-        (cost.inline_total_tokens, cost.definition_tokens)
-    });
+    let schema_hotspots = schema_hotspot_indices(&schemas, HOTSPOT_LIMIT);
 
     Ok(CostReport {
         detail_name: detail_level_name(&config.detail_level).to_string(),
@@ -281,6 +282,40 @@ fn hotspot_indices<T>(items: &[T], limit: usize, key: impl Fn(&T) -> (usize, usi
     order
 }
 
+/// Indices of the `limit` most amplifying schemas: descending amplification
+/// ratio first (a 10x-amplified small schema outranks a 1.1x large one), with
+/// ratio-less rows — empty definitions — last; ties break by descending
+/// `inline_total_tokens`, then `definition_tokens`, then row order.
+fn schema_hotspot_indices(schemas: &[SchemaCost], limit: usize) -> Vec<usize> {
+    /// Descending ratio order; `None` (empty definition) sorts last.
+    fn ratio_desc(a: &Option<f64>, b: &Option<f64>) -> Ordering {
+        match (a, b) {
+            (Some(x), Some(y)) => y.total_cmp(x),
+            (Some(_), None) => Ordering::Less,
+            (None, Some(_)) => Ordering::Greater,
+            (None, None) => Ordering::Equal,
+        }
+    }
+
+    let mut order: Vec<usize> = (0..schemas.len()).collect();
+    order.sort_by(|&a, &b| {
+        ratio_desc(&schemas[a].amplification, &schemas[b].amplification)
+            .then(
+                schemas[b]
+                    .inline_total_tokens
+                    .cmp(&schemas[a].inline_total_tokens),
+            )
+            .then(
+                schemas[b]
+                    .definition_tokens
+                    .cmp(&schemas[a].definition_tokens),
+            )
+            .then(a.cmp(&b))
+    });
+    order.truncate(limit);
+    order
+}
+
 /// `tokens` as a percentage of `total`; 0 when the total is 0.
 fn share_of(tokens: usize, total: usize) -> f64 {
     if total == 0 {
@@ -288,6 +323,17 @@ fn share_of(tokens: usize, total: usize) -> f64 {
     } else {
         tokens as f64 / total as f64 * 100.0
     }
+}
+
+/// The endpoint's operation label with a ` (+tag)` suffix for every tag after
+/// the first: multi-tag endpoints are measured once, under their first
+/// service, and the suffix names where they also render.
+fn endpoint_label(cost: &EndpointCost) -> String {
+    let mut label = cost.operation.clone();
+    for tag in cost.services.iter().skip(1) {
+        label.push_str(&format!(" (+{tag})"));
+    }
+    label
 }
 
 const MODE_HEADER: &str = "TOKEN COST ANALYSIS";
@@ -353,8 +399,9 @@ pub fn write_costs<W: Write>(writer: &mut W, report: &CostReport) -> Result<()> 
         )?;
         writeln!(
             writer,
-            "service; a service-grouped document renders them once per tag."
+            "service; a service-grouped document renders them once per tag. A ` (+tag)` suffix marks"
         )?;
+        writeln!(writer, "the extra tags.")?;
         write_endpoint_table(writer, report)?;
     }
     writeln!(writer)?;
@@ -372,15 +419,27 @@ pub fn write_costs<W: Write>(writer: &mut W, report: &CostReport) -> Result<()> 
         )?;
         writeln!(
             writer,
-            "modeled cost of expanding the schema at every use site (uses × one measured expansion),"
+            "modeled cost of expanding the schema at every use site (uses × one measured, cycle-guarded"
         )?;
         writeln!(
             writer,
-            "not the cost of the output in linked mode. Cyclic schemas are cut with a one-row notice"
+            "expansion), not the cost of the output in linked mode. USES counts the linked render's"
         )?;
         writeln!(
             writer,
-            "when expanded inline, so the model overestimates those."
+            "rows: body rows plus the reference rows inside each rendered definition. Internal rows"
+        )?;
+        writeln!(
+            writer,
+            "have no inline counterpart, and a schema referenced only inside another definition expands"
+        )?;
+        writeln!(
+            writer,
+            "with it, so real --inline-schemas output can differ from the model in either direction."
+        )?;
+        writeln!(
+            writer,
+            "A cycle note marks a schema that transitively reaches itself; inline expansion cuts it."
         )?;
         write_schema_table(writer, report)?;
     }
@@ -400,7 +459,7 @@ pub fn write_costs<W: Write>(writer: &mut W, report: &CostReport) -> Result<()> 
                 writer,
                 "{}. {} — ~{} tokens ({:.1}% of TOTAL)",
                 rank + 1,
-                cost.operation,
+                endpoint_label(cost),
                 cost.tokens,
                 cost.share
             )?;
@@ -459,7 +518,9 @@ fn write_endpoint_table<W: Write>(writer: &mut W, report: &CostReport) -> Result
         writeln!(
             writer,
             "{:>tokens_width$}{GAP}{:>share_width$}{GAP}{}",
-            cost.tokens, share, cost.operation
+            cost.tokens,
+            share,
+            endpoint_label(cost)
         )?;
     }
     Ok(())
@@ -600,6 +661,56 @@ mod tests {
     }
 
     #[test]
+    fn schema_hotspots_rank_by_ratio_over_absolute_size() {
+        let schemas = vec![
+            // 1.1x amplification on the largest absolute inline total.
+            SchemaCost {
+                name: "Large".into(),
+                uses: 1,
+                definition_tokens: 1000,
+                inline_per_use_tokens: 1100,
+                inline_total_tokens: 1100,
+                amplification: Some(1.1),
+                cyclic: false,
+            },
+            // 10x amplification on a small absolute inline total.
+            SchemaCost {
+                name: "Small".into(),
+                uses: 10,
+                definition_tokens: 10,
+                inline_per_use_tokens: 10,
+                inline_total_tokens: 100,
+                amplification: Some(10.0),
+                cyclic: false,
+            },
+            // Ties Small on ratio and wins the inline-total tie-break.
+            SchemaCost {
+                name: "Twin".into(),
+                uses: 1,
+                definition_tokens: 100,
+                inline_per_use_tokens: 1000,
+                inline_total_tokens: 1000,
+                amplification: Some(10.0),
+                cyclic: false,
+            },
+            // No ratio (empty definition): always last.
+            SchemaCost {
+                name: "Empty".into(),
+                uses: 5,
+                definition_tokens: 0,
+                inline_per_use_tokens: 4,
+                inline_total_tokens: 20,
+                amplification: None,
+                cyclic: false,
+            },
+        ];
+        // Ratio beats absolute size, ratio ties break on inline total, and
+        // ratio-less rows rank last.
+        assert_eq!(schema_hotspot_indices(&schemas, 4), vec![2, 1, 0, 3]);
+        assert_eq!(schema_hotspot_indices(&schemas, 2), vec![2, 1]);
+    }
+
+    #[test]
     fn share_is_zero_without_a_total() {
         assert_eq!(share_of(123, 0), 0.0);
         assert_eq!(share_of(50, 200), 25.0);
@@ -621,9 +732,10 @@ mod tests {
     fn report_prints_endpoint_rows_and_hotspots() {
         let text = render_to_string(&sample_report());
         assert!(text.contains("GET /users/{id}"), "{text}");
-        assert!(text.contains("POST /users"), "{text}");
+        // The multi-tag endpoint carries a suffix per tag after the first.
+        assert!(text.contains("POST /users (+items)"), "{text}");
         assert!(
-            text.contains("1. POST /users — ~400 tokens (20.0% of TOTAL)"),
+            text.contains("1. POST /users (+items) — ~400 tokens (20.0% of TOTAL)"),
             "{text}"
         );
         assert!(

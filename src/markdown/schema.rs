@@ -646,6 +646,9 @@ pub(crate) fn definition_section_tokens(
     let mut buffer = Vec::new();
     let _ = writeln!(&mut buffer, "### {name} {{#{anchor}}}");
     let _ = write_rows(&mut buffer, &rows, false);
+    // The real section separates each entry from the next with a blank line;
+    // without it every DEF row undercounts by one character.
+    let _ = writeln!(&mut buffer);
     super::estimate_tokens(&buffer)
 }
 

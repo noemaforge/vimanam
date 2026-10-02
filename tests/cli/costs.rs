@@ -84,7 +84,7 @@ fn costs_report_lists_endpoints_schemas_and_cycle_notes() {
         vec![
             "POST /chains",
             "GET /items",
-            "POST /users",
+            "POST /users (+items)",
             "GET /users/{id}"
         ],
         "{report}"
@@ -124,15 +124,16 @@ fn costs_report_lists_endpoints_schemas_and_cycle_notes() {
 }
 
 // The POST /users operation is tagged `users` and `items`; the report measures
-// it once, not once per tag.
+// it once, not once per tag, and a ` (+tag)` suffix names the extra tags.
 #[test]
 fn costs_measures_multi_tag_endpoints_once() {
     let report = costs_output(&[COSTS, "--costs", "--detail", "full", "--include-schemas"]);
-    let count = endpoint_rows(&report)
-        .iter()
-        .filter(|(_, _, operation)| operation == "POST /users")
-        .count();
-    assert_eq!(count, 1, "{report}");
+    let post_users: Vec<String> = endpoint_rows(&report)
+        .into_iter()
+        .map(|(_, _, operation)| operation)
+        .filter(|operation| operation.starts_with("POST /users"))
+        .collect();
+    assert_eq!(post_users, vec!["POST /users (+items)"], "{report}");
 }
 
 // Repeated runs produce byte-identical reports.
@@ -180,7 +181,7 @@ fn costs_honors_filters() {
         .collect();
     assert_eq!(
         operations,
-        vec!["POST /users", "GET /users/{id}"],
+        vec!["POST /users (+items)", "GET /users/{id}"],
         "{report}"
     );
 }
@@ -305,4 +306,128 @@ fn costs_with_nothing_visible_is_headers_and_zero_total() {
         "{report}"
     );
     assert!(report.contains("TOTAL: ~0 tokens"), "{report}");
+}
+
+// `--schema-depth` bounds the analyzed render like any other: the report keeps
+// exiting 0 and stays deterministic at both extremes. At depth 2 the schema
+// table is present; at depth 0 every reference edge is cut, no use sites are
+// recorded, and the schema section says so instead of showing zero rows.
+#[test]
+fn costs_locks_schema_depth() {
+    for depth in ["0", "2"] {
+        let args = [
+            COSTS,
+            "--costs",
+            "--detail",
+            "full",
+            "--include-schemas",
+            "--schema-depth",
+            depth,
+        ];
+        let first = costs_output(&args);
+        let second = costs_output(&args);
+        assert_eq!(first, second, "--schema-depth {depth}");
+    }
+
+    let deep = costs_output(&[
+        COSTS,
+        "--costs",
+        "--detail",
+        "full",
+        "--include-schemas",
+        "--schema-depth",
+        "2",
+    ]);
+    assert!(
+        !schema_rows_is_empty(&deep),
+        "no schema table at depth 2: {deep}"
+    );
+
+    let shallow = costs_output(&[
+        COSTS,
+        "--costs",
+        "--detail",
+        "full",
+        "--include-schemas",
+        "--schema-depth",
+        "0",
+    ]);
+    assert!(
+        shallow.contains("(no component schemas rendered"),
+        "{shallow}"
+    );
+    assert!(schema_rows_is_empty(&shallow), "{shallow}");
+}
+
+const MUTUAL: &str = "tests/fixtures/costs_mutual_oas3.json";
+
+// Mutual recursion A -> B -> A pins the definition-internal row accounting:
+// A is linked twice from POST /a's body and once from inside B's definition
+// entry; B's only use is the reference row inside A's entry; C is reached once
+// from B's entry and once from GET /c's response. A and B participate in the
+// reference cycle and carry the cycle note; C does not.
+#[test]
+fn costs_counts_definition_internal_reference_rows() {
+    let report = costs_output(&[MUTUAL, "--costs", "--detail", "full", "--include-schemas"]);
+    let schemas = schema_rows(&report);
+    let row = |name: &str| {
+        schemas
+            .iter()
+            .find(|(schema, _, _)| schema == name)
+            .unwrap_or_else(|| panic!("no {name} row in {report}"))
+    };
+    assert_eq!(row("A").1, 3, "{report}");
+    assert_eq!(row("B").1, 1, "{report}");
+    assert_eq!(row("C").1, 2, "{report}");
+    assert_eq!(row("A").2, "cycle", "{report}");
+    assert_eq!(row("B").2, "cycle", "{report}");
+    assert_eq!(row("C").2, "", "{report}");
+}
+
+// `--operation` narrows the analysis to exactly the selected endpoint.
+#[test]
+fn costs_with_operation_selector_shows_one_endpoint() {
+    let report = costs_output(&[
+        COSTS,
+        "--costs",
+        "--detail",
+        "full",
+        "--include-schemas",
+        "--operation",
+        "GET /users/{id}",
+    ]);
+    let operations: Vec<String> = endpoint_rows(&report)
+        .into_iter()
+        .map(|(_, _, operation)| operation)
+        .collect();
+    assert_eq!(operations, vec!["GET /users/{id}"], "{report}");
+}
+
+// A selected operation that another filter removes is warned about on stderr
+// while the report itself still succeeds.
+#[test]
+fn costs_warns_when_a_filter_removes_the_selected_operation() {
+    let output = vimanam()
+        .args([
+            COSTS,
+            "--costs",
+            "--detail",
+            "full",
+            "--include-schemas",
+            "--operation",
+            "POST /users",
+            "--method-filter",
+            "get",
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("--operation \"POST /users\""), "{stderr}");
+    assert!(stderr.contains("removed by --method-filter"), "{stderr}");
+    assert!(
+        String::from_utf8_lossy(&output.stdout).starts_with("TOKEN COST ANALYSIS\n"),
+        "stdout missing the report: {:?}",
+        String::from_utf8_lossy(&output.stdout)
+    );
 }

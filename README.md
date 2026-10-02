@@ -218,14 +218,21 @@ vimanam input.json --costs --detail full --include-schemas
   the document frame and the schema definitions it links. Rows overlap through
   the frame and shared schemas, so they neither sum to nor subtract from
   TOTAL. A multi-tag endpoint is measured once, under its first service; a
-  service-grouped document renders it once per tag.
+  service-grouped document renders it once per tag. A ` (+tag)` suffix marks
+  the extra tags.
 - **SCHEMAS** rows show the definition cost (read once in linked mode), the
   use-site count, and — as a separate, clearly-labeled analysis — the modeled
   inline-expansion cost (uses × one measured, cycle-guarded expansion) with an
-  amplification ratio. Cyclic schemas are noted; their real inline output is
-  cut with a one-row notice, so the model overestimates them.
+  amplification ratio. Uses are the linked render's rows: body rows plus the
+  reference rows inside each rendered definition. Definition-internal rows have
+  no inline counterpart, while a schema referenced only inside another
+  definition expands with it, so the model can differ from real
+  `--inline-schemas` output in either direction. Cyclic schemas are noted (they
+  participate in a reference cycle; inline expansion cuts it with a one-row
+  notice).
 - **HOTSPOTS** rank the most expensive endpoint slices and the most amplifying
-  schemas; shares are of TOTAL and overlap with each other.
+  schemas (by amplification ratio, not absolute size); shares are of TOTAL and
+  overlap with each other.
 
 Like `--stats`, it is a dry run: the hygiene report is never included, and it
 conflicts with `-o`, `--max-tokens`, split/Skill output, `--stats` and schema
