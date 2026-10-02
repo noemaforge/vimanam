@@ -658,6 +658,7 @@ Shipped:
 - **[v1.2.0](https://github.com/noemaforge/vimanam/milestone/3)** — `diff --format json` with stable change IDs.
 - **v1.3.0** — exact operation selection (`--operation`, `--operation-id`).
 - **v1.4.0** — linked multi-file output (`--split`), the agent-navigable Skill tree (`--output-mode skill`), and schema/field reads with `--schema-depth`.
+- **v1.5.0** — the `--costs` token-cost analysis: per-endpoint and per-schema costs, reference amplification, and hotspots.
 
 Still open:
 
