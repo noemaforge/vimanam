@@ -29,6 +29,20 @@ struct SchemaRow {
     description: String,
 }
 
+/// Observation of one component reference's use sites in a rendered document.
+/// Pure observation: recording never changes output bytes.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct SchemaUse {
+    /// Rendered rows that link (or, in `--inline-schemas` mode, expand) the
+    /// referenced schema.
+    pub count: usize,
+    /// Smallest depth such a row occurred at. Without `--schema-depth` the
+    /// Schema Definitions entry always renders at depth 0; with it, entries
+    /// render one edge below the shallowest discovered use (see
+    /// [`SchemaContext::discover`]).
+    pub min_depth: usize,
+}
+
 /// Document-level state for schema rendering.
 ///
 /// In the default (linked) mode, each component schema reached through a `$ref`
@@ -69,6 +83,9 @@ pub(super) struct SchemaContext<'a> {
     /// Omission notices for the render that owns this context; callers print
     /// them only when that render's buffer is actually written.
     omissions: Vec<String>,
+    /// Use-site observations per reference, in first-encounter order. Fed to
+    /// the `--costs` analysis through the render result.
+    uses: IndexMap<String, SchemaUse>,
 }
 
 impl<'a> SchemaContext<'a> {
@@ -96,6 +113,7 @@ impl<'a> SchemaContext<'a> {
             selected: false,
             protected_depth: 0,
             omissions: Vec::new(),
+            uses: IndexMap::new(),
         }
     }
 
@@ -155,6 +173,32 @@ impl<'a> SchemaContext<'a> {
 
     pub(super) fn take_omissions(&mut self) -> Vec<String> {
         std::mem::take(&mut self.omissions)
+    }
+
+    /// Records one rendered use of `reference`: a linked row (default mode), an
+    /// inline expansion (`--inline-schemas`), or a cutoff row that still links.
+    /// Observation only; never affects output bytes.
+    fn record_use(&mut self, reference: &str, depth: usize) {
+        match self.uses.get_mut(reference) {
+            Some(entry) => {
+                entry.count += 1;
+                entry.min_depth = entry.min_depth.min(depth);
+            }
+            None => {
+                self.uses.insert(
+                    reference.to_string(),
+                    SchemaUse {
+                        count: 1,
+                        min_depth: depth,
+                    },
+                );
+            }
+        }
+    }
+
+    /// Use-site observations collected while rendering, in first-encounter order.
+    pub(super) fn schema_uses(&self) -> &IndexMap<String, SchemaUse> {
+        &self.uses
     }
 
     pub(super) fn references(&self) -> impl Iterator<Item = (&String, usize)> {
@@ -280,7 +324,7 @@ impl<'a> SchemaContext<'a> {
 
     /// Link target for a cutoff `$ref` when a fuller artifact will be (or was)
     /// written. Does not invent links to schemas that are not emitted.
-    fn cutoff_type_name(&mut self, schema: &Schema) -> String {
+    fn cutoff_type_name(&mut self, schema: &Schema, depth: usize) -> String {
         let Some(reference) = schema.reference.as_deref() else {
             return schema_type_label(schema).to_string();
         };
@@ -297,6 +341,7 @@ impl<'a> SchemaContext<'a> {
         }
         let name = short_schema_reference(reference);
         let anchor = self.register(reference);
+        self.record_use(reference, depth);
         if self.external {
             format!("[{}]({anchor})", super::split::escape(&name))
         } else {
@@ -561,6 +606,92 @@ fn write_rows<W: Write>(writer: &mut W, rows: &[SchemaRow], external: bool) -> R
     Ok(())
 }
 
+/// Estimated tokens of the "Schema Definitions" entry (heading plus field
+/// table) the renderer emits for `reference`, measured by rendering that entry
+/// alone with the same configuration. Used by the `--costs` analysis.
+///
+/// The real section may pick a differently suffixed anchor when schema names
+/// collide; the size difference is a few characters.
+pub(crate) fn definition_section_tokens(
+    doc: &ApiDocumentation,
+    config: &DocConfig,
+    reference: &str,
+    definition_depth: usize,
+) -> usize {
+    let Some(resolved) = resolve_schema_reference(reference, doc) else {
+        return 0;
+    };
+    let mut ctx = SchemaContext::configured(doc, config, false);
+    // Definitions are a linked-mode construct; measuring the hypothetical
+    // "read once" cost in inline mode expands links like the linked section
+    // would, so force linked rendering regardless of the configured mode.
+    ctx.inline = false;
+    ctx.protected_depth = 0;
+    let name = short_schema_reference(reference);
+    ctx.current_schema = Some(name.clone());
+    let anchor = ctx.register(reference);
+
+    let mut rows = Vec::new();
+    let mut ref_stack = Vec::new();
+    collect_schema_rows(
+        resolved,
+        &name,
+        None,
+        &mut rows,
+        &mut ref_stack,
+        definition_depth,
+        &mut ctx,
+    );
+
+    let mut buffer = Vec::new();
+    let _ = writeln!(&mut buffer, "### {name} {{#{anchor}}}");
+    let _ = write_rows(&mut buffer, &rows, false);
+    // The real section separates each entry from the next with a blank line;
+    // without it every DEF row undercounts by one character.
+    let _ = writeln!(&mut buffer);
+    super::estimate_tokens(&buffer)
+}
+
+/// Estimated tokens of one inline expansion of `reference` at a use site (the
+/// field rows the expansion renders in place of a single link row), measured
+/// with the schema rendered fully inline under the same configuration, cycle
+/// guards included. Used by the `--costs` amplification model.
+///
+/// The measurement expands the schema once at the root, under the schema's own
+/// name as the field label, while real expansions happen at each use site's
+/// label and depth; the drift is a few characters, though a depth-bounded
+/// configuration may truncate the real expansion differently.
+pub(crate) fn inline_expansion_tokens(
+    doc: &ApiDocumentation,
+    config: &DocConfig,
+    reference: &str,
+) -> usize {
+    let Some(resolved) = resolve_schema_reference(reference, doc) else {
+        return 0;
+    };
+    let mut ctx = SchemaContext::configured(doc, config, false);
+    ctx.inline = true;
+    ctx.protected_depth = 0;
+    let name = short_schema_reference(reference);
+    ctx.current_schema = Some(name.clone());
+
+    let mut rows = Vec::new();
+    let mut ref_stack = Vec::new();
+    collect_schema_rows(
+        resolved,
+        &name,
+        None,
+        &mut rows,
+        &mut ref_stack,
+        0,
+        &mut ctx,
+    );
+
+    let mut buffer = Vec::new();
+    let _ = write_rows(&mut buffer, &rows, false);
+    super::estimate_tokens(&buffer)
+}
+
 fn push_cutoff_row(
     schema: &Schema,
     field: &str,
@@ -603,7 +734,7 @@ fn push_cutoff_row(
     }
     rows.push(SchemaRow {
         field: field.to_string(),
-        type_name: ctx.cutoff_type_name(schema),
+        type_name: ctx.cutoff_type_name(schema, depth),
         required: required_to_string(required).to_string(),
         description,
     });
@@ -668,6 +799,7 @@ fn collect_schema_rows(
         Some(reference) if ctx.inline => {
             let doc = ctx.doc;
             if let Some(resolved) = resolve_schema_reference(reference, doc) {
+                ctx.record_use(reference, depth);
                 ref_stack.push(reference.clone());
                 let prior_schema = ctx
                     .current_schema
@@ -703,6 +835,7 @@ fn collect_schema_rows(
                 ctx.depths.entry(reference.clone()).or_insert(0);
             }
             let anchor = ctx.register(reference);
+            ctx.record_use(reference, depth);
             rows.push(SchemaRow {
                 field: field.to_string(),
                 type_name: if ctx.external {
@@ -905,7 +1038,7 @@ fn required_to_string(required: Option<bool>) -> &'static str {
     }
 }
 
-pub(super) fn short_schema_reference(reference: &str) -> String {
+pub(crate) fn short_schema_reference(reference: &str) -> String {
     reference
         .rsplit('/')
         .next()

@@ -24,6 +24,7 @@ Besides producing documentation for humans, Vimanam is built for **feeding API s
 - Linked directory output (`--split service|tag|endpoint`): a compact overview alongside requested detail pages and shared schema files, with an independent overview budget
 - Agent navigation (`--output-mode skill`): a compact `SKILL.md`, service/operation/schema hubs and individual-file read costs
 - Token-budget dry run (`--stats`): a per-service table of endpoint counts and estimated token sizes, for sizing slices before choosing filters
+- Token-cost analysis (`--costs`): per-endpoint slice costs with their share of TOTAL, per-schema definition and modeled inline-expansion costs with reference amplification, and hotspot rankings (#47)
 - Spec diffing (`vimanam diff old.json new.json`): compares two versions of a spec on *resolved* schemas — a change behind a shared `$ref` is reported on every endpoint that uses it — and classifies each change as breaking, non-breaking or needing review, with an exit code for CI (`--fail-on-breaking`)
 - Spec hygiene report appended to every run (`--no-report` to skip): counts and lists operations missing a description, `operationId` or responses, deprecated and untagged operations, duplicate `operationId`s, and undescribed parameters
 - Schema expansion at `--detail full --include-schemas`: renders request/response schemas as nested field tables. Shared component schemas are expanded once into a trailing "Schema Definitions" section and linked from each use site, keeping output compact when schemas are reused across endpoints; `--inline-schemas` instead expands every `$ref` inline at each use site (larger, fully self-contained, with cycle detection)
@@ -175,6 +176,9 @@ vimanam input.json --no-report -o output.md
 # Size each service before choosing filters: endpoint counts and ~tokens per service
 vimanam input.json --stats --detail standard
 
+# Find the most expensive endpoints and schemas before choosing filters
+vimanam input.json --costs --detail full --include-schemas
+
 # Compare two versions of a spec; exit 3 if anything breaking changed
 vimanam diff v1/openapi.json v2/openapi.json --report --fail-on-breaking
 ```
@@ -197,6 +201,47 @@ vimanam spec.json --operation-id GetFinding --detail full --include-schemas --sc
 Without standalone selectors, depth requires `--detail full --include-schemas`; it works with operation filters, `--stats` and split/Skill output. Selectors produce dedicated reads and conflict with split/Skill output and service-oriented `--stats`; use the commands in schema detail pages to read a field separately. Depth/field limits are opt-in; existing full rendering remains available when omitted.
 
 For explicit schema reads, `--max-tokens` never drops selected metadata or lowers detail. If the selection exceeds the approximate characters/4 budget (including budget zero), Vimanam emits the complete requested read with an over-budget notice in Markdown and stderr. Narrow the field selector or explicitly set depth to reduce it. Other single-file output keeps its existing detail fallback, and split/Skill overview budgets affect only the overview.
+
+### Token cost analysis
+
+`--costs` sizes API context before reading it. It prints a plain-text report of
+estimated token costs (chars/4 over real renders — never tokenizer counts or
+billing figures) at the configured detail level, filters and schema mode:
+
+```sh
+vimanam input.json --costs --detail full --include-schemas
+```
+
+- **TOTAL** is one render of the whole filtered document — the same estimate
+  `--max-tokens` would measure.
+- **ENDPOINTS** rows are one render per endpoint alone: its service section,
+  the document frame and the schema definitions it links. Rows overlap through
+  the frame and shared schemas, so they neither sum to nor subtract from
+  TOTAL. A multi-tag endpoint is measured once, under its first service (or
+  the first one a `--service-filter` keeps); a service-grouped document
+  renders it once per tag. A ` (+tag)` suffix marks the extra tags, rendered
+  verbatim after the operation label.
+- **SCHEMAS** rows show the definition cost (read once in linked mode), the
+  use-site count, and — as a separate, clearly-labeled analysis — the modeled
+  inline-expansion cost (uses × one measured, cycle-guarded expansion) with an
+  amplification ratio. Uses are the linked render's rows: body rows plus the
+  reference rows inside each rendered definition. Definition-internal rows have
+  no inline counterpart, while a schema referenced only inside another
+  definition expands with it, so the model can differ from real
+  `--inline-schemas` output in either direction. Under `--inline-schemas`, uses
+  are instead the expansion sites of the analyzed inline render, and the
+  definition cost is the hypothetical linked-mode one (inline mode emits no
+  definitions). Cyclic schemas are noted (they
+  participate in a reference cycle; inline expansion cuts it with a one-row
+  notice).
+- **HOTSPOTS** rank the most expensive endpoint slices and the most amplifying
+  schemas (by amplification ratio, not absolute size); shares are of TOTAL and
+  overlap with each other.
+
+Like `--stats`, it is a dry run: the hygiene report is never included, and it
+conflicts with `-o`, `--max-tokens`, split/Skill output, `--stats` and schema
+selection (`--schema`/`--schema-field`). `--inline-schemas` is allowed and
+switches the analyzed mode.
 
 ## Spec hygiene report
 
@@ -313,6 +358,7 @@ Options:
       --max-tokens <N>                     Fit single-file output to a token budget, stepping detail down (full → summary). The hygiene report is outside the budget
       --no-report                          Skip the spec hygiene report appended after the documentation
       --stats                              Dry run: per-service endpoint counts and estimated tokens (chars/4). TOTAL is one whole-document render, not the sum of the rows
+      --costs                              Dry run: token-cost analysis (chars/4) with per-endpoint and per-schema costs, reference amplification and hotspots. Rows overlap through shared schemas and the document frame
   -h, --help                               Print help
   -V, --version                            Print version
 ```

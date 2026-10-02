@@ -12,6 +12,7 @@ use indexmap::IndexMap;
 use crate::models::{ApiDocumentation, DocConfig, Endpoint, Service, SortMethod};
 use crate::utils::clean_for_id;
 
+use super::ViewRender;
 use super::endpoint::{get_short_title, write_endpoint};
 use super::schema::{SchemaContext, prediscover_rendered_endpoints, render_schema_definitions};
 
@@ -262,7 +263,7 @@ pub(super) fn generate_by_service<W: Write>(
     writer: &mut W,
     doc: &ApiDocumentation,
     config: &DocConfig,
-) -> Result<Vec<String>> {
+) -> Result<ViewRender> {
     write_preamble(writer, doc, config)?;
 
     // Filter services if needed (case-insensitive)
@@ -356,7 +357,10 @@ pub(super) fn generate_by_service<W: Write>(
 
     render_schema_definitions(writer, &mut schema_ctx)?;
 
-    Ok(schema_ctx.take_omissions())
+    Ok(ViewRender {
+        omissions: schema_ctx.take_omissions(),
+        schema_uses: schema_ctx.schema_uses().clone(),
+    })
 }
 
 /// Generates documentation grouped by HTTP method, one `##` section per method.
@@ -364,7 +368,7 @@ pub(super) fn generate_by_method<W: Write>(
     writer: &mut W,
     doc: &ApiDocumentation,
     config: &DocConfig,
-) -> Result<Vec<String>> {
+) -> Result<ViewRender> {
     write_preamble(writer, doc, config)?;
 
     // Group endpoints by method
@@ -431,7 +435,10 @@ pub(super) fn generate_by_method<W: Write>(
 
     render_schema_definitions(writer, &mut schema_ctx)?;
 
-    Ok(schema_ctx.take_omissions())
+    Ok(ViewRender {
+        omissions: schema_ctx.take_omissions(),
+        schema_uses: schema_ctx.schema_uses().clone(),
+    })
 }
 
 /// Generates documentation grouped by path (`--group-by path`), one `##`
@@ -441,7 +448,7 @@ pub(super) fn generate_by_path<W: Write>(
     writer: &mut W,
     doc: &ApiDocumentation,
     config: &DocConfig,
-) -> Result<Vec<String>> {
+) -> Result<ViewRender> {
     write_preamble(writer, doc, config)?;
 
     // Group endpoints by path. IndexMap keeps first-appearance (spec) order.
@@ -496,7 +503,10 @@ pub(super) fn generate_by_path<W: Write>(
 
     render_schema_definitions(writer, &mut schema_ctx)?;
 
-    Ok(schema_ctx.take_omissions())
+    Ok(ViewRender {
+        omissions: schema_ctx.take_omissions(),
+        schema_uses: schema_ctx.schema_uses().clone(),
+    })
 }
 
 /// Generates a flat endpoint list (`--flat`) with no grouping hierarchy.
@@ -504,7 +514,7 @@ pub(super) fn generate_flat<W: Write>(
     writer: &mut W,
     doc: &ApiDocumentation,
     config: &DocConfig,
-) -> Result<Vec<String>> {
+) -> Result<ViewRender> {
     write_preamble(writer, doc, config)?;
 
     // Collect endpoints, applying the same filters as the grouped views
@@ -520,5 +530,8 @@ pub(super) fn generate_flat<W: Write>(
 
     render_schema_definitions(writer, &mut schema_ctx)?;
 
-    Ok(schema_ctx.take_omissions())
+    Ok(ViewRender {
+        omissions: schema_ctx.take_omissions(),
+        schema_uses: schema_ctx.schema_uses().clone(),
+    })
 }

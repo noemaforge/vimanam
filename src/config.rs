@@ -151,6 +151,16 @@ pub struct Cli {
     /// necessarily the sum of the rows. The hygiene report is never included
     #[arg(long, conflicts_with_all = ["output", "max_tokens"])]
     pub stats: bool,
+
+    /// Dry run: instead of Markdown, print a token-cost analysis (chars/4
+    /// estimates over rendered output) at the configured detail level,
+    /// filters and schema mode: per-endpoint slice costs with their share of
+    /// TOTAL, per-schema definition and modeled inline-expansion costs with
+    /// reference amplification, and hotspot rankings. Endpoint rows overlap
+    /// through shared schemas and the document frame, so they do not sum to
+    /// TOTAL. The hygiene report is never included
+    #[arg(long, conflicts_with_all = ["output", "max_tokens", "stats", "split", "output_mode", "schema_names", "schema_fields"])]
+    pub costs: bool,
 }
 
 #[derive(Subcommand, Debug)]
@@ -453,6 +463,7 @@ mod tests {
             max_tokens: None,
             no_report: false,
             stats: false,
+            costs: false,
         };
 
         let config = build_config(&cli);
