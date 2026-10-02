@@ -5,6 +5,20 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- `--costs`: a token-cost dry run (#47). Prints per-endpoint slice costs with
+  their share of a whole-document TOTAL, per-schema definition costs and
+  use-site counts, a clearly-labeled inline-expansion model with an
+  amplification ratio (cycle-guarded), and hotspot rankings. Estimates use the
+  existing characters/4 heuristic over rendered output; rows overlap through
+  the document frame and shared schemas, and the report says so. Honors the
+  configured detail level, filters and schema mode (`--inline-schemas`
+  included); conflicts with `-o`, `--max-tokens`, split/Skill output,
+  `--stats` and schema selection.
+
 ## [1.4.2] - 2026-09-30
 
 ### Changed

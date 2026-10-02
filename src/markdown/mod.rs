@@ -18,6 +18,7 @@ mod views;
 use std::io::Write;
 
 use anyhow::Result;
+use indexmap::IndexMap;
 
 use crate::models::{ApiDocumentation, DetailLevel, DocConfig, GroupBy};
 
@@ -27,8 +28,23 @@ use crate::models::{ApiDocumentation, DetailLevel, DocConfig, GroupBy};
 pub(crate) use views::{removing_filters, service_is_visible, visible_endpoints};
 // `diff` compares the response schema the renderer would document.
 pub(crate) use schema::response_schema;
+// The `--costs` analysis measures schema use sites and per-schema renders.
+pub(crate) use schema::{
+    SchemaUse, definition_section_tokens, inline_expansion_tokens, short_schema_reference,
+};
 
 use schema::emit_omissions;
+
+/// The result of one [`render`] call beyond the bytes themselves: the
+/// schema-omission notices plus the per-reference use-site observations
+/// collected while rendering (see [`SchemaUse`]). Consumed by
+/// `generate_markdown` and the `--costs` analysis; trial renders may discard
+/// either.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct ViewRender {
+    pub omissions: Vec<String>,
+    pub schema_uses: IndexMap<String, SchemaUse>,
+}
 
 /// Renders the documentation to `writer`.
 ///
@@ -43,8 +59,8 @@ pub fn generate_markdown<W: Write>(
     match config.max_tokens {
         Some(budget) => generate_within_budget(writer, doc, config, budget),
         None => {
-            let omissions = render(writer, doc, config)?;
-            emit_omissions(&omissions);
+            let rendered = render(writer, doc, config)?;
+            emit_omissions(&rendered.omissions);
             Ok(())
         }
     }
@@ -52,23 +68,29 @@ pub fn generate_markdown<W: Write>(
 
 /// Renders the documentation to `writer`, dispatching on detail level and grouping mode.
 ///
-/// Returns schema-omission notices collected during this render. Callers that
-/// discard the buffer (token-budget trials, `--stats` estimates) must not print
-/// them; callers that write the buffer should pass them to [`emit_omissions`].
+/// Returns the schema-omission notices collected during this render alongside
+/// the observed per-reference use sites ([`ViewRender`]). Callers that discard
+/// the buffer (token-budget trials, `--stats` estimates) must not print the
+/// notices; callers that write the buffer should pass them to
+/// [`emit_omissions`].
 ///
 /// Crate-visible so `--stats` can size trial renders without a token budget.
 pub(crate) fn render<W: Write>(
     writer: &mut W,
     doc: &ApiDocumentation,
     config: &DocConfig,
-) -> Result<Vec<String>> {
+) -> Result<ViewRender> {
     if schema_selection::active(config) {
-        return schema_selection::render(writer, doc, config);
+        let omissions = schema_selection::render(writer, doc, config)?;
+        return Ok(ViewRender {
+            omissions,
+            schema_uses: IndexMap::new(),
+        });
     }
     // For summary level, just generate the TOC
     if config.detail_level == DetailLevel::Summary {
         views::generate_summary(writer, doc, config)?;
-        Ok(Vec::new())
+        Ok(ViewRender::default())
     } else {
         // For other detail levels, use the existing grouping logic
         match config.group_by {
@@ -101,7 +123,7 @@ fn generate_within_budget<W: Write>(
 ) -> Result<()> {
     if schema_selection::active(config) {
         let mut buffer = Vec::new();
-        let omissions = render(&mut buffer, doc, config)?;
+        let rendered = render(&mut buffer, doc, config)?;
         let tokens = estimate_tokens(&buffer);
         if tokens > budget {
             let notice = format!(
@@ -113,7 +135,7 @@ fn generate_within_budget<W: Write>(
             writer.write_all(notice.as_bytes())?;
         }
         writer.write_all(&buffer)?;
-        emit_omissions(&omissions);
+        emit_omissions(&rendered.omissions);
         return Ok(());
     }
     // Only consider levels at or below the one the caller asked for.
@@ -122,24 +144,24 @@ fn generate_within_budget<W: Write>(
         .position(|level| *level == config.detail_level)
         .unwrap_or(0);
 
-    let mut chosen: Option<(DetailLevel, Vec<u8>, usize, Vec<String>)> = None;
+    let mut chosen: Option<(DetailLevel, Vec<u8>, usize, ViewRender)> = None;
     for level in &DETAIL_LADDER[start..] {
         let mut trial_config = config.clone();
         trial_config.detail_level = level.clone();
 
         let mut buffer = Vec::new();
-        let omissions = render(&mut buffer, doc, &trial_config)?;
+        let rendered = render(&mut buffer, doc, &trial_config)?;
         let tokens = estimate_tokens(&buffer);
 
         let fits = tokens <= budget;
-        chosen = Some((level.clone(), buffer, tokens, omissions));
+        chosen = Some((level.clone(), buffer, tokens, rendered));
         if fits {
             break;
         }
     }
 
     // The ladder slice is always non-empty, so a candidate is always produced.
-    let (level, buffer, tokens, omissions) = chosen.expect("at least one detail level is rendered");
+    let (level, buffer, tokens, rendered) = chosen.expect("at least one detail level is rendered");
 
     if level != config.detail_level {
         eprintln!(
@@ -157,7 +179,7 @@ fn generate_within_budget<W: Write>(
     }
 
     writer.write_all(&buffer)?;
-    emit_omissions(&omissions);
+    emit_omissions(&rendered.omissions);
     Ok(())
 }
 
@@ -172,8 +194,9 @@ pub(crate) fn estimate_tokens(rendered: &[u8]) -> usize {
         .div_ceil(4)
 }
 
-/// The `--detail` value name for a [`DetailLevel`], for stderr messages.
-fn detail_level_name(level: &DetailLevel) -> &'static str {
+/// The `--detail` value name for a [`DetailLevel`], for stderr messages and the
+/// `--costs` report's mode line.
+pub(crate) fn detail_level_name(level: &DetailLevel) -> &'static str {
     match level {
         DetailLevel::Summary => "summary",
         DetailLevel::Basic => "basic",

@@ -1,4 +1,5 @@
 mod config;
+mod costs;
 mod diff;
 mod markdown;
 mod models;
@@ -199,6 +200,17 @@ fn run() -> Result<ExitCode> {
     if cli.stats {
         let stats = stats::compute(&api_doc, &config).context("Failed to compute stats")?;
         stats::write_stats(&mut stdout(), &stats).context("Failed to write stats")?;
+        warn_filtered_out_selectors(&api_doc, &config);
+        return Ok(ExitCode::SUCCESS);
+    }
+
+    // `--costs` is a dry run like `--stats`, with per-endpoint and per-schema
+    // cost rows, reference amplification and hotspots (#47). It honors the
+    // configured detail level, filters and schema-rendering mode, and never
+    // emits the hygiene report.
+    if cli.costs {
+        let costs = costs::compute(&api_doc, &config).context("Failed to compute token costs")?;
+        costs::write_costs(&mut stdout(), &costs).context("Failed to write token costs")?;
         warn_filtered_out_selectors(&api_doc, &config);
         return Ok(ExitCode::SUCCESS);
     }

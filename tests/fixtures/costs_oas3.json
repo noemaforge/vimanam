@@ -1,0 +1,138 @@
+{
+  "openapi": "3.0.0",
+  "info": {
+    "title": "Costs API",
+    "version": "1.0.0"
+  },
+  "tags": [
+    { "name": "users", "description": "User operations" },
+    { "name": "items", "description": "Item operations" }
+  ],
+  "paths": {
+    "/users": {
+      "post": {
+        "tags": ["users", "items"],
+        "summary": "Create user",
+        "operationId": "createUser",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/User" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "ok",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/User" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/users/{id}": {
+      "get": {
+        "tags": ["users"],
+        "summary": "Get user",
+        "operationId": "getUser",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "ok",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/User" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/items": {
+      "get": {
+        "tags": ["items"],
+        "summary": "List items",
+        "operationId": "listItems",
+        "responses": {
+          "200": {
+            "description": "ok",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": { "$ref": "#/components/schemas/Item" }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/chains": {
+      "post": {
+        "tags": ["items"],
+        "summary": "Create chain",
+        "operationId": "createChain",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/Node" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "ok",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Node" }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "User": {
+        "type": "object",
+        "description": "A user",
+        "properties": {
+          "id": { "type": "string" },
+          "name": { "type": "string" },
+          "profile": { "$ref": "#/components/schemas/Profile" }
+        }
+      },
+      "Profile": {
+        "type": "object",
+        "properties": { "bio": { "type": "string" } }
+      },
+      "Item": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "name": { "type": "string" },
+          "stock": { "type": "integer" }
+        }
+      },
+      "Node": {
+        "type": "object",
+        "properties": {
+          "value": { "type": "integer" },
+          "next": { "$ref": "#/components/schemas/Node" }
+        }
+      }
+    }
+  }
+}
