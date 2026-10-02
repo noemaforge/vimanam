@@ -186,6 +186,66 @@ fn costs_honors_filters() {
     );
 }
 
+// A multi-tag endpoint kept only through a later tag is sliced under the
+// service the filter keeps, not its excluded first service: with
+// --service-filter items the POST /users slice matches a render of exactly
+// that endpoint under the kept items service, and the users-only
+// GET /users/{id} appears nowhere in the analysis.
+#[test]
+fn costs_slices_multi_tag_endpoints_under_the_kept_service() {
+    let report = costs_output(&[
+        COSTS,
+        "--costs",
+        "--detail",
+        "full",
+        "--include-schemas",
+        "--service-filter",
+        "items",
+    ]);
+    let rows = endpoint_rows(&report);
+    let operations: Vec<&str> = rows
+        .iter()
+        .map(|(_, _, operation)| operation.as_str())
+        .collect();
+    assert!(
+        operations.contains(&"POST /users (+items)"),
+        "no POST /users row: {report}"
+    );
+    // The users-only endpoint is filtered out of the analysis entirely.
+    assert!(
+        !operations
+            .iter()
+            .any(|operation| operation.starts_with("GET /users/{id}")),
+        "{report}"
+    );
+
+    // The slice is the render narrowed to the kept service: it equals a real
+    // render of exactly this endpoint under --service-filter items (content
+    // from other endpoints, such as GET /users/{id}, would only add tokens).
+    let post_users = rows
+        .iter()
+        .find(|(_, _, operation)| operation == "POST /users (+items)")
+        .unwrap()
+        .0;
+    let output = vimanam()
+        .args([
+            COSTS,
+            "--operation",
+            "POST /users",
+            "--service-filter",
+            "items",
+            "--detail",
+            "full",
+            "--include-schemas",
+            "--no-report",
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    let body = String::from_utf8(output.stdout).unwrap();
+    assert_eq!(post_users, body.chars().count().div_ceil(4));
+}
+
 // The inline schema mode is honored and labeled in the mode line.
 #[test]
 fn costs_labels_inline_schema_mode() {
@@ -201,6 +261,13 @@ fn costs_labels_inline_schema_mode() {
         report.contains("schemas inline (every use site expands; no definitions section)"),
         "{report}"
     );
+    // The schema notes match the mode: uses are the expansion sites of the
+    // analyzed inline render, and DEF is the hypothetical linked-mode cost.
+    assert!(
+        report.contains("USES counts the expansion sites in the analyzed inline render"),
+        "{report}"
+    );
+    assert!(report.contains("mode emits no definitions"), "{report}");
     // Inline use sites are counted exactly like linked ones, including the
     // multi-tag duplicate render of POST /users.
     let schemas = schema_rows(&report);
@@ -262,7 +329,7 @@ fn costs_total_matches_an_actual_render() {
 }
 
 // Usage conflicts mirror --stats: no output, no budget, no tree, no schema
-// selection.
+// selection — including split and Skill output, which README promises too.
 #[test]
 fn costs_conflicts_with_other_output_modes() {
     for conflicting in [
@@ -271,6 +338,8 @@ fn costs_conflicts_with_other_output_modes() {
         vec!["--costs", "--stats"],
         vec!["--costs", "--schema", "User"],
         vec!["--costs", "--schema-field", "User#/properties/id"],
+        vec!["--costs", "--split", "service", "-o", "costs-split"],
+        vec!["--costs", "--output-mode", "skill", "-o", "costs-skill"],
     ] {
         let mut args = vec![COSTS];
         args.extend_from_slice(&conflicting);

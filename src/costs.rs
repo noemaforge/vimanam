@@ -14,12 +14,14 @@
 //!   the same slice semantics as `--stats`. Rows overlap through the shared
 //!   frame and shared schema definitions, so they neither sum to nor subtract
 //!   from TOTAL. A multi-tag endpoint is measured once, under its first
-//!   service, while a service-grouped document renders it once per tag.
+//!   service (under the first service `--service-filter` keeps when one is
+//!   set), while a service-grouped document renders it once per tag.
 //! * **Schema rows** — the linked-mode definition cost (read once) and, as a
 //!   separate clearly-labeled analysis, the modeled cost of inline expansion:
-//!   use sites × one measured, cycle-guarded expansion. Use sites are the
-//!   linked render's rows — body rows plus the reference rows inside each
-//!   rendered definition — so the model can differ from real
+//!   use sites × one measured, cycle-guarded expansion. In linked mode use
+//!   sites are the render's rows — body rows plus the reference rows inside
+//!   each rendered definition; inline mode counts the expansion sites of the
+//!   analyzed render instead — so the model can differ from real
 //!   `--inline-schemas` output in either direction (see `write_costs`).
 //!
 //! Like the hygiene report, [`CostReport`] is data-only so other front ends
@@ -33,7 +35,7 @@ use indexmap::IndexSet;
 
 use crate::markdown::{
     SchemaUse, definition_section_tokens, detail_level_name, estimate_tokens,
-    inline_expansion_tokens, render, short_schema_reference, visible_endpoints,
+    inline_expansion_tokens, render, service_is_visible, short_schema_reference, visible_endpoints,
 };
 use crate::models::{
     AdditionalProperties, ApiDocumentation, DocConfig, Endpoint, OperationRef, OperationSelector,
@@ -48,7 +50,8 @@ pub struct EndpointCost {
     /// `METHOD /path/template`, the same label `diff` and `--operation` use.
     pub operation: String,
     /// Every tag of the endpoint, in spec order. The cost is measured under
-    /// the first; the rest explain where the endpoint also renders.
+    /// the first (with `--service-filter`, the first service the filter
+    /// keeps); the rest explain where the endpoint also renders.
     pub services: Vec<String>,
     pub tokens: usize,
     /// Slice tokens as a percentage of TOTAL. Shares overlap across rows and
@@ -153,9 +156,10 @@ pub fn compute(doc: &ApiDocumentation, config: &DocConfig) -> Result<CostReport>
 }
 
 /// Estimates the endpoint's slice: a whole render with the exact-operation
-/// selector narrowed to this endpoint and the service filter to its first
-/// service (mirroring how `--stats` narrows to one service). The user's other
-/// filters, detail level and schema mode all stay in effect.
+/// selector narrowed to this endpoint and the service filter to the one
+/// service the slice is measured under (see [`slice_service`]), mirroring how
+/// `--stats` narrows to one service. The user's other filters, detail level
+/// and schema mode all stay in effect.
 fn estimate_slice(
     doc: &ApiDocumentation,
     config: &DocConfig,
@@ -171,13 +175,30 @@ fn estimate_slice(
         operations,
         operation_ids: IndexSet::new(),
     });
-    if let Some(first) = endpoint.services.first() {
-        slice_config.service_filter = Some(vec![first.clone()]);
+    if let Some(service) = slice_service(config, &endpoint.services) {
+        slice_config.service_filter = Some(vec![service.to_string()]);
     }
 
     let mut buffer = Vec::new();
     render(&mut buffer, doc, &slice_config)?;
     Ok(estimate_tokens(&buffer))
+}
+
+/// The service an endpoint's slice is measured under: with a user
+/// `--service-filter`, the first of the endpoint's services the filter keeps
+/// (case-insensitive, mirroring [`service_is_visible`] — a multi-tag endpoint
+/// can stay visible only through a later tag, and the slice must not be
+/// measured under a service the user excluded); without a filter, its first
+/// service. `None` means no service was kept, in which case the slice keeps
+/// the user's filter as-is.
+fn slice_service<'a>(config: &DocConfig, services: &'a [String]) -> Option<&'a str> {
+    match &config.service_filter {
+        Some(_) => services
+            .iter()
+            .find(|service| service_is_visible(service, config))
+            .map(String::as_str),
+        None => services.first().map(String::as_str),
+    }
 }
 
 /// Builds one schema row from the observed use sites plus two small measured
@@ -326,11 +347,24 @@ fn share_of(tokens: usize, total: usize) -> f64 {
 }
 
 /// The endpoint's operation label with a ` (+tag)` suffix for every tag after
-/// the first: multi-tag endpoints are measured once, under their first
-/// service, and the suffix names where they also render.
+/// the first, repeated tags rendered once: multi-tag endpoints are measured
+/// once, under their first service, and the suffix names where they also
+/// render. Tags are rendered verbatim (unquoted) after the operation label, so
+/// a tag containing whitespace makes the trailing column ambiguous for
+/// whitespace-parsing consumers.
 fn endpoint_label(cost: &EndpointCost) -> String {
     let mut label = cost.operation.clone();
+    let mut seen: Vec<&str> = cost
+        .services
+        .first()
+        .map(String::as_str)
+        .into_iter()
+        .collect();
     for tag in cost.services.iter().skip(1) {
+        if seen.contains(&tag.as_str()) {
+            continue;
+        }
+        seen.push(tag);
         label.push_str(&format!(" (+{tag})"));
     }
     label
@@ -399,9 +433,13 @@ pub fn write_costs<W: Write>(writer: &mut W, report: &CostReport) -> Result<()> 
         )?;
         writeln!(
             writer,
-            "service; a service-grouped document renders them once per tag. A ` (+tag)` suffix marks"
+            "service (or the first one a `--service-filter` keeps); a service-grouped document renders"
         )?;
-        writeln!(writer, "the extra tags.")?;
+        writeln!(
+            writer,
+            "them once per tag. A ` (+tag)` suffix marks the extra tags, rendered verbatim after the"
+        )?;
+        writeln!(writer, "operation label.")?;
         write_endpoint_table(writer, report)?;
     }
     writeln!(writer)?;
@@ -413,34 +451,33 @@ pub fn write_costs<W: Write>(writer: &mut W, report: &CostReport) -> Result<()> 
             "(no component schemas rendered at this detail level and filters)"
         )?;
     } else {
-        writeln!(
-            writer,
-            "DEF is the Schema Definitions entry read once. INLINE TOTAL is a separate analysis: the"
-        )?;
-        writeln!(
-            writer,
-            "modeled cost of expanding the schema at every use site (uses × one measured, cycle-guarded"
-        )?;
-        writeln!(
-            writer,
-            "expansion), not the cost of the output in linked mode. USES counts the linked render's"
-        )?;
-        writeln!(
-            writer,
-            "rows: body rows plus the reference rows inside each rendered definition. Internal rows"
-        )?;
-        writeln!(
-            writer,
-            "have no inline counterpart, and a schema referenced only inside another definition expands"
-        )?;
-        writeln!(
-            writer,
-            "with it, so real --inline-schemas output can differ from the model in either direction."
-        )?;
-        writeln!(
-            writer,
-            "A cycle note marks a schema that transitively reaches itself; inline expansion cuts it."
-        )?;
+        // The USES semantics differ by mode, so the explanation does too; the
+        // linked variant is the model's original framing.
+        let schema_notes: &[&str] = if report.inline_schemas {
+            &[
+                "USES counts the expansion sites in the analyzed inline render: every rendered row",
+                "that expands this schema, including repeats from multi-tag endpoints. INLINE TOTAL",
+                "is the modeled cost of expanding the schema at every use site (uses × one measured,",
+                "cycle-guarded expansion), not the cost of this inline output. DEF ~TOKENS is the",
+                "hypothetical Schema Definitions entry the linked mode would render once — inline",
+                "mode emits no definitions — so the ratio compares reading the schema once against",
+                "expanding it at every use site. A cycle note marks a schema that transitively",
+                "reaches itself; inline expansion cuts it.",
+            ]
+        } else {
+            &[
+                "DEF is the Schema Definitions entry read once. INLINE TOTAL is a separate analysis: the",
+                "modeled cost of expanding the schema at every use site (uses × one measured, cycle-guarded",
+                "expansion), not the cost of the output in linked mode. USES counts the linked render's",
+                "rows: body rows plus the reference rows inside each rendered definition. Internal rows",
+                "have no inline counterpart, and a schema referenced only inside another definition expands",
+                "with it, so real --inline-schemas output can differ from the model in either direction.",
+                "A cycle note marks a schema that transitively reaches itself; inline expansion cuts it.",
+            ]
+        };
+        for line in schema_notes {
+            writeln!(writer, "{line}")?;
+        }
         write_schema_table(writer, report)?;
     }
     writeln!(writer)?;
@@ -714,6 +751,45 @@ mod tests {
     fn share_is_zero_without_a_total() {
         assert_eq!(share_of(123, 0), 0.0);
         assert_eq!(share_of(50, 200), 25.0);
+    }
+
+    #[test]
+    fn endpoint_label_renders_each_extra_tag_once_verbatim() {
+        let label = |services: &[&str]| EndpointCost {
+            operation: "POST /users".into(),
+            services: services.iter().map(|tag| tag.to_string()).collect(),
+            tokens: 0,
+            share: 0.0,
+        };
+        assert_eq!(endpoint_label(&label(&["users"])), "POST /users");
+        assert_eq!(
+            endpoint_label(&label(&["users", "items"])),
+            "POST /users (+items)"
+        );
+        // Repeated tags render once: a repeat of the measured service adds no
+        // suffix, and a repeat among the extra tags is skipped.
+        assert_eq!(endpoint_label(&label(&["users", "users"])), "POST /users");
+        assert_eq!(
+            endpoint_label(&label(&["users", "items", "users"])),
+            "POST /users (+items)"
+        );
+    }
+
+    #[test]
+    fn slices_narrow_to_the_first_service_the_filter_keeps() {
+        let services = vec!["users".to_string(), "items".to_string()];
+        let config = DocConfig::unfiltered();
+        // Without a filter the slice measures under the first service.
+        assert_eq!(slice_service(&config, &services), Some("users"));
+
+        // With a filter, the first kept service wins, case-insensitively: a
+        // multi-tag endpoint kept only through a later tag is measured under
+        // the tag the user's analysis shows, not its excluded first service.
+        let mut filtered = config.clone();
+        filtered.service_filter = Some(vec!["ITEMS".into()]);
+        assert_eq!(slice_service(&filtered, &services), Some("items"));
+        filtered.service_filter = Some(vec!["users".into(), "items".into()]);
+        assert_eq!(slice_service(&filtered, &services), Some("users"));
     }
 
     #[test]

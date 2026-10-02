@@ -656,6 +656,11 @@ pub(crate) fn definition_section_tokens(
 /// field rows the expansion renders in place of a single link row), measured
 /// with the schema rendered fully inline under the same configuration, cycle
 /// guards included. Used by the `--costs` amplification model.
+///
+/// The measurement expands the schema once at the root, under the schema's own
+/// name as the field label, while real expansions happen at each use site's
+/// label and depth; the drift is a few characters, though a depth-bounded
+/// configuration may truncate the real expansion differently.
 pub(crate) fn inline_expansion_tokens(
     doc: &ApiDocumentation,
     config: &DocConfig,
