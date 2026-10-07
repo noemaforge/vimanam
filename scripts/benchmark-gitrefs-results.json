@@ -1,0 +1,107 @@
+{
+  "platform": "macOS-26.7.1-arm64-arm-64bit",
+  "git": "git version 2.54.0 (Apple Git-157)",
+  "commits": 400,
+  "renames": 20,
+  "runs": 5,
+  "binaries": {
+    "baseline": {
+      "version": "vimanam 1.6.0",
+      "sha256": "89222f526d3ee3bc7c8e980df51e51d231766fb981375b96657d0fea9eb9f032"
+    },
+    "optimized": {
+      "version": "vimanam 1.7.0",
+      "sha256": "a3961dfc14977ceb664e63640e1a5a1333a2d3cd63cfb5c2a56ae195cb3a5a1c"
+    }
+  },
+  "measurement": "CLI wall time including captured Git wrapper overhead; one warmup; exact JSON equality except generator.version",
+  "scenarios": {
+    "linear_unrelated": {
+      "baseline": {
+        "median_seconds": 16.139449916998274,
+        "min_seconds": 15.565082500004792,
+        "max_seconds": 17.002034208999248,
+        "git_subprocesses": 413,
+        "seconds": [
+          17.002034208999248,
+          15.963424625006155,
+          15.565082500004792,
+          16.139449916998274,
+          16.72283879099996
+        ]
+      },
+      "optimized": {
+        "median_seconds": 0.6085339999990538,
+        "min_seconds": 0.5971339590032585,
+        "max_seconds": 0.9272930000006454,
+        "git_subprocesses": 15,
+        "seconds": [
+          0.5971339590032585,
+          0.6085339999990538,
+          0.9272930000006454,
+          0.600519041006919,
+          0.6304028329905123
+        ]
+      },
+      "median_speedup": 26.52185402462865
+    },
+    "rename_chain": {
+      "baseline": {
+        "median_seconds": 16.819548583996948,
+        "min_seconds": 16.51222137500008,
+        "max_seconds": 19.692277042006026,
+        "git_subprocesses": 414,
+        "seconds": [
+          16.583115417000954,
+          19.385518249997403,
+          19.692277042006026,
+          16.819548583996948,
+          16.51222137500008
+        ]
+      },
+      "optimized": {
+        "median_seconds": 1.3912013750086771,
+        "min_seconds": 1.3594386670010863,
+        "max_seconds": 1.4639355409890413,
+        "git_subprocesses": 36,
+        "seconds": [
+          1.4639355409890413,
+          1.3912013750086771,
+          1.3594386670010863,
+          1.3725340829987545,
+          1.4100206669972977
+        ]
+      },
+      "median_speedup": 12.089945342306782
+    },
+    "merge_fallback": {
+      "baseline": {
+        "median_seconds": 15.660746666995692,
+        "min_seconds": 14.602062666992424,
+        "max_seconds": 16.801999457995407,
+        "git_subprocesses": 416,
+        "seconds": [
+          15.227727958990727,
+          14.602062666992424,
+          15.660746666995692,
+          16.801999457995407,
+          16.38184708400513
+        ]
+      },
+      "optimized": {
+        "median_seconds": 16.679328915997758,
+        "min_seconds": 16.38696279199212,
+        "max_seconds": 17.02674937499978,
+        "git_subprocesses": 418,
+        "seconds": [
+          16.679328915997758,
+          17.02674937499978,
+          17.010048333002487,
+          16.38696279199212,
+          16.622905540993088
+        ]
+      },
+      "median_speedup": 0.9389314609639297
+    }
+  }
+}
