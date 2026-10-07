@@ -191,12 +191,43 @@ pub enum Commands {
 #[derive(Args, Debug)]
 pub struct DiffArgs {
     /// The older spec (JSON or YAML)
-    #[arg(value_name = "OLD")]
-    pub old: PathBuf,
+    #[arg(
+        value_name = "OLD",
+        required_unless_present = "from_ref",
+        requires = "new",
+        conflicts_with = "from_ref"
+    )]
+    pub old: Option<PathBuf>,
 
     /// The newer spec (JSON or YAML)
-    #[arg(value_name = "NEW")]
-    pub new: PathBuf,
+    #[arg(
+        value_name = "NEW",
+        required_unless_present = "to_ref",
+        requires = "old",
+        conflicts_with = "to_ref"
+    )]
+    pub new: Option<PathBuf>,
+
+    /// Read the older spec from this Git ref (requires --to-ref; conflicts with OLD/NEW)
+    #[arg(long, value_name = "REF", requires = "to_ref", conflicts_with_all = ["old", "new"])]
+    pub from_ref: Option<String>,
+
+    /// Read the newer spec from this Git ref (requires --from-ref)
+    #[arg(long, value_name = "REF", requires = "from_ref", conflicts_with_all = ["old", "new"])]
+    pub to_ref: Option<String>,
+
+    /// Repository-relative spec path at --to-ref; follow its renames to --from-ref.
+    /// Omit only when --to-ref has exactly one tracked OpenAPI candidate
+    #[arg(long, value_name = "PATH", requires = "to_ref", conflicts_with_all = ["from_spec", "to_spec", "old", "new"])]
+    pub spec: Option<PathBuf>,
+
+    /// Literal repository-relative path at --from-ref; bypass rename discovery
+    #[arg(long, value_name = "PATH", requires_all = ["from_ref", "to_spec"], conflicts_with_all = ["spec", "old", "new"])]
+    pub from_spec: Option<PathBuf>,
+
+    /// Literal repository-relative path at --to-ref (requires --from-spec)
+    #[arg(long, value_name = "PATH", requires_all = ["to_ref", "from_spec"], conflicts_with_all = ["spec", "old", "new"])]
+    pub to_spec: Option<PathBuf>,
 
     /// Append a Deltas section: spec hygiene counts for both specs and the
     /// estimated token size of each at --detail full --include-schemas
@@ -212,7 +243,7 @@ pub struct DiffArgs {
     /// full report
     ///
     /// Exit codes: 0 no breaking changes (changes needing review do not
-    /// count), 1 a spec failed to parse or the output could not be written,
+    /// count), 1 input discovery, reading or parsing failed, or the output could not be written,
     /// 2 usage error, 3 breaking changes found
     #[arg(long)]
     pub fail_on_breaking: bool,

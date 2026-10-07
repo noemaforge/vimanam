@@ -5,6 +5,7 @@ mod conversion;
 mod costs;
 mod diff;
 mod diff_json;
+mod diff_refs;
 mod report;
 mod schema_selection;
 mod selection;
