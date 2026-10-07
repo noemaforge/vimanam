@@ -5,13 +5,13 @@
 [![License: Apache-2.0](https://img.shields.io/crates/l/vimanam.svg)](LICENSE)
 [![MSRV](https://img.shields.io/badge/MSRV-1.96-blue.svg)](Cargo.toml)
 
-Vimanam is an OpenAPI/Swagger (JSON or YAML) to Markdown documentation generator.
+Vimanam is a Rust CLI and library that turns OpenAPI/Swagger specs (JSON or YAML) into focused Markdown documentation and compares API contracts.
 
 Vimanam stands for Aeroplane in Malayalam. Like an aeroplane, it can fly high and give you a 20,000 feet view of the APIs. It can fly low and give you a detailed view of the APIs. You can also run it along the ground to look deep into the API fields and descriptions.
 
-It supports both OpenAPI 2.0 (Swagger) and OpenAPI 3.0 specifications.
+It supports OpenAPI 2.0 (Swagger) and OpenAPI 3.0 specifications, with [partial OpenAPI 3.1 support](#supported-openapi-versions).
 
-Besides producing documentation for humans, Vimanam is built for **feeding API specs to LLMs**: a multi-megabyte enterprise spec doesn't fit in a context window, but a filtered, summary-level Markdown rendering of it does. See [Preparing API context for LLMs](#preparing-api-context-for-llms).
+Besides producing documentation for humans, Vimanam is built for **feeding API specs to LLMs**: filter to the operations and fields you need, or generate a linked Skill tree that an agent can read on demand. See [Preparing API context for LLMs](#preparing-api-context-for-llms). Release history is in the [Changelog](CHANGELOG.md).
 
 ## Rust library
 
@@ -24,22 +24,33 @@ vimanam = { version = "1.6", default-features = false }
 ```
 
 ```rust
-let old = vimanam::parse_openapi("old.json")?;
-let new = vimanam::parse_openapi("new.json")?;
-let changes = vimanam::diff::diff(&old, &new);
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let old = vimanam::parse_openapi("old.json")?;
+    let new = vimanam::parse_openapi("new.json")?;
+    let changes = vimanam::diff::diff(&old, &new);
 
-let mut context = vimanam::DocConfig::unfiltered();
-context.operation_selector = Some(vimanam::OperationSelector {
-    operations: changes.changes.iter().map(|change| vimanam::OperationRef {
-        method: change.endpoint.method.clone(),
-        path: change.endpoint.path.clone(),
-    }).filter(|op| new.endpoints.iter().any(|endpoint| op.matches(endpoint))).collect(),
-    ..Default::default()
-});
-context.max_tokens = Some(2000);
-let mut markdown = Vec::new();
-vimanam::markdown::generate_markdown(&mut markdown, &new, &context)?;
+    let mut context = vimanam::DocConfig::unfiltered();
+    context.operation_selector = Some(vimanam::OperationSelector {
+        operations: changes.changes.iter()
+            .map(|change| vimanam::OperationRef {
+                method: change.endpoint.method.clone(),
+                path: change.endpoint.path.clone(),
+            })
+            .filter(|op| new.endpoints.iter().any(|endpoint| op.matches(endpoint)))
+            .collect(),
+        ..Default::default()
+    });
+    context.max_tokens = Some(2000);
+    let mut markdown = Vec::new();
+    vimanam::markdown::generate_markdown(&mut markdown, &new, &context)?;
+    std::fs::write("changed-api.md", markdown)?;
+    Ok(())
+}
 ```
+
+This renders changed operations that still exist in the new spec. Render removed
+operations from the old spec instead. `DocConfig::unfiltered()` starts with full
+detail and schemas; a token budget may lower operation detail to fit its estimate.
 
 `parse_openapi_bytes` accepts already-read bytes so hashing and parsing can use
 the same input. `diff::json::to_json` returns the JSON contract types, which
@@ -48,20 +59,24 @@ caller-provided writers, logs through `log`, and optionally returns rendering
 notices through `generate_markdown_with_notices`. The default `cli` feature
 keeps normal `cargo install vimanam` behavior.
 
+See the [library API reference](https://docs.rs/vimanam) for configuration and types.
+
 ## Features
 
 - Convert OpenAPI JSON or YAML files to Markdown documentation (format detected by `.json`/`.yaml`/`.yml` extension, with automatic fallback)
-- Supports both OpenAPI 2.0 (Swagger) and OpenAPI 3.0 specifications
+- Supports OpenAPI 2.0 (Swagger), OpenAPI 3.0 and supported OpenAPI 3.1 schema fields
 - Group endpoints by service, HTTP method, or path, or list them flat
 - Filter by service, path, or method
+- Select exact operations by method/path or operation ID (`--operation`, `--operation-id`)
+- Embed parsing, typed diffs and focused rendering in Rust tools without CLI dependencies
 - Multiple detail levels (summary, basic, standard, full)
 - Token-budget-aware output (`--max-tokens`): steps the detail level down until the rendering fits, and reports what was trimmed on stderr
 - Linked directory output (`--split service|tag|endpoint`): a compact overview alongside requested detail pages and shared schema files, with an independent overview budget
 - Agent navigation (`--output-mode skill`): a compact `SKILL.md`, service/operation/schema hubs and individual-file read costs
 - Token-budget dry run (`--stats`): a per-service table of endpoint counts and estimated token sizes, for sizing slices before choosing filters
-- Token-cost analysis (`--costs`): per-endpoint slice costs with their share of TOTAL, per-schema definition and modeled inline-expansion costs with reference amplification, and hotspot rankings (#47)
+- Token-cost analysis (`--costs`): per-endpoint slice costs with their share of TOTAL, per-schema definition and modeled inline-expansion costs with reference amplification, and hotspot rankings
 - Spec diffing (`vimanam diff old.json new.json`): compares two versions of a spec on *resolved* schemas — a change behind a shared `$ref` is reported on every endpoint that uses it — and classifies each change as breaking, non-breaking or needing review, with an exit code for CI (`--fail-on-breaking`)
-- Spec hygiene report appended to every run (`--no-report` to skip): counts and lists operations missing a description, `operationId` or responses, deprecated and untagged operations, duplicate `operationId`s, and undescribed parameters
+- Spec hygiene report for endpoint documentation (`--no-report` to skip): counts and lists operations missing a description, `operationId` or responses, deprecated and untagged operations, duplicate `operationId`s, and undescribed parameters
 - Schema expansion at `--detail full --include-schemas`: renders request/response schemas as nested field tables. Shared component schemas are expanded once into a trailing "Schema Definitions" section and linked from each use site, keeping output compact when schemas are reused across endpoints; `--inline-schemas` instead expands every `$ref` inline at each use site (larger, fully self-contained, with cycle detection)
 - Schema reads for oversized graphs: `--schema NAME` and `--schema-field NAME#POINTER` render one schema or subtree with its metadata, and `--schema-depth N` bounds expansion without dropping the selected fields
 - Example rendering at `--detail full --include-examples`: emits request/response examples as fenced JSON blocks, resolving `$ref`s into `components/examples`
@@ -118,7 +133,7 @@ Requires [Rust](https://www.rust-lang.org/tools/install) 1.96.0 or later.
 git clone https://github.com/noemaforge/vimanam.git
 cd vimanam
 
-# Run directly without building (development)
+# Build and run during development
 cargo run -- input.json -o output.md
 
 # Build and run
@@ -136,7 +151,7 @@ cargo test
 cargo fmt && cargo clippy
 ```
 
-Integration tests live in `tests/cli/` and `tests/split.rs` and run against `tests/fixtures/`. `scripts/compare-baseline.sh` compares a fresh build with a released binary across the CLI matrix — stdout, stderr, exit code, and written files — so a refactor can be checked for byte-for-byte output parity. Setup and the case list are in [`scripts/README.md`](scripts/README.md).
+Integration tests live in `tests/cli/`, `tests/split.rs` and `tests/library.rs` and run against `tests/fixtures/`. Use `cargo test --no-default-features` to exercise the core library without the CLI. `scripts/compare-baseline.sh` compares a fresh build with a released binary across the CLI matrix — stdout, stderr, exit code, and written files — so a refactor can be checked for byte-for-byte output parity. Setup and the case list are in [`scripts/README.md`](scripts/README.md).
 
 ### Shell completions
 
@@ -280,7 +295,7 @@ switches the analyzed mode.
 
 ## Spec hygiene report
 
-Every run appends a short report after the documentation, separated by a horizontal rule, that flags common gaps in the spec: operations with no summary or description, no `operationId`, no documented responses, deprecated operations, operations with no tag (attributed to the default service), duplicate `operationId`s, and parameters without a description (a request body counts once per operation, however many media types it offers). It covers the same endpoints the documentation does, so `--service-filter`, `--path-filter`, `--method-filter` and `--exclude-deprecated` narrow the report too. Detail lists appear only for checks that found something.
+Single-file endpoint documentation appends a short report, separated by a horizontal rule, that flags common gaps in the spec: operations with no summary or description, no `operationId`, no documented responses, deprecated operations, operations with no tag (attributed to the default service), duplicate `operationId`s, and parameters without a description (a request body counts once per operation, however many media types it offers). It covers the same endpoints the documentation does, so service, path, method and exact-operation filters, plus `--exclude-deprecated`, narrow the report too. Detail lists appear only for checks that found something. Split/Skill output writes it to `report.md`; schema selections, `--stats`, `--costs`, and the library Markdown renderer do not append it.
 
 ```markdown
 ---
@@ -319,7 +334,7 @@ Every run appends a short report after the documentation, separated by a horizon
 
 Pass `--no-report` to omit it. The report is not counted against `--max-tokens` — the budget fits the documentation body only — so combine `--max-tokens` with `--no-report` when the whole output must stay within the budget.
 
-### Linked pages with a compact overview
+## Linked pages with a compact overview
 
 Keep complete API detail available on disk while loading only the relevant pages:
 
@@ -336,7 +351,7 @@ Start at `api-docs/index.md`. Its entries show method/path, operation ID and a b
 
 Generated paths combine a readable slug with a hash of the operation, service name or schema reference. They stay stable when filters or unrelated operations change. Regeneration uses `.vimanam-manifest.json` to track owned files: it removes obsolete generated pages only when their contents are unchanged, preserves unrelated files, and refuses to overwrite edited generated pages or unmanaged collisions. Move edited pages aside or use a fresh output directory before regenerating. Symlink output paths and parents are rejected; use their resolved paths (for example `/private/tmp` instead of `/tmp` on macOS). Keep the manifest alongside the generated tree.
 
-### Agent-navigable Skill tree
+## Agent-navigable Skill tree
 
 ```bash
 vimanam openapi.json --output-mode skill -o ./api-skill \
@@ -437,7 +452,7 @@ vimanam openapi.json --operation-id GetFinding --detail full \
 ```
 
 ```bash
-# 20,000-ft view: every service and operation name, usually <1% the size of the spec.
+# 20,000-ft view: a compact map of every service and operation name.
 # Good as always-loaded context so the model knows what the API can do.
 vimanam openapi.json --detail summary -o api-map.md
 
@@ -450,12 +465,12 @@ vimanam openapi.json --path-filter /v1/scans --detail standard -o scans-api.md
 vimanam openapi.json --method-filter GET --detail basic -o read-api.md
 
 # Or let Vimanam pick the detail level: ask for as much of a service as fits a
-# token budget. It starts at --detail full and steps down until it fits,
+# token budget. It starts at the requested detail and steps down as needed,
 # reporting any reduction on stderr.
 vimanam openapi.json --service-filter Findings --detail full --max-tokens 8000 -o findings-api.md
 ```
 
-`--max-tokens` uses a chars/4 token estimate — close enough to choose a detail level, but treat it as approximate rather than an exact cap. When the output is fed to a model, add `--no-report`: the spec hygiene report is useful to a human tidying the spec but is noise in an LLM prompt, and it is appended outside the token budget.
+`--max-tokens` uses a chars/4 token estimate. It is approximate, not a tokenizer count or an exact cap: if even summary output exceeds it, the summary is emitted with an over-budget notice. Explicit schema selections also remain intact when over budget. When the output is fed to a model, add `--no-report`: the endpoint hygiene report is appended outside the body budget.
 
 ### Selecting exact operations
 
@@ -562,7 +577,7 @@ vimanam diff old.json new.json --format json --report -o diff.json --fail-on-bre
 ```json
 {
   "schema_version": 1,
-  "generator": { "name": "vimanam", "version": "1.4.0" },
+  "generator": { "name": "vimanam", "version": "1.6.0" },
   "old": { "title": "Widgets API", "version": "1.0.0", "file_sha256": "<64 lowercase hex>" },
   "new": { "title": "Widgets API", "version": "1.1.0", "file_sha256": "<64 lowercase hex>" },
   "summary": {
@@ -624,6 +639,7 @@ Generate your API docs in CI with the [vimanam GitHub Action](https://github.com
 ```yaml
 - uses: noemaforge/vimanam-action@4599a14c84d9d7bce1ec34ed9f12f3036f06b518 # v1
   with:
+    version: v1.6.0
     spec: openapi.json
     output: docs/api-map.md
     detail: summary
@@ -635,6 +651,7 @@ Generate your API docs in CI with the [vimanam GitHub Action](https://github.com
 To block a pull request that breaks API clients, diff the proposed spec against the one on the default branch; exit status 3 means breaking changes were found (see [Comparing spec versions](#comparing-spec-versions)):
 
 ```yaml
+- run: git fetch --no-tags --depth=1 origin main:refs/remotes/origin/main
 - run: git show origin/main:openapi.json > /tmp/openapi-main.json
 - run: vimanam diff /tmp/openapi-main.json openapi.json --report --fail-on-breaking -o api-diff.md
 ```
@@ -643,11 +660,17 @@ Write the report with `-o` rather than piping it through `tee`: a pipeline would
 
 Pin the action to a commit SHA, not a mutable tag — see the action's [Pinning](https://github.com/noemaforge/vimanam-action#pinning) notes. More patterns in [`examples/`](https://github.com/noemaforge/vimanam-action/tree/main/examples).
 
+Set `version` explicitly to choose the Vimanam release; pinning the action itself does not select the latest binary.
+
 ## Supported OpenAPI Versions
 
 Vimanam supports:
+
 - OpenAPI 2.0 (Swagger) documents using the `swagger` field
-- OpenAPI 3.0+ documents using the `openapi` field
+- OpenAPI 3.0 documents using the `openapi` field
+- OpenAPI 3.1 documents using the supported schema fields, including type arrays; this is not a full JSON Schema implementation. See the [diff limitations](#comparing-spec-versions) for type-array nullability handling.
+
+Reference resolution supports internal `#/...` references. References to other files or URLs are not loaded; bundle those specs before using Vimanam.
 
 ## Output Examples
 
@@ -683,23 +706,6 @@ The generated documentation includes:
 | 201 | application/json | User created successfully |
 | 400 | application/json | Invalid request |
 ```
-
-## Roadmap
-
-Shipped:
-
-- **[v1.0.0](https://github.com/noemaforge/vimanam/milestone/1)** — first stable release: JSON and YAML input.
-- **[v1.1.0](https://github.com/noemaforge/vimanam/milestone/2)** — token budgets, shell completions, the hygiene report, `--stats`, and `diff`.
-- **[v1.2.0](https://github.com/noemaforge/vimanam/milestone/3)** — `diff --format json` with stable change IDs.
-- **v1.3.0** — exact operation selection (`--operation`, `--operation-id`).
-- **v1.4.0** — linked multi-file output (`--split`), the agent-navigable Skill tree (`--output-mode skill`), and schema/field reads with `--schema-depth`.
-- **v1.5.0** — the `--costs` token-cost analysis: per-endpoint and per-schema costs, reference amplification, and hotspots.
-
-Still open:
-
-- **[Packaging](https://github.com/noemaforge/vimanam/milestone/4)** — distribution channels (Scoop, winget, Chocolatey, AUR, native `.deb`/`.rpm`), shipped independently of code releases.
-
-See the [open issues](https://github.com/noemaforge/vimanam/issues) for the full backlog.
 
 ## License
 
