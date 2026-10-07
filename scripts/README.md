@@ -1,5 +1,69 @@
 # scripts
 
+## `benchmark-gitrefs.py`
+
+Measures the Git history engine through two release CLI binaries on generated
+scratch repositories. Requires Python 3 and Git; the counting wrapper uses a
+POSIX shell. No private specs or external repositories are used. The benchmark
+creates committed JSON specs with 400 unrelated edits, a 20-step detectable
+rename chain followed by a major later rewrite, and a merge requiring the
+existing merge-aware fallback. Setup uses `git fast-import` outside the timers.
+
+Build the pre-optimization baseline from the merged #113 tree, then the current
+release binary. Keep the baseline binary outside the shared Cargo target directory:
+
+```bash
+git worktree add --detach /tmp/vimanam-gitrefs-before 190e3198d367abc25b6b66ad1e3af6a872e98cb5
+cargo build --release --locked --manifest-path /tmp/vimanam-gitrefs-before/Cargo.toml
+cp /tmp/vimanam-gitrefs-before/target/release/vimanam /tmp/vimanam-gitrefs-baseline
+git worktree remove /tmp/vimanam-gitrefs-before
+cargo build --release --locked
+python3 scripts/benchmark-gitrefs.py /tmp/vimanam-gitrefs-baseline target/release/vimanam \
+  --commits 400 --renames 20 --runs 5 --output /tmp/vimanam-gitrefs-results.json
+```
+
+Each scenario warms up each binary once, then records five whole-CLI wall times
+with `time.perf_counter` and counts Git invocations through a PATH wrapper.
+Timings include fixed CLI discovery/parsing/rendering costs and the wrapper's
+overhead; these are end-to-end measurements, not isolated Git CPU timings.
+Logging is disabled. The script rejects inconsistent subprocess counts and
+compares parsed JSON between every run and binary, excluding only
+`generator.version` for the package bump. It records every timed sample,
+platform, Git version, binary versions and binary SHA256 hashes in JSON.
+Adjust `--commits`, `--renames` and `--runs` to repeat at another scale.
+
+The fast path covers backward ancestor comparisons whose complete interval is
+linear and whose repository is not shallow. It uses
+[`git log --follow`](https://git-scm.com/docs/git-log#Documentation/git-log.txt---follow)
+to locate file-touch commits, then verifies each one using the engine's existing
+full parent-edge rename rules. This retains the same 50% Git rename heuristic;
+a move combined with a major rewrite in one commit can remain undetectable.
+Once paths are identified, semantic API comparisons have no similarity threshold.
+Forward and sibling comparisons, merges, shallow repositories, unexpected log
+records and mapping mismatches keep the existing traversal. Merge fallback adds
+two probe calls; neither merge traversal nor the older-common-commit search is
+cached or optimized by this change. Small histories or specs edited in nearly
+every commit may see little benefit or additional probe overhead.
+
+The checked-in `benchmark-gitrefs-results.json` records the 2026-10-07 run on
+macOS 26.7.1 ARM64 with Apple Git 2.54.0. The 1.6.0 baseline was built from
+#113's reviewed head `de780d9fe86f83d1bcd61bb2ac0ecaaa75760ade`, whose tree
+matches merged commit `190e3198d367abc25b6b66ad1e3af6a872e98cb5`. Both binaries
+used `cargo build --release` and Rust 1.96.1; the candidate reports 1.7.0.
+
+| Generated history | Baseline median | Optimized median | Git subprocesses before → after | Median speedup |
+|---|---:|---:|---:|---:|
+| 400 unrelated commits | 16.139s | 0.609s | 413 → 15 | 26.52× |
+| 400 commits, 20 renames, later rewrite | 16.820s | 1.391s | 414 → 36 | 12.09× |
+| 400 unrelated commits plus merge | 15.661s | 16.679s | 416 → 418 | 0.94× |
+
+These counts include five fixed calls outside `materialize_follow`: two for
+repository discovery and three for materializing the newer spec. The method's
+counts are therefore 408 → 10, 409 → 31 and 411 → 413, respectively.
+The merge scenario showed no measured benefit (6.5% slower here), with two
+additional probes. Timings vary by machine and load; the raw file retains the
+sample ranges, and these measurements are not a promise for other repositories.
+
 ## `compare-baseline.sh`
 
 Runs a released vimanam binary and a fresh build of the working tree over the same matrix of CLI invocations, then compares stdout, stderr, exit code and any files or directories written, byte for byte. Use it to prove a refactor changes no behaviour, or to see exactly which outputs an intentional change affects.

@@ -224,6 +224,88 @@ fn follow_renames_in_both_directions_and_ignore_reused_names() {
 }
 
 #[test]
+fn linear_history_follows_rename_before_a_major_later_rewrite() {
+    let Some(repo) = Repo::new() else {
+        return;
+    };
+    repo.write("old.json", SPEC);
+    let old = repo.commit("old release");
+    repo.git(&["mv", "old.json", "new.json"]);
+    repo.commit("detectable rename");
+    for i in 0..8 {
+        repo.write("unrelated.txt", &i.to_string());
+        repo.commit("unrelated changes");
+    }
+    let rewritten = format!(
+        "{{\"openapi\":\"3.0.3\",\"info\":{{\"title\":\"Rewritten\",\"version\":\"2\"}},\"paths\":{{}},\"description\":\"{}\"}}",
+        "major later rewrite ".repeat(200)
+    );
+    repo.write("new.json", &rewritten);
+    let new = repo.commit("rewrite after rename");
+    let aggregate = repo.git(&["diff", "--name-status", "-M50%", &old, &new]);
+    assert!(aggregate.contains("D\told.json"), "{aggregate}");
+    assert!(aggregate.contains("A\tnew.json"), "{aggregate}");
+    // User config must not turn the machine history into decorated/copy output.
+    repo.git(&["config", "log.decorate", "full"]);
+    repo.git(&["config", "diff.renames", "copies"]);
+    repo.git(&["config", "diff.renameLimit", "1"]);
+    let followed = repo
+        .api()
+        .materialize_follow("new.json", &new, &old)
+        .unwrap();
+    assert_eq!(followed.path, Path::new("old.json"));
+    assert_eq!(followed.bytes, SPEC.as_bytes());
+    assert_eq!(
+        repo.api().materialize(&new, "new.json").unwrap().bytes,
+        rewritten.as_bytes()
+    );
+}
+
+#[test]
+fn a_copy_and_later_source_deletion_do_not_join_file_lifetimes() {
+    let Some(repo) = Repo::new() else {
+        return;
+    };
+    repo.write("old.json", SPEC);
+    let old = repo.commit("source");
+    repo.write("new.json", SPEC);
+    repo.commit("copy while source exists");
+    repo.git(&["rm", "old.json"]);
+    let new = repo.commit("remove source later");
+    assert!(
+        repo.api()
+            .materialize_follow("new.json", &new, &old)
+            .is_err()
+    );
+    assert_eq!(
+        repo.api().materialize(&new, "new.json").unwrap().bytes,
+        SPEC.as_bytes()
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn linear_history_parses_newline_and_hash_like_names_literally() {
+    let Some(repo) = Repo::new() else {
+        return;
+    };
+    let name = "odd\nR100\n.json";
+    repo.write(name, SPEC);
+    let old = repo.commit("original");
+    let intermediate = "0123456789012345678901234567890123456789";
+    repo.git(&["mv", "--", name, intermediate]);
+    repo.commit("hash-like path");
+    repo.git(&["mv", "--", intermediate, "[star]*.yaml"]);
+    let new = repo.commit("literal glob");
+    let followed = repo
+        .api()
+        .materialize_follow("[star]*.yaml", &new, &old)
+        .unwrap();
+    assert_eq!(followed.path, Path::new(name));
+    assert_eq!(followed.bytes, SPEC.as_bytes());
+}
+
+#[test]
 fn sibling_branches_use_common_lineage_and_merged_duplicates_are_ambiguous() {
     let Some(repo) = Repo::new() else {
         return;
@@ -459,6 +541,44 @@ fn shallow_and_unborn_refs_return_errors_instead_of_reading_working_files() {
             .to_string()
             .contains("shallow")
     );
+}
+
+#[test]
+fn shallow_history_with_an_available_ancestor_retains_rename_behavior() {
+    let Some(repo) = Repo::new() else {
+        return;
+    };
+    repo.write("old.json", SPEC);
+    let old = repo.commit("old");
+    repo.git(&["mv", "old.json", "new.json"]);
+    repo.commit("rename");
+    let clone = tempfile::tempdir().unwrap();
+    let checkout = clone.path().join("shallow");
+    let source = if cfg!(windows) {
+        format!(
+            "file:///{}",
+            repo.root().display().to_string().replace('\\', "/")
+        )
+    } else {
+        format!("file://{}", repo.root().display())
+    };
+    let output = Command::new("git")
+        .args(["clone", "-q", "--depth", "2", "--"])
+        .arg(source)
+        .arg(&checkout)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let followed = Repository::discover(checkout)
+        .unwrap()
+        .materialize_follow("new.json", "HEAD", &old)
+        .unwrap();
+    assert_eq!(followed.path, Path::new("old.json"));
+    assert_eq!(followed.bytes, SPEC.as_bytes());
 }
 
 #[cfg(unix)]

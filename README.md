@@ -20,7 +20,7 @@ in-process without the CLI dependencies:
 
 ```toml
 [dependencies]
-vimanam = { version = "1.6", default-features = false }
+vimanam = { version = "1.7", default-features = false }
 ```
 
 ```rust
@@ -647,7 +647,7 @@ vimanam diff old.json new.json --format json --report -o diff.json --fail-on-bre
 ```json
 {
   "schema_version": 1,
-  "generator": { "name": "vimanam", "version": "1.6.0" },
+  "generator": { "name": "vimanam", "version": "1.7.0" },
   "old": { "title": "Widgets API", "version": "1.0.0", "file_sha256": "<64 lowercase hex>" },
   "new": { "title": "Widgets API", "version": "1.1.0", "file_sha256": "<64 lowercase hex>" },
   "summary": {
@@ -709,7 +709,7 @@ Generate your API docs in CI with the [vimanam GitHub Action](https://github.com
 ```yaml
 - uses: noemaforge/vimanam-action@4599a14c84d9d7bce1ec34ed9f12f3036f06b518 # v1
   with:
-    version: v1.6.0
+    version: v1.7.0
     spec: openapi.json
     output: docs/api-map.md
     detail: summary

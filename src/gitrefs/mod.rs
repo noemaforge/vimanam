@@ -127,6 +127,10 @@ impl Repository {
     /// files and incomplete shallow history may be unresolvable; use literal
     /// [`Self::materialize`] with an explicit path in those cases. Tracking is
     /// file-level, including intermediate non-spec extensions and contents.
+    /// Backward ancestor comparisons over a complete linear interval use a
+    /// file-focused log, verifying each event with the same parent-edge rules.
+    /// Merge, forward, sibling-branch and shallow comparisons retain the full
+    /// merge-aware traversal.
     pub fn materialize_follow(
         &self,
         path: impl AsRef<Path>,
@@ -158,6 +162,12 @@ impl Repository {
             );
         }
         let primary = bases[0];
+        if primary == target
+            && let Some(historical_path) = self.follow_linear(&target, &anchor, path)?
+            && let Ok(snapshot) = self.at_commit(&target, &historical_path)
+        {
+            return Ok(snapshot);
+        }
         let anchored = self.trace(
             primary,
             &anchor,
@@ -305,6 +315,91 @@ impl Repository {
         checked(&self.root, args, operation)
     }
 
+    // Only optimize backward comparisons whose complete interval is linear.
+    // Path-limited log simplification is not equivalent to our merge semantics.
+    fn follow_linear(&self, base: &str, tip: &str, path: &Path) -> Result<Option<PathBuf>> {
+        if self.git(
+            ["rev-parse", "--is-shallow-repository"],
+            "check shallow history",
+        )? != b"false\n"
+        {
+            return Ok(None);
+        }
+        let range = format!("{base}..{tip}");
+        let history = self.git(
+            ["rev-list", "--topo-order", "--parents", &range, "--"],
+            "read linear history",
+        )?;
+        let mut edges = BTreeMap::new();
+        let mut expected = tip;
+        for line in std::str::from_utf8(&history)?.lines() {
+            let fields = line.split_whitespace().collect::<Vec<_>>();
+            if fields.len() != 2 || fields[0] != expected {
+                return Ok(None);
+            }
+            edges.insert(fields[0], fields[1]);
+            expected = fields[1];
+        }
+        if expected != base {
+            return Ok(None);
+        }
+        let args = [
+            OsStr::new("log"),
+            OsStr::new("--follow"),
+            OsStr::new("--format=%H"),
+            OsStr::new("--no-decorate"),
+            OsStr::new("--no-show-signature"),
+            OsStr::new("--name-status"),
+            OsStr::new("-z"),
+            OsStr::new("--no-ext-diff"),
+            OsStr::new("--no-textconv"),
+            OsStr::new("-M50%"),
+            OsStr::new("-l0"),
+            OsStr::new(&range),
+            OsStr::new("--"),
+            path.as_os_str(),
+        ];
+        let history = checked(&self.root, args, "read file history")?;
+        let Some(changes) = log_changes(&history, &edges) else {
+            return Ok(None);
+        };
+        let mut historical = path.to_path_buf();
+        for (child, changes) in changes {
+            let Some(log_path) = map_path(&changes, &historical, false)? else {
+                return Ok(None);
+            };
+            // --follow's path-focused rename search can differ from a full
+            // parent-edge diff (especially with copies or competing names).
+            // Verify its mapping using exactly the existing engine's rules.
+            let changes = self.edge_changes(edges[child], child)?;
+            if map_path(&changes, &historical, false)? != Some(log_path.clone()) {
+                return Ok(None);
+            }
+            historical = log_path;
+        }
+        Ok(Some(historical))
+    }
+
+    fn edge_changes(&self, parent: &str, child: &str) -> Result<Vec<u8>> {
+        self.git(
+            [
+                "diff-tree",
+                "--no-commit-id",
+                "--name-status",
+                "-r",
+                "-z",
+                "--no-ext-diff",
+                "--no-textconv",
+                "-M50%",
+                "-l0",
+                parent,
+                child,
+                "--",
+            ],
+            "inspect renames",
+        )
+    }
+
     fn trace(
         &self,
         base: &str,
@@ -373,23 +468,7 @@ impl Repository {
                 if state.paths.is_empty() {
                     continue;
                 }
-                let changes = self.git(
-                    [
-                        "diff-tree",
-                        "--no-commit-id",
-                        "--name-status",
-                        "-r",
-                        "-z",
-                        "--no-ext-diff",
-                        "--no-textconv",
-                        "-M50%",
-                        "-l0",
-                        parent,
-                        child,
-                        "--",
-                    ],
-                    "inspect renames",
-                )?;
+                let changes = self.edge_changes(parent, child)?;
                 for path in state.paths {
                     if let Some(mapped) = map_path(&changes, &path, forward)? {
                         active_routes += 1;
@@ -447,6 +526,61 @@ fn unique(paths: BTreeSet<PathBuf>, reference: &str) -> Result<PathBuf> {
         1 => Ok(paths.into_iter().next().unwrap()),
         _ => bail!("Ambiguous spec paths at {reference:?}: {paths:?}; supply an explicit path"),
     }
+}
+
+// Parse only machine records: %H, NUL, LF + status, NUL, literal path(s), NUL.
+// Paths are consumed according to status, so hash-like names/newlines cannot
+// become commit delimiters. Unexpected output conservatively uses the fallback.
+fn log_changes<'a>(
+    bytes: &'a [u8],
+    edges: &BTreeMap<&str, &str>,
+) -> Option<Vec<(&'a str, Vec<u8>)>> {
+    let mut fields = bytes.split(|b| *b == 0).peekable();
+    let mut records = Vec::new();
+    let mut seen = BTreeSet::new();
+    while let Some(commit) = fields.next() {
+        if commit.is_empty() && fields.peek().is_none() {
+            break;
+        }
+        let commit = std::str::from_utf8(commit).ok()?;
+        if !edges.contains_key(commit) || !seen.insert(commit) {
+            return None;
+        }
+        let mut changes = Vec::new();
+        let status = fields.next()?.strip_prefix(b"\n")?;
+        let mut status = status;
+        loop {
+            let names = match status {
+                b"A" | b"D" | b"M" | b"T" => 1,
+                s if s.starts_with(b"R")
+                    && s.len() > 1
+                    && s[1..].iter().all(u8::is_ascii_digit) =>
+                {
+                    2
+                }
+                _ => return None,
+            };
+            changes.extend_from_slice(status);
+            changes.push(0);
+            for _ in 0..names {
+                let name = fields.next()?;
+                if name.is_empty() {
+                    return None;
+                }
+                changes.extend_from_slice(name);
+                changes.push(0);
+            }
+            let Some(next) = fields.peek() else {
+                break;
+            };
+            if next.is_empty() || std::str::from_utf8(next).is_ok_and(|s| edges.contains_key(s)) {
+                break;
+            }
+            status = fields.next()?;
+        }
+        records.push((commit, changes));
+    }
+    Some(records)
 }
 
 fn map_path(bytes: &[u8], path: &Path, forward: bool) -> Result<Option<PathBuf>> {

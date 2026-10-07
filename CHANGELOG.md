@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.7.0] - 2026-10-07
+
 ### Added
 
 - `vimanam diff --from-ref OLD --to-ref NEW` (#113) compares committed specs
@@ -19,6 +21,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   refs. Explicitly anchored rename tracking supports ancestor and sibling-branch
   comparisons, reporting missing or ambiguous lineage rather than guessing.
   Uses Git on PATH without new dependencies, checkout changes or CLI flags.
+
+### Changed
+
+- Backward Git-ref comparisons over complete linear history use a file-focused
+  `git log --follow` fast path (#121), verifying file changes against the same
+  parent-edge rename rules. Merge, sibling-branch, forward and shallow histories
+  retain the merge-aware traversal. See `scripts/README.md` for reproducible
+  wall-time and Git subprocess measurements on generated scratch repositories.
 
 ## [1.6.0] - 2026-10-07
 
@@ -404,6 +414,8 @@ already on `main`; only the version bump was missing.
 - Initial release: OpenAPI 2.0 (Swagger) JSON to Markdown with grouping,
   filtering, sorting, and detail levels
 
+[Unreleased]: https://github.com/noemaforge/vimanam/compare/v1.7.0...HEAD
+[1.7.0]: https://github.com/noemaforge/vimanam/compare/v1.6.0...v1.7.0
 [1.6.0]: https://github.com/noemaforge/vimanam/compare/v1.5.0...v1.6.0
 [1.5.0]: https://github.com/noemaforge/vimanam/compare/v1.4.2...v1.5.0
 [1.4.2]: https://github.com/noemaforge/vimanam/compare/v1.4.1...v1.4.2
