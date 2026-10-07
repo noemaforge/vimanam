@@ -78,8 +78,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 `materialize(ref, path)` reads an exact path; `materialize_follow(path, path_ref,
 target_ref)` follows Git-detected renames from the explicitly anchored file,
-including across sibling branches. Both return exact bytes, the actual path and
-resolved commit ID without changing the checkout. Candidate sniffing checks a
+including across sibling branches and merge parents. It may use an older shared
+commit when the file's route crosses a merge parent outside Git's selected
+merge base; a merge with both a surviving route and a broken route is rejected
+as ambiguous. Both return exact bytes, the actual path and resolved commit ID
+without changing the checkout. Candidate sniffing checks a
 small OpenAPI header and syntax, deferring operation/schema validation to the
 parser. It reads committed trees, excluding ignored/untracked files and local
 edits. Git's 50% similarity rename heuristic cannot identify every rewritten

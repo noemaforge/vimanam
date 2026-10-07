@@ -270,6 +270,49 @@ fn sibling_branches_use_common_lineage_and_merged_duplicates_are_ambiguous() {
             .path,
         Path::new("base.json")
     );
+    assert_eq!(
+        api.materialize_follow("right.json", &merge, &left)
+            .unwrap()
+            .path,
+        Path::new("left.json")
+    );
+}
+
+#[test]
+fn merge_cannot_hide_a_deleted_and_reintroduced_file_lifetime() {
+    let Some(repo) = Repo::new() else {
+        return;
+    };
+    repo.git(&["checkout", "-qb", "main"]);
+    repo.write("api.json", SPEC);
+    let base = repo.commit("original spec");
+    repo.git(&["checkout", "-qb", "side"]);
+    repo.git(&["rm", "api.json"]);
+    repo.commit("delete original");
+    let unrelated = SPEC.replace("Test API", "Unrelated API");
+    repo.write("api.json", &unrelated);
+    repo.commit("reintroduce same name");
+    repo.git(&["checkout", "main"]);
+    repo.write("README.txt", "main branch change\n");
+    repo.commit("unrelated main change");
+    repo.git(&["merge", "--no-ff", "-m", "merge reintroduced spec", "side"]);
+    let merge = repo.git(&["rev-parse", "HEAD"]);
+    let api = repo.api();
+
+    for (from, to) in [(&base, &merge), (&merge, &base)] {
+        let error = api
+            .materialize_follow("api.json", from, to)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("lineage") || error.contains("Ambiguous"),
+            "{error}"
+        );
+    }
+    assert_eq!(
+        api.materialize(&merge, "api.json").unwrap().bytes,
+        unrelated.as_bytes()
+    );
 }
 
 #[test]

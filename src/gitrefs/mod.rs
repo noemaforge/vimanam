@@ -116,7 +116,9 @@ impl Repository {
     }
 
     /// Follow the lineage of `path` at `path_ref` to `target_ref`, then read it.
-    /// Both ancestor and sibling-branch comparisons use their merge base.
+    /// Comparisons use shared history, preferring Git's unique merge base and
+    /// falling back to older shared commits when an anchored merge-parent route
+    /// does not cross that base.
     /// Additions/deletions stop lineage; an old filename reused for another file
     /// is never a fallback. Multiple merge bases or resulting paths are errors.
     ///
@@ -155,13 +157,64 @@ impl Repository {
                 bases.len()
             );
         }
-        let base = bases[0];
-        let mut paths = BTreeSet::from([path.to_path_buf()]);
-        paths = self.trace(base, &anchor, paths, false)?;
-        let base_path = unique(paths, path_ref)?;
-        let paths = self.trace(base, &target, BTreeSet::from([base_path]), true)?;
-        let target_path = unique(paths, target_ref)?;
-        self.at_commit(&target, &target_path)
+        let primary = bases[0];
+        let anchored = self.trace(
+            primary,
+            &anchor,
+            BTreeSet::from([path.to_path_buf()]),
+            false,
+        )?;
+        if anchored.paths.len() > 1 {
+            return Err(unique(anchored.paths, path_ref).unwrap_err());
+        }
+        if let Some(base_path) = anchored.paths.into_iter().next() {
+            let target_state = self.trace(primary, &target, BTreeSet::from([base_path]), true)?;
+            if target_state.paths.len() > 1 {
+                return Err(unique(target_state.paths, target_ref).unwrap_err());
+            }
+            if let Some(target_path) = target_state.paths.into_iter().next() {
+                return self.at_commit(&target, &target_path);
+            }
+        }
+
+        let mut candidates = Vec::new();
+        // A merge base can be a commit on one side of a merge while the
+        // explicitly anchored file only has a detectable route through the
+        // other parent. In that case an older shared commit can still provide
+        // an unambiguous file-level bridge.
+        let anchor_history =
+            self.git(["rev-list", "--topo-order", &anchor], "read shared history")?;
+        let target_history = self.git(["rev-list", &target], "read shared history")?;
+        let target_commits = std::str::from_utf8(&target_history)?
+            .lines()
+            .collect::<BTreeSet<_>>();
+        candidates.extend(
+            std::str::from_utf8(&anchor_history)?
+                .lines()
+                .filter(|commit| target_commits.contains(commit) && *commit != primary)
+                .map(str::to_owned),
+        );
+
+        for base in candidates {
+            let anchor_state =
+                self.trace(&base, &anchor, BTreeSet::from([path.to_path_buf()]), false)?;
+            if anchor_state.paths.len() > 1 {
+                return Err(unique(anchor_state.paths, path_ref).unwrap_err());
+            }
+            let Some(base_path) = anchor_state.paths.into_iter().next() else {
+                continue;
+            };
+            let target_state = self.trace(&base, &target, BTreeSet::from([base_path]), true)?;
+            if target_state.paths.len() > 1 {
+                return Err(unique(target_state.paths, target_ref).unwrap_err());
+            }
+            if let Some(target_path) = target_state.paths.into_iter().next() {
+                return self.at_commit(&target, &target_path);
+            }
+        }
+        bail!(
+            "Spec lineage has no path at {target_ref:?} (file added/deleted, rename not detected, or history incomplete); supply an explicit path"
+        )
     }
 
     fn resolve(&self, reference: &str) -> Result<String> {
@@ -258,9 +311,12 @@ impl Repository {
         tip: &str,
         initial: BTreeSet<PathBuf>,
         forward: bool,
-    ) -> Result<BTreeSet<PathBuf>> {
+    ) -> Result<TraceState> {
         if base == tip {
-            return Ok(initial);
+            return Ok(TraceState {
+                paths: initial,
+                broken: false,
+            });
         }
         let range = format!("{base}..{tip}");
         let bytes = self.git(
@@ -269,7 +325,6 @@ impl Repository {
                 "--reverse",
                 "--topo-order",
                 "--parents",
-                "--ancestry-path",
                 &range,
                 "--",
             ],
@@ -291,18 +346,33 @@ impl Repository {
         if !forward {
             nodes.reverse();
         }
-        let mut states = BTreeMap::from([(if forward { base } else { tip }.to_owned(), initial)]);
+        let mut states = BTreeMap::from([(
+            if forward { base } else { tip }.to_owned(),
+            TraceState {
+                paths: initial,
+                broken: false,
+            },
+        )]);
         for node in nodes {
             let child = &node[0];
+            let merge = node.len() > 2;
+            let mut edge_breaks = Vec::new();
+            let mut active_routes = 0usize;
             for parent in node[1..].iter().filter(|p| allowed.contains(*p)) {
                 let (from, to) = if forward {
                     (parent, child)
                 } else {
                     (child, parent)
                 };
-                let Some(paths) = states.get(from).cloned() else {
+                let Some(state) = states.get(from).cloned() else {
                     continue;
                 };
+                if state.broken {
+                    states.entry(to.clone()).or_default().broken = true;
+                }
+                if state.paths.is_empty() {
+                    continue;
+                }
                 let changes = self.git(
                     [
                         "diff-tree",
@@ -320,16 +390,47 @@ impl Repository {
                     ],
                     "inspect renames",
                 )?;
-                for path in paths {
+                for path in state.paths {
                     if let Some(mapped) = map_path(&changes, &path, forward)? {
+                        active_routes += 1;
                         states.entry(to.clone()).or_default().insert(mapped);
+                    } else {
+                        edge_breaks.push(to.clone());
                     }
                 }
             }
+            if let Some(to) = edge_breaks.into_iter().next() {
+                // An added path on one merge parent can be the same anchored
+                // lineage that arrived under a different name on another
+                // parent. The actual historical break is retained in the
+                // parent's state; this merge-edge addition alone is not proof
+                // of a second file lifetime.
+                if !merge || active_routes == 0 {
+                    states.entry(to).or_default().broken = true;
+                }
+            }
         }
-        Ok(states
+        let result = states
             .remove(if forward { tip } else { base })
-            .unwrap_or_default())
+            .unwrap_or_default();
+        if result.broken && !result.paths.is_empty() {
+            bail!(
+                "Ambiguous spec lineage at merge history near {tip}: a tracked route is broken while another survives; supply an explicit path"
+            );
+        }
+        Ok(result)
+    }
+}
+
+#[derive(Clone, Default)]
+struct TraceState {
+    paths: BTreeSet<PathBuf>,
+    broken: bool,
+}
+
+impl TraceState {
+    fn insert(&mut self, path: PathBuf) {
+        self.paths.insert(path);
     }
 }
 
