@@ -1,7 +1,7 @@
 //! JSON output for `vimanam diff` (#98): a machine-readable rendering of a
 //! [`SpecDiff`] with a stable, content-derived ID per change.
 //!
-//! The output types here are **Serialize-only** and kept separate from the
+//! The output types here are **serializable and deserializable** and kept separate from the
 //! domain types in [`crate::diff`]: the JSON contract must not drift when the
 //! internals are refactored, so `Change`/`ChangeKind`/`ValueChange` stay
 //! serde-free. Field declaration order on the structs sets the pretty-printed
@@ -21,7 +21,7 @@
 //! endpoint, each with its own ID, because the endpoint is part of the hash
 //! input.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::fmt::Write as _;
@@ -35,13 +35,19 @@ use crate::utils::decode_json_pointer_token;
 // ── output types ────────────────────────────────────────────────────────────
 
 /// The complete JSON document printed by `vimanam diff --format json`.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct JsonDiff {
+    /// JSON contract version; currently `1`.
     pub schema_version: u8,
+    /// Generator name and package version.
     pub generator: JsonGenerator,
+    /// API identity and raw input hash for the old spec.
     pub old: JsonSide,
+    /// API identity and raw input hash for the new spec.
     pub new: JsonSide,
+    /// Endpoint and severity counts.
     pub summary: JsonSummary,
+    /// Changes in deterministic spec order.
     pub changes: Vec<JsonChange>,
     /// Present only under `--report`; the key is omitted (never `null`)
     /// otherwise.
@@ -49,15 +55,21 @@ pub struct JsonDiff {
     pub deltas: Option<JsonDeltas>,
 }
 
-#[derive(Debug, Serialize)]
+/// Identity of the binary/library that produced the document.
+#[derive(Debug, Serialize, Deserialize)]
 pub struct JsonGenerator {
-    pub name: &'static str,
-    pub version: &'static str,
+    /// The declared name.
+    pub name: String,
+    /// Declared version.
+    pub version: String,
 }
 
-#[derive(Debug, Serialize)]
+/// API identity and raw-file hash for one side of the comparison.
+#[derive(Debug, Serialize, Deserialize)]
 pub struct JsonSide {
+    /// Declared title.
     pub title: String,
+    /// Declared version.
     pub version: String,
     /// SHA-256 of the original input file bytes exactly as read from disk,
     /// before any parsing. Reformatting a spec changes this hash but not the
@@ -65,64 +77,103 @@ pub struct JsonSide {
     pub file_sha256: String,
 }
 
-#[derive(Debug, Serialize)]
+/// Counts matching the human-readable diff summary.
+#[derive(Debug, Serialize, Deserialize)]
 pub struct JsonSummary {
+    /// Number of operations added.
     pub endpoints_added: usize,
+    /// Number of operations removed.
     pub endpoints_removed: usize,
+    /// Number of distinct surviving operations with changes.
     pub endpoints_changed: usize,
+    /// Number of breaking changes.
     pub breaking: usize,
+    /// Number of additive or relaxing changes.
     pub non_breaking: usize,
+    /// Number of changes requiring usage-specific review.
     pub review: usize,
 }
 
-#[derive(Debug, Serialize)]
+/// One endpoint-attributed contract change with a stable ID.
+#[derive(Debug, Serialize, Deserialize)]
 pub struct JsonChange {
+    /// Stable content-derived change identifier, prefixed with `vc1_`.
     pub id: String,
+    /// The HTTP operation to which this change is attributed.
     pub endpoint: JsonEndpoint,
+    /// The concrete difference or operation applied at this location.
     pub kind: JsonChangeKind,
+    /// Impact on existing clients.
     pub severity: JsonSeverity,
+    /// Insertion-ordered contract detail fields for this change kind.
     pub details: JsonDetails,
 }
 
-#[derive(Debug, Clone, Serialize)]
+/// Exact HTTP method/path identity used by the diff.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JsonEndpoint {
+    /// Uppercase HTTP method.
     pub method: String,
+    /// Exact path template from the spec, without a Swagger 2 `basePath`.
     pub path: String,
 }
 
-#[derive(Debug, Clone, Serialize)]
+/// Stable snake_case change kind in JSON contract version 1.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum JsonChangeKind {
+    /// An operation exists only in the new spec.
     EndpointAdded,
+    /// An operation from the old spec was removed.
     EndpointRemoved,
+    /// A parameter was added to a surviving operation.
     ParameterAdded,
+    /// A parameter was removed from a surviving operation.
     ParameterRemoved,
+    /// A parameter changed between optional and required.
     ParameterRequiredChanged,
+    /// An unambiguous parameter moved to a different location.
     ParameterLocationChanged,
+    /// A parameter schema has a field-level change.
     ParameterSchemaChanged,
+    /// A response status was added.
     ResponseAdded,
+    /// A response status was removed.
     ResponseRemoved,
+    /// An operationId changed, appeared, or disappeared.
     OperationIdChanged,
+    /// An operation changed its deprecation flag.
     DeprecatedChanged,
+    /// A request-body schema has a field-level change.
     RequestSchemaChanged,
+    /// A response schema has a field-level change.
     ResponseSchemaChanged,
 }
 
-#[derive(Debug, Clone, Serialize)]
+/// Impact classification used by the JSON contract.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum JsonSeverity {
+    /// Existing API clients can break.
     Breaking,
+    /// An additive or relaxing change.
     NonBreaking,
+    /// Impact depends on client usage and needs review.
     Review,
 }
 
 /// The `details` object of a change record: an insertion-ordered map whose key
 /// order follows the contract table (deterministic under serde_json's
 /// `preserve_order`). Newtype so the record serialises it as a bare object.
-#[derive(Debug, Clone, Serialize)]
-pub struct JsonDetails(serde_json::Map<String, Value>);
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct JsonDetails(
+    /// Contract detail fields in deterministic insertion order.
+    pub serde_json::Map<String, Value>,
+);
 
-#[derive(Debug, Serialize)]
+/// Field-level schema difference embedded in the details of a schema change.
+#[derive(Debug, Serialize, Deserialize)]
 pub struct JsonSchemaChange {
     /// RFC 6901 pointer exactly as the differ emits it. It addresses the
     /// *resolved, canonicalised* schema (`$ref`s inlined, annotation keywords
@@ -133,60 +184,100 @@ pub struct JsonSchemaChange {
     /// The decoded last pointer segment when the target is a named member;
     /// `null` otherwise.
     pub member: Option<String>,
+    /// Whether the schema value was added, removed, or changed.
     pub operation: JsonOperation,
+    /// Old schema value, distinguishing absence from JSON null.
     pub before: JsonPresence,
+    /// New schema value, distinguishing absence from JSON null.
     pub after: JsonPresence,
 }
 
-#[derive(Debug, Serialize)]
+/// Schema-grammar classification of a canonical JSON pointer.
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum JsonTarget {
+    /// The schema type keyword.
     Type,
+    /// A named member of a required set.
     RequiredMember,
+    /// A member of an enum set.
     EnumMember,
+    /// A named property schema.
     Property,
+    /// The additionalProperties keyword.
     AdditionalProperties,
+    /// The nullable keyword.
     Nullable,
+    /// Another schema keyword or value.
     Other,
 }
 
-#[derive(Debug, Serialize)]
+/// The operation applied at a schema pointer.
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum JsonOperation {
+    /// A value exists only in the new schema.
     Added,
+    /// A value exists only in the old schema.
     Removed,
+    /// A value differs between the old and new schemas.
     Changed,
 }
 
 /// Either `{ "present": false }` or `{ "present": true, "value": <json> }`.
 /// A present `value` may legitimately be JSON `null` (`default: null`,
 /// `enum: [null]`) — that is distinct from absence.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct JsonPresence {
+    /// Whether the value exists at this location.
     pub present: bool,
+    /// The present JSON value, including `Some(Value::Null)`; `None` means absent.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, deserialize_with = "deserialize_present_value")]
     pub value: Option<Value>,
 }
 
-#[derive(Debug, Serialize)]
+/// Optional hygiene and full-detail token estimates for both specs.
+#[derive(Debug, Serialize, Deserialize)]
 pub struct JsonDeltas {
+    /// Whole-document hygiene counts in report order.
     pub hygiene: Vec<JsonHygieneRow>,
+    /// Whole-document token estimates.
     pub tokens: JsonTokenEstimate,
 }
 
-#[derive(Debug, Serialize)]
+/// One hygiene check and its old/new counts.
+#[derive(Debug, Serialize, Deserialize)]
 pub struct JsonHygieneRow {
+    /// Hygiene check label.
     pub check: String,
+    /// The value or count in the old spec.
     pub old: usize,
+    /// The value or count in the new spec.
     pub new: usize,
 }
 
-#[derive(Debug, Serialize)]
+/// Old/new token estimates and their render/estimation profile.
+#[derive(Debug, Serialize, Deserialize)]
 pub struct JsonTokenEstimate {
+    /// The value or count in the old spec.
     pub old: usize,
+    /// The value or count in the new spec.
     pub new: usize,
-    pub estimate: &'static str,
-    pub detail: &'static str,
+    /// Token-estimation heuristic, currently `chars/4`.
+    pub estimate: String,
+    /// Render profile used for estimates, currently `full+schemas`.
+    pub detail: String,
+}
+
+// `Option<Value>` normally deserializes both a missing key and null as None.
+// The contract distinguishes those cases: an explicit null is a present value.
+fn deserialize_present_value<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<Value>, D::Error> {
+    Value::deserialize(deserializer).map(Some)
 }
 
 // ── construction ────────────────────────────────────────────────────────────
@@ -198,8 +289,8 @@ pub fn to_json(diff: &SpecDiff, deltas: Option<&Deltas>, old_sha: &str, new_sha:
     JsonDiff {
         schema_version: 1,
         generator: JsonGenerator {
-            name: "vimanam",
-            version: env!("CARGO_PKG_VERSION"),
+            name: "vimanam".to_string(),
+            version: env!("CARGO_PKG_VERSION").to_string(),
         },
         old: JsonSide {
             title: diff.old_title.clone(),
@@ -233,8 +324,8 @@ pub fn to_json(diff: &SpecDiff, deltas: Option<&Deltas>, old_sha: &str, new_sha:
             tokens: JsonTokenEstimate {
                 old: deltas.tokens_old,
                 new: deltas.tokens_new,
-                estimate: "chars/4",
-                detail: "full+schemas",
+                estimate: "chars/4".to_string(),
+                detail: "full+schemas".to_string(),
             },
         }),
     }

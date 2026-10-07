@@ -1,17 +1,19 @@
-//! Markdown generation.
+//! Focused Markdown context from a parsed OpenAPI document.
 //!
-//! [`generate_markdown`] is the entry point. It dispatches on detail level and
-//! grouping mode (see [`render`]) and, when `--max-tokens` is set, fits the
-//! output to a token budget (see [`generate_within_budget`]).
+//! [`generate_markdown`] renders the documentation body at the configured
+//! detail and grouping. Exact operations, operationIds, named schemas, and
+//! schema subtrees are selected through [`DocConfig`]. Invalid selections
+//! fail before any bytes are written. A token budget reduces operation detail;
+//! explicit schema selections retain their metadata even when over budget.
 //!
-//! The work is split across submodules: [`views`] renders each grouping mode,
-//! [`endpoint`] renders one endpoint, and [`schema`]/[`examples`] render the
-//! schema and example sections within an endpoint.
+//! [`generate_markdown_with_notices`] additionally delivers budget/depth
+//! diagnostics to a caller callback. Neither function writes to the console.
 
 mod endpoint;
 mod examples;
 mod schema;
 pub(crate) mod schema_selection;
+#[cfg_attr(not(feature = "cli"), allow(dead_code))]
 pub(crate) mod split;
 mod views;
 
@@ -29,11 +31,11 @@ pub(crate) use views::{removing_filters, service_is_visible, visible_endpoints};
 // `diff` compares the response schema the renderer would document.
 pub(crate) use schema::response_schema;
 // The `--costs` analysis measures schema use sites and per-schema renders.
+pub(crate) use schema::SchemaUse;
+#[cfg(feature = "cli")]
 pub(crate) use schema::{
-    SchemaUse, definition_section_tokens, inline_expansion_tokens, short_schema_reference,
+    definition_section_tokens, inline_expansion_tokens, short_schema_reference,
 };
-
-use schema::emit_omissions;
 
 /// The result of one [`render`] call beyond the bytes themselves: the
 /// schema-omission notices plus the per-reference use-site observations
@@ -43,24 +45,42 @@ use schema::emit_omissions;
 #[derive(Debug, Clone, Default)]
 pub(crate) struct ViewRender {
     pub omissions: Vec<String>,
+    #[cfg_attr(not(feature = "cli"), allow(dead_code))]
     pub schema_uses: IndexMap<String, SchemaUse>,
 }
 
 /// Renders the documentation to `writer`.
 ///
-/// With `--max-tokens` set, this fits the output to the budget (see
-/// [`generate_within_budget`]); otherwise it renders directly at the configured
-/// detail level via [`render`].
+/// Invalid operation/schema selectors fail before writing output. With
+/// [`DocConfig::max_tokens`] set, operation detail steps down until it fits;
+/// explicit schema selections stay intact and carry an overage notice in Markdown.
+/// Use [`generate_markdown_with_notices`] to receive diagnostic notices as well.
+/// This renders only the body; [`DocConfig::include_report`] is a CLI option.
 pub fn generate_markdown<W: Write>(
     writer: &mut W,
     doc: &ApiDocumentation,
     config: &DocConfig,
 ) -> Result<()> {
+    generate_markdown_with_notices(writer, doc, config, &mut |_| {})
+}
+
+/// Render Markdown and deliver budget/depth notices to the caller.
+/// Trial renders never emit notices; only the chosen output does.
+/// Nothing is written to the process console.
+pub fn generate_markdown_with_notices<W: Write>(
+    writer: &mut W,
+    doc: &ApiDocumentation,
+    config: &DocConfig,
+    notice: &mut dyn FnMut(&str),
+) -> Result<()> {
+    crate::selection::validate(doc, config)?;
     match config.max_tokens {
-        Some(budget) => generate_within_budget(writer, doc, config, budget),
+        Some(budget) => generate_within_budget(writer, doc, config, budget, notice),
         None => {
             let rendered = render(writer, doc, config)?;
-            emit_omissions(&rendered.omissions);
+            for omission in &rendered.omissions {
+                notice(omission);
+            }
             Ok(())
         }
     }
@@ -71,8 +91,7 @@ pub fn generate_markdown<W: Write>(
 /// Returns the schema-omission notices collected during this render alongside
 /// the observed per-reference use sites ([`ViewRender`]). Callers that discard
 /// the buffer (token-budget trials, `--stats` estimates) must not print the
-/// notices; callers that write the buffer should pass them to
-/// [`emit_omissions`].
+/// notices; callers that write the buffer should deliver the notices to their caller.
 ///
 /// Crate-visible so `--stats` can size trial renders without a token budget.
 pub(crate) fn render<W: Write>(
@@ -114,28 +133,31 @@ const DETAIL_LADDER: [DetailLevel; 4] = [
 /// Renders the documentation, stepping the detail level down the
 /// [`DETAIL_LADDER`] (starting from the configured level) until the estimated
 /// token count fits `budget`. If nothing fits, the lowest level is emitted.
-/// What happened is reported on stderr so a caller knows the output was trimmed.
+/// The caller receives notices explaining any detail reduction.
 fn generate_within_budget<W: Write>(
     writer: &mut W,
     doc: &ApiDocumentation,
     config: &DocConfig,
     budget: usize,
+    notice: &mut dyn FnMut(&str),
 ) -> Result<()> {
     if schema_selection::active(config) {
         let mut buffer = Vec::new();
         let rendered = render(&mut buffer, doc, config)?;
         let tokens = estimate_tokens(&buffer);
         if tokens > budget {
-            let notice = format!(
+            let budget_notice = format!(
                 "> Selected schemas exceed the approximate {budget}-token budget (~{tokens} tokens before this notice). Selection and metadata are preserved; narrow --schema-field or explicitly set --schema-depth.\n\n"
             );
-            eprintln!(
+            notice(&format!(
                 "vimanam: selected schemas exceed approximate {budget}-token budget (~{tokens} tokens); preserving requested selection and metadata"
-            );
-            writer.write_all(notice.as_bytes())?;
+            ));
+            writer.write_all(budget_notice.as_bytes())?;
         }
         writer.write_all(&buffer)?;
-        emit_omissions(&rendered.omissions);
+        for omission in &rendered.omissions {
+            notice(omission);
+        }
         return Ok(());
     }
     // Only consider levels at or below the one the caller asked for.
@@ -164,22 +186,24 @@ fn generate_within_budget<W: Write>(
     let (level, buffer, tokens, rendered) = chosen.expect("at least one detail level is rendered");
 
     if level != config.detail_level {
-        eprintln!(
+        notice(&format!(
             "vimanam: output exceeded the {budget}-token budget at --detail {}; \
              reduced to --detail {} (~{tokens} tokens).",
             detail_level_name(&config.detail_level),
             detail_level_name(&level),
-        );
+        ));
     } else if tokens > budget {
-        eprintln!(
+        notice(&format!(
             "vimanam: output is ~{tokens} tokens, over the {budget}-token budget; \
              already at the lowest detail level (--detail {}).",
             detail_level_name(&level),
-        );
+        ));
     }
 
     writer.write_all(&buffer)?;
-    emit_omissions(&rendered.omissions);
+    for omission in &rendered.omissions {
+        notice(omission);
+    }
     Ok(())
 }
 
@@ -187,7 +211,7 @@ fn generate_within_budget<W: Write>(
 /// heuristic. Good enough to pick a detail level; a real tokenizer could
 /// replace this later. Shared with `--stats`, whose ~TOKENS column must agree
 /// with what `--max-tokens` would measure.
-pub(crate) fn estimate_tokens(rendered: &[u8]) -> usize {
+pub fn estimate_tokens(rendered: &[u8]) -> usize {
     String::from_utf8_lossy(rendered)
         .chars()
         .count()

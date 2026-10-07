@@ -30,6 +30,16 @@ jobs:
       - run: cargo fmt --check
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo test
+      - name: Core library without CLI dependencies
+        run: |
+          cargo build --lib --no-default-features
+          cargo clippy --lib --no-default-features -- -D warnings
+          cargo test --no-default-features
+          RUSTDOCFLAGS='-D warnings' cargo doc --no-default-features --no-deps
+          if cargo tree --no-default-features --edges normal --prefix none | grep -E '^(clap|clap_complete|env_logger) '; then
+            echo "CLI-only dependency found in the core library graph"
+            exit 1
+          fi
 
   msrv:
     name: Build (MSRV 1.96)

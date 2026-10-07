@@ -298,7 +298,7 @@ impl From<SortArg> for SortMethod {
 
 /// Converts parsed CLI arguments into the internal [`DocConfig`].
 /// Grouping precedence: `--flat` > `--method` > `--group-by` > default (service).
-pub fn build_config(cli: &Cli) -> DocConfig {
+pub fn build_config(cli: &Cli, notice: &mut dyn FnMut(&str)) -> DocConfig {
     // Determine grouping method.
     // `--group-by` always has a value (clap default), so it serves as the
     // base; `--flat` and `--method` are higher-precedence overrides.
@@ -363,19 +363,19 @@ pub fn build_config(cli: &Cli) -> DocConfig {
     // user types (`--detail standard`), not the Debug-derived `Standard`.
     let detail_name = detail_arg_name(cli.detail);
     if config.include_schemas && config.detail_level != DetailLevel::Full {
-        eprintln!(
+        notice(&format!(
             "vimanam: --include-schemas has no effect at --detail {detail_name}; use --detail full."
-        );
+        ));
     }
     if config.include_examples && config.detail_level != DetailLevel::Full {
-        eprintln!(
+        notice(&format!(
             "vimanam: --include-examples has no effect at --detail {detail_name}; use --detail full."
-        );
+        ));
     }
     // --inline-schemas only changes how schemas render, so it does nothing
     // without --include-schemas.
     if config.inline_schemas && !config.include_schemas {
-        eprintln!("vimanam: --inline-schemas has no effect without --include-schemas.");
+        notice("vimanam: --inline-schemas has no effect without --include-schemas.");
     }
     // --required-only only filters the parameters table, which is rendered at
     // --detail standard and full.
@@ -385,9 +385,9 @@ pub fn build_config(cli: &Cli) -> DocConfig {
             DetailLevel::Basic | DetailLevel::Summary
         )
     {
-        eprintln!(
+        notice(&format!(
             "vimanam: --required-only has no effect at --detail {detail_name}; use --detail standard or full."
-        );
+        ));
     }
 
     config
@@ -422,6 +422,16 @@ fn detail_arg_name(detail: DetailLevelArg) -> &'static str {
         DetailLevelArg::Basic => "basic",
         DetailLevelArg::Standard => "standard",
         DetailLevelArg::Full => "full",
+    }
+}
+
+impl From<SplitArg> for crate::models::SplitMode {
+    fn from(value: SplitArg) -> Self {
+        match value {
+            SplitArg::Service => Self::Service,
+            SplitArg::Tag => Self::Tag,
+            SplitArg::Endpoint => Self::Endpoint,
+        }
     }
 }
 
@@ -466,12 +476,12 @@ mod tests {
             costs: false,
         };
 
-        let config = build_config(&cli);
+        let config = build_config(&cli, &mut |_| {});
         assert_matches!(config.detail_level, DetailLevel::Summary);
 
         let mut cli_basic = cli;
         cli_basic.detail = DetailLevelArg::Basic;
-        let config_basic = build_config(&cli_basic);
+        let config_basic = build_config(&cli_basic, &mut |_| {});
         assert_matches!(config_basic.detail_level, DetailLevel::Basic);
     }
 

@@ -385,13 +385,6 @@ impl<'a> SchemaContext<'a> {
     }
 }
 
-/// Print omission notices collected during a render that was actually written.
-pub(super) fn emit_omissions(omissions: &[String]) {
-    for notice in omissions {
-        eprintln!("{notice}");
-    }
-}
-
 /// Returns the schema of a response, preferring the OpenAPI 2.0 `schema` field
 /// and falling back to the first media type's schema (OpenAPI 3.0 `content`).
 ///
@@ -612,6 +605,7 @@ fn write_rows<W: Write>(writer: &mut W, rows: &[SchemaRow], external: bool) -> R
 ///
 /// The real section may pick a differently suffixed anchor when schema names
 /// collide; the size difference is a few characters.
+#[cfg(feature = "cli")]
 pub(crate) fn definition_section_tokens(
     doc: &ApiDocumentation,
     config: &DocConfig,
@@ -661,6 +655,7 @@ pub(crate) fn definition_section_tokens(
 /// name as the field label, while real expansions happen at each use site's
 /// label and depth; the drift is a few characters, though a depth-bounded
 /// configuration may truncate the real expansion differently.
+#[cfg(feature = "cli")]
 pub(crate) fn inline_expansion_tokens(
     doc: &ApiDocumentation,
     config: &DocConfig,

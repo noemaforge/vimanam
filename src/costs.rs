@@ -46,7 +46,7 @@ use crate::utils::resolve_schema_reference;
 /// Estimated cost of reading one endpoint: a whole render narrowed to that
 /// endpoint alone (see the module docs for what the slice includes).
 #[derive(Debug, Clone, PartialEq)]
-pub struct EndpointCost {
+pub(crate) struct EndpointCost {
     /// `METHOD /path/template`, the same label `diff` and `--operation` use.
     pub operation: String,
     /// Every tag of the endpoint, in spec order. The cost is measured under
@@ -62,7 +62,7 @@ pub struct EndpointCost {
 /// Cost of one component schema as actually rendered, plus the separate
 /// inline-expansion model.
 #[derive(Debug, Clone, PartialEq)]
-pub struct SchemaCost {
+pub(crate) struct SchemaCost {
     /// Short schema name as rendered in headings.
     pub name: String,
     /// Rendered rows linking (or, inline, expanding) this schema.
@@ -88,7 +88,7 @@ pub struct SchemaCost {
 /// The complete analysis: mode, TOTAL, endpoint and schema rows, and
 /// deterministic hotspot rankings.
 #[derive(Debug, Clone, Default, PartialEq)]
-pub struct CostReport {
+pub(crate) struct CostReport {
     /// The `--detail` value name the costs were measured at (e.g. `full`).
     pub detail_name: String,
     /// Whether the analyzed configuration renders schemas inline.
@@ -110,7 +110,7 @@ pub struct CostReport {
 /// How many hotspots each ranking reports.
 const HOTSPOT_LIMIT: usize = 5;
 
-pub fn compute(doc: &ApiDocumentation, config: &DocConfig) -> Result<CostReport> {
+pub(crate) fn compute(doc: &ApiDocumentation, config: &DocConfig) -> Result<CostReport> {
     // One whole-document render: the TOTAL plus the exact use-site
     // observations (which schemas the render linked, and how often).
     let mut whole = Vec::new();
@@ -397,7 +397,7 @@ fn digits(value: usize) -> usize {
 /// Writes the analysis as plain text: an explanation of the cost model, the
 /// mode line with TOTAL, the endpoint table, the schema table, and the
 /// hotspot rankings. Deterministic given the same spec and flags.
-pub fn write_costs<W: Write>(writer: &mut W, report: &CostReport) -> Result<()> {
+pub(crate) fn write_costs<W: Write>(writer: &mut W, report: &CostReport) -> Result<()> {
     writeln!(writer, "{MODE_HEADER}")?;
     writeln!(
         writer,
