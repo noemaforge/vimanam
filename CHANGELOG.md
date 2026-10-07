@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `vimanam diff --from-ref OLD --to-ref NEW` (#113) compares committed specs
+  through the existing Markdown/JSON, deltas and breaking-change pipeline.
+  Unique-candidate discovery at the newer ref and `--spec PATH` follow rename
+  history; paired `--from-spec`/`--to-spec` paths bypass filename matching for
+  moves combined with rewrites. Git input errors leave output files untouched.
 - Core `gitrefs::Repository` API (#112) discovers Git worktrees, lists committed
   JSON/YAML OpenAPI candidates, and materializes exact spec bytes at arbitrary
   refs. Explicitly anchored rename tracking supports ancestor and sibling-branch

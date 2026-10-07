@@ -1,10 +1,11 @@
 //! Optional command-line adapter. Output and notices are supplied by the caller.
 
 mod config;
+mod diff_inputs;
 use crate::{costs, diff, markdown, parser, report, selection, stats};
 pub use config::Cli;
 
-use std::fs::{self, File};
+use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::path::Path;
 
@@ -53,24 +54,19 @@ fn write_output<W: Write>(
     Ok(())
 }
 
-/// Runs `vimanam diff <OLD> <NEW>`: parses both specs, writes the comparison
+/// Runs file-pair or Git-ref `vimanam diff`: parses both specs, writes the comparison
 /// (with deltas under `--report`) to the file or stdout, and returns exit
 /// status 3 under `--fail-on-breaking` when a breaking change was found. The
 /// full report is always written first.
 fn run_diff<W: Write>(args: &DiffArgs, output: &mut W) -> Result<bool> {
     // Each input is read once and parsed from the exact bytes that get hashed,
     // so `file_sha256` can never refer to different contents than the diff.
-    let old_bytes = fs::read(&args.old)
-        .with_context(|| format!("Failed to parse OpenAPI file: {:?}", args.old))?;
-    let new_bytes = fs::read(&args.new)
-        .with_context(|| format!("Failed to parse OpenAPI file: {:?}", args.new))?;
-    let old_sha = diff::json::sha256_hex(&old_bytes);
-    let new_sha = diff::json::sha256_hex(&new_bytes);
+    let (old_input, new_input) = diff_inputs::read(args)?;
+    let old_sha = diff::json::sha256_hex(&old_input.bytes);
+    let new_sha = diff::json::sha256_hex(&new_input.bytes);
 
-    let old = parse_openapi_bytes(&old_bytes, &file_extension(&args.old), Some(&args.old))
-        .with_context(|| format!("Failed to parse OpenAPI file: {:?}", args.old))?;
-    let new = parse_openapi_bytes(&new_bytes, &file_extension(&args.new), Some(&args.new))
-        .with_context(|| format!("Failed to parse OpenAPI file: {:?}", args.new))?;
+    let old = old_input.parse()?;
+    let new = new_input.parse()?;
 
     let spec_diff = diff::diff(&old, &new);
     let deltas = if args.report {

@@ -446,13 +446,18 @@ Options:
 ```
 Compare two versions of a spec and report what changed, classified as breaking, non-breaking or needing review
 
-Usage: vimanam diff [OPTIONS] <OLD> <NEW>
+Usage: vimanam diff [OPTIONS] [OLD] [NEW]
 
 Arguments:
-  <OLD>  The older spec (JSON or YAML)
-  <NEW>  The newer spec (JSON or YAML)
+  [OLD]  The older spec (JSON or YAML)
+  [NEW]  The newer spec (JSON or YAML)
 
 Options:
+      --from-ref <REF>    Read the older spec from this Git ref (requires --to-ref; conflicts with OLD/NEW)
+      --to-ref <REF>      Read the newer spec from this Git ref (requires --from-ref)
+      --spec <PATH>       Repository-relative spec path at --to-ref; follow its renames to --from-ref. Omit only when --to-ref has exactly one tracked OpenAPI candidate
+      --from-spec <PATH>  Literal repository-relative path at --from-ref; bypass rename discovery
+      --to-spec <PATH>    Literal repository-relative path at --to-ref (requires --from-spec)
       --report            Append a Deltas section: spec hygiene counts for both specs and the estimated token size of each at --detail full --include-schemas
       --format <FORMAT>   Output format: a Markdown report or machine-readable JSON with stable change IDs [default: markdown] [possible values: markdown, json]
       --fail-on-breaking  Exit with status 3 when any breaking change is found, after writing the full report
@@ -549,6 +554,41 @@ Output is deterministic — the same spec and flags produce byte-identical Markd
 vimanam diff v1/openapi.json v2/openapi.json --report --fail-on-breaking
 ```
 
+To compare committed specs, run inside the Git worktree (including a nested
+directory). Git must be on PATH; tags, branch names and revision expressions
+are supported. These flags replace the positional file pair:
+
+```bash
+vimanam diff --from-ref v1.6.0 --to-ref HEAD --report --fail-on-breaking
+vimanam diff --from-ref main --to-ref feature --spec api/openapi.yaml --format json -o diff.json
+```
+
+`--spec PATH` anchors a repository-relative path **at `--to-ref`**, then follows
+its Git-detected rename history to `--from-ref`. Without `--spec`, the newer ref
+must have exactly one tracked JSON/YAML OpenAPI candidate; zero candidates or
+multiple candidates produce an error naming the ref and listing ambiguous
+paths. Selection reads committed blobs, so local edits and untracked files do
+not affect the result. Missing or ambiguous history is an error, with no fallback
+to a different spec.
+
+For a move combined with a rewrite that Git cannot match, select both paths
+explicitly instead of using `--spec`:
+
+```bash
+vimanam diff --from-ref v1.6.0 --to-ref HEAD \
+  --from-spec old/swagger.json --to-spec api/openapi.yaml --report
+```
+
+`--from-spec` and `--to-spec` must be supplied together and read literal paths at
+their respective refs. They conflict with `--spec` and bypass rename discovery.
+Git's 50% similarity threshold applies only to automatic filename matching;
+once both paths are known, semantic comparison has no similarity restriction.
+Rename chains followed by later major rewrites work when the rename itself is
+detectable. Historical paths and extensions select the parser, and JSON hashes
+cover the exact committed bytes. Both Git input forms share the file-pair report,
+JSON, `--report`, `-o` and `--fail-on-breaking` behavior. Inputs are validated
+before an output file is created or truncated.
+
 ```markdown
 # API Diff: Widgets API 1.0.0 → 1.1.0
 
@@ -590,7 +630,7 @@ vimanam diff v1/openapi.json v2/openapi.json --report --fail-on-breaking
 
 When a property is removed, the accompanying "removed from `required`" row for that property is not reported — the property going away is the change.
 
-**Exit codes.** `0` — no breaking changes (or `--fail-on-breaking` not given); `1` — a spec failed to parse or the output could not be written; `2` — usage error; `3` — breaking changes found and `--fail-on-breaking` was given. The full report is always written before exiting.
+**Exit codes.** `0` — no breaking changes (or `--fail-on-breaking` not given); `1` — input discovery, reading or parsing failed, or the output could not be written; `2` — usage error; `3` — breaking changes found and `--fail-on-breaking` was given. The full report is always written before exiting.
 
 `--report` appends a `## Deltas` section with the spec hygiene counts for both versions and the estimated token size of each at `--detail full --include-schemas`, so a spec update's documentation cost is visible alongside its API changes. `-o FILE` writes the report to a file (the subcommand has its own `-o`; the conversion flags do not apply to `diff`).
 
