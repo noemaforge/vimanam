@@ -153,7 +153,14 @@ pub fn run<W: Write>(cli: &Cli, output: &mut W, notice: &mut dyn FnMut(&str)) ->
     // falling through to the "missing input file" error below.
     match &cli.command {
         Some(Commands::Completions { shell }) => {
-            clap_complete::generate(*shell, &mut Cli::command(), "vimanam", output);
+            let mut completions = Vec::new();
+            clap_complete::generate(*shell, &mut Cli::command(), "vimanam", &mut completions);
+            output
+                .write_all(&completions)
+                .context("Failed to write shell completions")?;
+            output
+                .flush()
+                .context("Failed to write shell completions")?;
             return Ok(false);
         }
         Some(Commands::Diff(args)) => return run_diff(args, output),
@@ -230,4 +237,92 @@ pub fn run<W: Write>(cli: &Cli, output: &mut W, notice: &mut dyn FnMut(&str)) ->
     warn_filtered_out_selectors(&api_doc, &config, notice);
 
     Ok(false)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+    use std::io;
+
+    struct FailingWriter {
+        bytes: Vec<u8>,
+        fail_write: bool,
+        fail_flush: bool,
+    }
+
+    impl Write for FailingWriter {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            if self.fail_write {
+                return Err(io::Error::new(io::ErrorKind::BrokenPipe, "write failed"));
+            }
+            self.bytes.extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            if self.fail_flush {
+                return Err(io::Error::new(io::ErrorKind::BrokenPipe, "flush failed"));
+            }
+            Ok(())
+        }
+    }
+
+    fn completions_cli() -> Cli {
+        Cli::try_parse_from(["vimanam", "completions", "bash"]).unwrap()
+    }
+
+    #[test]
+    fn completions_return_write_errors() {
+        let mut writer = FailingWriter {
+            bytes: Vec::new(),
+            fail_write: true,
+            fail_flush: false,
+        };
+        let error = run(&completions_cli(), &mut writer, &mut |_| {}).unwrap_err();
+        assert_eq!(error.to_string(), "Failed to write shell completions");
+        assert_eq!(
+            error
+                .source()
+                .unwrap()
+                .downcast_ref::<io::Error>()
+                .unwrap()
+                .kind(),
+            io::ErrorKind::BrokenPipe
+        );
+    }
+
+    #[test]
+    fn completions_return_flush_errors() {
+        let mut writer = FailingWriter {
+            bytes: Vec::new(),
+            fail_write: false,
+            fail_flush: true,
+        };
+        let error = run(&completions_cli(), &mut writer, &mut |_| {}).unwrap_err();
+        assert_eq!(error.to_string(), "Failed to write shell completions");
+        assert_eq!(
+            error
+                .source()
+                .unwrap()
+                .downcast_ref::<io::Error>()
+                .unwrap()
+                .kind(),
+            io::ErrorKind::BrokenPipe
+        );
+        assert!(!writer.bytes.is_empty());
+    }
+
+    #[test]
+    fn completions_preserve_generated_bytes() {
+        let cli = completions_cli();
+        let mut expected = Vec::new();
+        let Some(Commands::Completions { shell }) = &cli.command else {
+            unreachable!("the parsed command is completions");
+        };
+        clap_complete::generate(*shell, &mut Cli::command(), "vimanam", &mut expected);
+        let mut actual = Vec::new();
+        assert!(!run(&cli, &mut actual, &mut |_| {}).unwrap());
+        assert_eq!(actual, expected);
+    }
 }
