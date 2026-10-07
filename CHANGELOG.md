@@ -5,6 +5,16 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Core `gitrefs::Repository` API (#112) discovers Git worktrees, lists committed
+  JSON/YAML OpenAPI candidates, and materializes exact spec bytes at arbitrary
+  refs. Explicitly anchored rename tracking supports ancestor and sibling-branch
+  comparisons, reporting missing or ambiguous lineage rather than guessing.
+  Uses Git on PATH without new dependencies, checkout changes or CLI flags.
+
 ## [1.6.0] - 2026-10-07
 
 ### Added
