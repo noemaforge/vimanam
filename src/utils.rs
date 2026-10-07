@@ -8,7 +8,7 @@ use crate::models::{
 /// Decodes the escape sequences in a JSON Pointer reference token: `~1` → `/`
 /// and `~0` → `~` (RFC 6901). The order matters — `~1` must be decoded before
 /// `~0` so that an encoded `~1` is not corrupted.
-pub fn decode_json_pointer_token(token: &str) -> String {
+pub(crate) fn decode_json_pointer_token(token: &str) -> String {
     token.replace("~1", "/").replace("~0", "~")
 }
 
@@ -17,7 +17,10 @@ pub fn decode_json_pointer_token(token: &str) -> String {
 /// `spec_json` is the spec serialized to a [`serde_json::Value`] once by the
 /// caller (see [`parse_openapi`](crate::parser::parse_openapi)); resolution
 /// only navigates it, so it never re-serializes the spec per `$ref`.
-pub fn resolve_ref(spec_json: &serde_json::Value, reference: &str) -> Option<serde_json::Value> {
+pub(crate) fn resolve_ref(
+    spec_json: &serde_json::Value,
+    reference: &str,
+) -> Option<serde_json::Value> {
     if !reference.starts_with("#/") {
         return None; // We only support internal references for now
     }
@@ -48,7 +51,7 @@ pub fn resolve_ref(spec_json: &serde_json::Value, reference: &str) -> Option<ser
 /// Resolves a parameter that may be a `$ref` into `components/parameters`,
 /// returning the parameter unchanged when it carries no reference. Returns
 /// `None` when a `$ref` is present but cannot be resolved.
-pub fn resolve_parameter_ref(
+pub(crate) fn resolve_parameter_ref(
     spec_json: &serde_json::Value,
     parameter: &Parameter,
 ) -> Option<Parameter> {
@@ -62,7 +65,7 @@ pub fn resolve_parameter_ref(
 /// Resolves a response that may be a `$ref` into `components/responses`,
 /// returning the response unchanged when it carries no reference. Returns
 /// `None` when a `$ref` is present but cannot be resolved.
-pub fn resolve_response_ref(
+pub(crate) fn resolve_response_ref(
     spec_json: &serde_json::Value,
     response: &Response,
 ) -> Option<Response> {
@@ -77,7 +80,7 @@ pub fn resolve_response_ref(
 /// `components/requestBodies`, returning the concrete request body. A bare
 /// `requestBody: { "$ref": ... }` carries no `content`, so without this the
 /// synthetic body parameter would be dropped (or the spec would fail to parse).
-pub fn resolve_request_body_ref(
+pub(crate) fn resolve_request_body_ref(
     spec_json: &serde_json::Value,
     request_body: &RequestBody,
 ) -> Option<RequestBody> {
@@ -94,7 +97,7 @@ pub fn resolve_request_body_ref(
 /// Returns `Some(item)` for an inline item (no `$ref`) or a successfully resolved
 /// reference, and `None` only when a `$ref` is present but cannot be resolved — so
 /// the caller can warn and skip rather than silently emitting an empty path item.
-pub fn resolve_path_item_ref(
+pub(crate) fn resolve_path_item_ref(
     spec_json: &serde_json::Value,
     path_item: &PathItem,
 ) -> Option<PathItem> {
@@ -109,7 +112,7 @@ pub fn resolve_path_item_ref(
 /// (`#/components/schemas/Name`) and the Swagger 2 form (`#/definitions/Name`),
 /// both of which the parser collects into [`ApiDocumentation::schemas`].
 /// Returns `None` for any other reference shape.
-pub fn resolve_schema_reference<'a>(
+pub(crate) fn resolve_schema_reference<'a>(
     reference: &str,
     doc: &'a ApiDocumentation,
 ) -> Option<&'a Schema> {
@@ -148,7 +151,7 @@ const MAX_RESOLVE_DEPTH: usize = 64;
 /// - Expansion stops after [`MAX_RESOLVE_DEPTH`] `$ref` hops on one chain;
 ///   anything beyond is kept as written. Descending plain objects and arrays
 ///   does not consume the budget.
-pub fn resolve_schema_value(schema: &Schema, doc: &ApiDocumentation) -> Value {
+pub(crate) fn resolve_schema_value(schema: &Schema, doc: &ApiDocumentation) -> Value {
     let value = serde_json::to_value(schema).unwrap_or(Value::Null);
     let mut ref_stack = Vec::new();
     inline_refs(value, doc, &mut ref_stack, 0)
@@ -239,7 +242,7 @@ const SET_KEYS: [&str; 2] = ["required", "enum"];
 ///   name maps under `properties`, where such a key is a field name);
 /// - object keys are sorted, so the walk order never depends on how the model
 ///   serialised its unmodelled fields.
-pub fn canonicalize_schema_value(value: &mut Value) {
+pub(crate) fn canonicalize_schema_value(value: &mut Value) {
     canonicalize_schema(value);
 }
 
@@ -277,7 +280,7 @@ fn canonicalize_schema(value: &mut Value) {
 }
 
 /// Extracts servers from the OpenAPI spec
-pub fn extract_servers(spec: &OpenApiSpec) -> Vec<String> {
+pub(crate) fn extract_servers(spec: &OpenApiSpec) -> Vec<String> {
     let mut servers = Vec::new();
 
     // Check for servers array (OpenAPI 3.0+)
@@ -325,7 +328,7 @@ pub fn extract_servers(spec: &OpenApiSpec) -> Vec<String> {
 ///
 /// Returns an [`IndexMap`] so the `## Authentication` section is emitted in a
 /// stable order, preserving the output-determinism invariant.
-pub fn extract_security_schemes(spec: &OpenApiSpec) -> IndexMap<String, String> {
+pub(crate) fn extract_security_schemes(spec: &OpenApiSpec) -> IndexMap<String, String> {
     let mut schemes = IndexMap::new();
 
     // OpenAPI 3.0+: components.securitySchemes
@@ -372,7 +375,7 @@ pub fn extract_security_schemes(spec: &OpenApiSpec) -> IndexMap<String, String> 
 /// dash, and trims leading/trailing dashes. A single `.replace("--", "-")` only
 /// collapses pairs, so runs of 3+ dashes (e.g. from `"a///b"`) would survive;
 /// folding character-by-character collapses any-length runs in one pass.
-pub fn clean_for_id(input: &str) -> String {
+pub(crate) fn clean_for_id(input: &str) -> String {
     let mut result = String::with_capacity(input.len());
     let mut last_was_dash = false;
 
@@ -392,7 +395,7 @@ pub fn clean_for_id(input: &str) -> String {
 }
 
 /// Extracts the primary content type from responses
-pub fn extract_content_type(response: &Response) -> Option<String> {
+pub(crate) fn extract_content_type(response: &Response) -> Option<String> {
     if let Some(content) = &response.content
         && !content.is_empty()
     {

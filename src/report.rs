@@ -31,7 +31,9 @@ use crate::models::{ApiDocumentation, DocConfig, Endpoint};
 /// endpoint identity `diff` attributes changes to.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct EndpointRef {
+    /// Uppercase HTTP method.
     pub method: String,
+    /// Exact path template from the spec.
     pub path: String,
 }
 
@@ -54,7 +56,7 @@ impl fmt::Display for EndpointRef {
 
 /// An `operationId` shared by more than one endpoint.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DuplicateOperationId {
+pub(crate) struct DuplicateOperationId {
     pub operation_id: String,
     /// The endpoints carrying this id, in report order.
     pub endpoints: Vec<EndpointRef>,
@@ -62,7 +64,7 @@ pub struct DuplicateOperationId {
 
 /// A parameter with no description, attributed to the endpoint it appears on.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct UndescribedParameter {
+pub(crate) struct UndescribedParameter {
     pub endpoint: EndpointRef,
     pub name: String,
 }
@@ -71,7 +73,7 @@ pub struct UndescribedParameter {
 /// a list; its count is the list length. Lists are in report order and are
 /// never truncated, so the rendering is deterministic for a given spec+flags.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct HygieneReport {
+pub(crate) struct HygieneReport {
     /// Endpoints analyzed (the same set the rendered body contains).
     pub endpoint_count: usize,
     /// Distinct services among those endpoints (after `--service-filter`).
@@ -121,7 +123,7 @@ fn is_blank(text: Option<&String>) -> bool {
 
 /// Runs every hygiene check over the endpoints the rendered body covers (see
 /// the module docs for the exact scoping rules).
-pub fn analyze(doc: &ApiDocumentation, config: &DocConfig) -> HygieneReport {
+pub(crate) fn analyze(doc: &ApiDocumentation, config: &DocConfig) -> HygieneReport {
     let endpoints = visible_endpoints(doc, config);
 
     let mut report = HygieneReport {
@@ -211,7 +213,7 @@ pub fn analyze(doc: &ApiDocumentation, config: &DocConfig) -> HygieneReport {
 /// The leading newline assumes the body before it ends with exactly one
 /// newline, giving one blank line before the rule; `main::write_output`
 /// normalizes the body's trailing newlines to guarantee that.
-pub fn write_report<W: Write>(writer: &mut W, report: &HygieneReport) -> Result<()> {
+pub(crate) fn write_report<W: Write>(writer: &mut W, report: &HygieneReport) -> Result<()> {
     writeln!(writer, "\n---\n")?;
     writeln!(writer, "## Spec Hygiene Report\n")?;
     writeln!(

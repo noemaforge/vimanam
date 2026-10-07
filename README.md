@@ -13,6 +13,41 @@ It supports both OpenAPI 2.0 (Swagger) and OpenAPI 3.0 specifications.
 
 Besides producing documentation for humans, Vimanam is built for **feeding API specs to LLMs**: a multi-megabyte enterprise spec doesn't fit in a context window, but a filtered, summary-level Markdown rendering of it does. See [Preparing API context for LLMs](#preparing-api-context-for-llms).
 
+## Rust library
+
+Use the parser, typed diff, versioned JSON contract, and focused Markdown renderer
+in-process without the CLI dependencies:
+
+```toml
+[dependencies]
+vimanam = { version = "1.6", default-features = false }
+```
+
+```rust
+let old = vimanam::parse_openapi("old.json")?;
+let new = vimanam::parse_openapi("new.json")?;
+let changes = vimanam::diff::diff(&old, &new);
+
+let mut context = vimanam::DocConfig::unfiltered();
+context.operation_selector = Some(vimanam::OperationSelector {
+    operations: changes.changes.iter().map(|change| vimanam::OperationRef {
+        method: change.endpoint.method.clone(),
+        path: change.endpoint.path.clone(),
+    }).filter(|op| new.endpoints.iter().any(|endpoint| op.matches(endpoint))).collect(),
+    ..Default::default()
+});
+context.max_tokens = Some(2000);
+let mut markdown = Vec::new();
+vimanam::markdown::generate_markdown(&mut markdown, &new, &context)?;
+```
+
+`parse_openapi_bytes` accepts already-read bytes so hashing and parsing can use
+the same input. `diff::json::to_json` returns the JSON contract types, which
+support both serialization and deserialization. The library writes only to
+caller-provided writers, logs through `log`, and optionally returns rendering
+notices through `generate_markdown_with_notices`. The default `cli` feature
+keeps normal `cargo install vimanam` behavior.
+
 ## Features
 
 - Convert OpenAPI JSON or YAML files to Markdown documentation (format detected by `.json`/`.yaml`/`.yml` extension, with automatic fallback)

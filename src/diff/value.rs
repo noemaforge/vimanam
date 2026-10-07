@@ -12,14 +12,24 @@ pub struct ValueChange {
     /// `enum` sets are addressed as `/required/<name>` and `/enum/<value>`.
     /// The empty pointer is the root itself.
     pub pointer: String,
+    /// The concrete difference or operation applied at this location.
     pub kind: ValueChangeKind,
 }
 
+/// An addition, removal, or replacement of a canonical JSON value.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ValueChangeKind {
+    /// A value exists only in the new schema.
     Added(Value),
+    /// A value exists only in the old schema.
     Removed(Value),
-    Changed { old: Value, new: Value },
+    /// A value differs between the old and new schemas.
+    Changed {
+        /// The old canonical JSON value.
+        old: Value,
+        /// The new canonical JSON value.
+        new: Value,
+    },
 }
 
 // ── schema grammar ──────────────────────────────────────────────────────────
@@ -165,7 +175,7 @@ fn push_segment(path: &mut String, segment: &str) -> usize {
 /// Every other array is compared index-wise, so a longer list reports `Added`
 /// at the extra indices (`/allOf/2`) and a shorter one `Removed`. Scalars that
 /// differ are `Changed`.
-pub fn diff_values(old: &Value, new: &Value, path: &mut String, out: &mut Vec<ValueChange>) {
+pub(crate) fn diff_values(old: &Value, new: &Value, path: &mut String, out: &mut Vec<ValueChange>) {
     diff_nodes(old, new, Node::Schema, path, out);
 }
 

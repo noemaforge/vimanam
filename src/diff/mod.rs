@@ -11,15 +11,15 @@
 //! Endpoints are matched by `(METHOD, path)`, parameters by `(name, in)` and
 //! responses by status code. Request and response bodies are compared as
 //! **resolved** schemas: every `$ref` is inlined
-//! ([`resolve_schema_value`]) and the result canonicalised
-//! ([`canonicalize_schema_value`]) before a generic JSON differ
-//! ([`diff_values`]) reports field-level changes as JSON pointers. That is what
+//! (`resolve_schema_value`) and the result canonicalised
+//! (`canonicalize_schema_value`) before a generic JSON differ
+//! (`diff_values`) reports field-level changes as JSON pointers. That is what
 //! makes a change behind a shared component visible: an operation whose object
 //! is byte-identical in both specs still reports "response schema changed" when
 //! the `Widget` it points at gained a required property.
 //!
 //! Only a response's first media type is compared (the same one the renderer
-//! documents, see [`response_schema`]), and only the first request-body media
+//! documents, see `response_schema`), and only the first request-body media
 //! type. `allOf`/`oneOf`/`anyOf` lists are compared index-wise. A path-template
 //! rename (`/pets/{id}` → `/pets/{petId}`) appears as a removal plus an
 //! addition.
@@ -36,7 +36,8 @@ mod render;
 mod value;
 
 pub use render::write_diff;
-use value::{Location, ValueChange, ValueChangeKind, diff_values, locate};
+use value::{Location, diff_values, locate};
+pub use value::{ValueChange, ValueChangeKind};
 
 use std::collections::{HashMap, HashSet};
 
@@ -46,7 +47,8 @@ use serde_json::Value;
 
 use crate::markdown::{estimate_tokens, generate_markdown, response_schema};
 use crate::models::{ApiDocumentation, DocConfig, Endpoint, Parameter};
-use crate::report::{self, EndpointRef};
+use crate::report;
+pub use crate::report::EndpointRef;
 use crate::utils::{canonicalize_schema_value, resolve_schema_value};
 
 use render::required_member_pointer;
@@ -70,63 +72,100 @@ pub enum Severity {
 /// One difference between the two specs, attributed to an endpoint.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Change {
+    /// The HTTP operation to which this change is attributed.
     pub endpoint: EndpointRef,
+    /// The concrete difference or operation applied at this location.
     pub kind: ChangeKind,
 }
 
+/// The kind of contract difference. Future versions may add variants.
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum ChangeKind {
+    /// An operation exists only in the new spec.
     EndpointAdded,
+    /// An operation from the old spec was removed.
     EndpointRemoved {
+        /// Whether the removed endpoint was already deprecated.
         was_deprecated: bool,
     },
+    /// A parameter was added to a surviving operation.
     ParameterAdded {
+        /// The declared name.
         name: String,
+        /// Parameter location such as `path`, `query`, `header`, or `body`.
         location: String,
+        /// Whether clients must supply this parameter.
         required: bool,
     },
+    /// A parameter was removed from a surviving operation.
     ParameterRemoved {
+        /// The declared name.
         name: String,
+        /// Parameter location such as `path`, `query`, `header`, or `body`.
         location: String,
     },
+    /// A parameter changed between optional and required.
     ParameterRequiredChanged {
+        /// The declared name.
         name: String,
+        /// Parameter location such as `path`, `query`, `header`, or `body`.
         location: String,
+        /// Whether the parameter is required in the new spec.
         now_required: bool,
     },
     /// A parameter that disappeared from one location and reappeared, under the
     /// same name, in another (detected only when the name is unambiguous on
     /// both sides).
     ParameterLocationChanged {
+        /// The declared name.
         name: String,
+        /// Parameter location in the old spec.
         old_location: String,
+        /// Parameter location in the new spec.
         new_location: String,
     },
+    /// A parameter schema has a field-level change.
     ParameterSchemaChanged {
+        /// The declared name.
         name: String,
+        /// Parameter location such as `path`, `query`, `header`, or `body`.
         location: String,
+        /// The field-level change in the resolved, canonicalized schema.
         change: ValueChange,
     },
+    /// A response status was added.
     ResponseAdded {
+        /// Response status code exactly as declared, including `default`.
         status: String,
     },
+    /// A response status was removed.
     ResponseRemoved {
+        /// Response status code exactly as declared, including `default`.
         status: String,
     },
+    /// An operationId changed, appeared, or disappeared.
     OperationIdChanged {
+        /// The value or count in the old spec.
         old: Option<String>,
+        /// The value or count in the new spec.
         new: Option<String>,
     },
+    /// An operation changed its deprecation flag.
     DeprecatedChanged {
+        /// Whether the endpoint is deprecated in the new spec.
         now: bool,
     },
     /// A field-level change in the resolved request body schema.
     RequestSchemaChanged {
+        /// The field-level change in the resolved, canonicalized schema.
         change: ValueChange,
     },
     /// A field-level change in the resolved schema of one response.
     ResponseSchemaChanged {
+        /// Response status code exactly as declared, including `default`.
         status: String,
+        /// The field-level change in the resolved, canonicalized schema.
         change: ValueChange,
     },
 }
@@ -134,15 +173,20 @@ pub enum ChangeKind {
 /// The outcome of comparing two specs.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SpecDiff {
+    /// Title declared by the old spec.
     pub old_title: String,
+    /// API version declared by the old spec.
     pub old_version: String,
+    /// Title declared by the new spec.
     pub new_title: String,
+    /// API version declared by the new spec.
     pub new_version: String,
     /// Every change, in report order (see the module docs).
     pub changes: Vec<Change>,
 }
 
 impl SpecDiff {
+    /// Count operations present only in the new spec.
     pub fn endpoints_added(&self) -> usize {
         self.changes
             .iter()
@@ -150,6 +194,7 @@ impl SpecDiff {
             .count()
     }
 
+    /// Count operations present only in the old spec.
     pub fn endpoints_removed(&self) -> usize {
         self.changes
             .iter()
@@ -172,6 +217,7 @@ impl SpecDiff {
             .len()
     }
 
+    /// Count changes with the requested severity.
     pub fn count(&self, level: Severity) -> usize {
         self.changes
             .iter()
@@ -179,6 +225,7 @@ impl SpecDiff {
             .count()
     }
 
+    /// Whether any change has breaking severity.
     pub fn has_breaking(&self) -> bool {
         self.changes
             .iter()
@@ -237,7 +284,7 @@ impl SpecDiff {
 /// | anything else | Review |
 ///
 /// When a property is removed, the companion "removed from `required`" row for
-/// the same property is not reported at all (see [`value_changes`]).
+/// the same property is not reported at all (see `value_changes`).
 pub fn severity(change: &Change) -> Severity {
     match &change.kind {
         ChangeKind::EndpointAdded => Severity::NonBreaking,

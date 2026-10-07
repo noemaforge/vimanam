@@ -7,6 +7,18 @@
 use crate::markdown::removing_filters;
 use crate::models::{ApiDocumentation, DocConfig, Endpoint, OperationSelector};
 
+/// Validate exact operation and schema selections before creating any output.
+/// Schema depth must be at most 24, and without schema selectors requires
+/// full detail with schemas enabled. Unmatched selections return an error.
+pub fn validate(doc: &ApiDocumentation, config: &DocConfig) -> anyhow::Result<()> {
+    if let Some(selector) = &config.operation_selector
+        && let Some(message) = unmatched_selectors(doc, selector)
+    {
+        anyhow::bail!(message);
+    }
+    crate::markdown::schema_selection::validate(doc, config)
+}
+
 /// The error message for every selector value that matches no endpoint in the
 /// whole spec, before any other filter is applied, or `None` when all of them
 /// match. Values are listed per flag in the order given; `--operation` values

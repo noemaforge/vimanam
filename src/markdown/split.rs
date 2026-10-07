@@ -9,15 +9,14 @@ use std::path::{Component, Path};
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 
-use crate::config::SplitArg;
 use crate::diff::json::sha256_hex;
+use crate::models::SplitMode as SplitArg;
 use crate::models::{ApiDocumentation, DetailLevel, DocConfig, Endpoint};
 use crate::utils::{clean_for_id, resolve_schema_reference};
 
 use super::endpoint::write_endpoint;
 use super::schema::{
-    SchemaContext, emit_omissions, prediscover_rendered_endpoints, short_schema_reference,
-    write_schema_table_at,
+    SchemaContext, prediscover_rendered_endpoints, short_schema_reference, write_schema_table_at,
 };
 use super::{detail_level_name, estimate_tokens, service_is_visible, visible_endpoints};
 
@@ -185,17 +184,23 @@ pub(crate) fn write_tree(
     config: &DocConfig,
     layout: TreeLayout,
     overview_budget: Option<usize>,
+    notice: &mut dyn FnMut(&str),
 ) -> Result<()> {
     let (files, omissions) = match layout {
-        TreeLayout::Split(split) => render_tree(input, doc, config, split, overview_budget)?,
+        TreeLayout::Split(split) => {
+            render_tree(input, doc, config, split, overview_budget, notice)?
+        }
         TreeLayout::Skill => {
-            let (mut files, omissions) = render_tree(input, doc, config, SplitArg::Endpoint, None)?;
-            apply_skill_profile(&mut files, input, doc, config, overview_budget)?;
+            let (mut files, omissions) =
+                render_tree(input, doc, config, SplitArg::Endpoint, None, notice)?;
+            apply_skill_profile(&mut files, input, doc, config, overview_budget, notice)?;
             (files, omissions)
         }
     };
     write_files(output, &files)?;
-    emit_omissions(&omissions);
+    for omission in omissions {
+        notice(&omission);
+    }
     Ok(())
 }
 
@@ -216,6 +221,7 @@ fn render_tree(
     config: &DocConfig,
     split: SplitArg,
     overview_budget: Option<usize>,
+    notice: &mut dyn FnMut(&str),
 ) -> Result<RenderedTree> {
     let mut files = TreeFiles::new();
     let mut omissions = Vec::new();
@@ -413,10 +419,10 @@ fn render_tree(
         }
         files.insert("index-all.md".to_string(), full.into_bytes());
         if estimate_tokens(index.as_bytes()) > budget {
-            eprintln!(
+            notice(&format!(
                 "vimanam: overview navigation needs ~{} tokens, over the {budget}-token estimate; detail pages are unchanged",
                 estimate_tokens(index.as_bytes())
-            );
+            ));
         }
     }
     files.insert("index.md".to_string(), index.into_bytes());
@@ -432,6 +438,7 @@ fn apply_skill_profile(
     doc: &ApiDocumentation,
     config: &DocConfig,
     overview_budget: Option<usize>,
+    notice: &mut dyn FnMut(&str),
 ) -> Result<()> {
     let endpoints = visible_endpoints(doc, config);
     for (path, body) in files.iter_mut() {
@@ -590,10 +597,10 @@ fn apply_skill_profile(
             skill.push_str(entry);
         }
         if estimate_tokens(skill.as_bytes()) > budget {
-            eprintln!(
+            notice(&format!(
                 "vimanam: skill navigation needs ~{} tokens, over the {budget}-token estimate; detail pages are unchanged",
                 estimate_tokens(skill.as_bytes())
-            );
+            ));
         }
     }
     let mut index = format!(

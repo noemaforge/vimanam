@@ -5,6 +5,27 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.6.0] - 2026-10-07
+
+### Added
+
+- Rust library target (#117): parse OpenAPI files or bytes, inspect the normalized
+  `ApiDocumentation` model, compute typed contract diffs and deltas, and render
+  focused operation/schema context with the existing detail and token-budget options.
+- JSON contract types support both `Serialize` and owned `Deserialize`, including
+  the distinction between missing values and explicit JSON null. Stable change IDs
+  and JSON `schema_version` remain unchanged. Growing change-kind, schema-target,
+  and schema-operation enums are non-exhaustive for downstream consumers.
+- Default `cli` feature contains command-line dependencies and the binary. Consumers
+  can use `vimanam = { version = "1.6", default-features = false }` without `clap`,
+  `clap_complete`, or `env_logger`. Rendering accepts a writer and optional notice
+  callback; library code writes nothing directly to stdout or stderr.
+
+### Changed
+
+- The CLI delegates to the library. Generated Markdown, JSON contract data, and
+  exit codes are preserved; JSON generator metadata reports the new package version.
+
 ## [1.5.0] - 2026-10-02
 
 ### Added
@@ -368,6 +389,7 @@ already on `main`; only the version bump was missing.
 - Initial release: OpenAPI 2.0 (Swagger) JSON to Markdown with grouping,
   filtering, sorting, and detail levels
 
+[1.6.0]: https://github.com/noemaforge/vimanam/compare/v1.5.0...v1.6.0
 [1.5.0]: https://github.com/noemaforge/vimanam/compare/v1.4.2...v1.5.0
 [1.4.2]: https://github.com/noemaforge/vimanam/compare/v1.4.1...v1.4.2
 [1.4.1]: https://github.com/noemaforge/vimanam/compare/v1.4.0...v1.4.1

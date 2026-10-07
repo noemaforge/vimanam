@@ -37,7 +37,7 @@ use crate::models::{ApiDocumentation, DocConfig};
 /// One row of the table: a service, its visible endpoint count, and the
 /// estimated token size of rendering just that service.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ServiceStats {
+pub(crate) struct ServiceStats {
     pub name: String,
     pub endpoints: usize,
     pub tokens: usize,
@@ -46,7 +46,7 @@ pub struct ServiceStats {
 /// The full table: per-service rows in render order plus the whole-document
 /// totals.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct Stats {
+pub(crate) struct Stats {
     pub rows: Vec<ServiceStats>,
     /// Distinct visible endpoints; a multi-tag endpoint counts once here even
     /// though it appears in several rows.
@@ -68,7 +68,7 @@ fn estimate_render(doc: &ApiDocumentation, config: &DocConfig) -> Result<usize> 
 
 /// Computes the per-service and total statistics (see the module docs for the
 /// exact scoping rules).
-pub fn compute(doc: &ApiDocumentation, config: &DocConfig) -> Result<Stats> {
+pub(crate) fn compute(doc: &ApiDocumentation, config: &DocConfig) -> Result<Stats> {
     let endpoints = visible_endpoints(doc, config);
 
     let mut rows = Vec::new();
@@ -131,7 +131,7 @@ fn digits(value: usize) -> usize {
 /// line, each newline-terminated. The SERVICE column is left-aligned and padded
 /// to the widest name; the numeric columns are right-aligned and padded to the
 /// wider of their header and their widest value. No blank lines, no Markdown.
-pub fn write_stats<W: Write>(writer: &mut W, stats: &Stats) -> Result<()> {
+pub(crate) fn write_stats<W: Write>(writer: &mut W, stats: &Stats) -> Result<()> {
     let name_width = stats
         .rows
         .iter()
