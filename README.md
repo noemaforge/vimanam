@@ -59,6 +59,36 @@ caller-provided writers, logs through `log`, and optionally returns rendering
 notices through `generate_markdown_with_notices`. The default `cli` feature
 keeps normal `cargo install vimanam` behavior.
 
+The core `gitrefs::Repository` API reads committed specs using Git on PATH:
+
+```rust
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let repo = vimanam::gitrefs::Repository::discover(".")?;
+    let _candidates = repo.candidates("HEAD")?; // sorted tracked JSON/YAML candidates
+    // Choose an explicit repository-relative path when several specs exist.
+    let old = repo.materialize_follow("api/openapi.json", "HEAD", "v1.0.0")?;
+    let _doc = vimanam::parse_openapi_bytes(
+        &old.bytes,
+        old.path.extension().and_then(|ext| ext.to_str()).unwrap_or(""),
+        Some(&old.path),
+    )?;
+    Ok(())
+}
+```
+
+`materialize(ref, path)` reads an exact path; `materialize_follow(path, path_ref,
+target_ref)` follows Git-detected renames from the explicitly anchored file,
+including across sibling branches and merge parents. It may use an older shared
+commit when the file's route crosses a merge parent outside Git's selected
+merge base; a merge with both a surviving route and a broken route is rejected
+as ambiguous. Both return exact bytes, the actual path and resolved commit ID
+without changing the checkout. Candidate sniffing checks a
+small OpenAPI header and syntax, deferring operation/schema validation to the
+parser. It reads committed trees, excluding ignored/untracked files and local
+edits. Git's 50% similarity rename heuristic cannot identify every rewritten
+rename; missing lineage, ambiguous paths/history and incomplete shallow history
+return errors so callers can supply explicit paths. This API adds no CLI flags.
+
 See the [library API reference](https://docs.rs/vimanam) for configuration and types.
 
 ## Features

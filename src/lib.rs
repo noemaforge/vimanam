@@ -30,6 +30,7 @@
 #[cfg(feature = "cli")]
 mod costs;
 pub mod diff;
+pub mod gitrefs;
 pub mod markdown;
 mod models;
 mod parser;
