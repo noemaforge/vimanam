@@ -66,6 +66,7 @@ pub(super) struct SchemaContext<'a> {
     /// Cutoff rows may link only to these or to refs already in `anchors`.
     emitted_depths: IndexMap<String, usize>,
     source_path: String,
+    proto_paths: Vec<String>,
     current_schema: Option<String>,
     /// Active `--schema-field` selector for the subtree being rendered, if any.
     active_selector: Option<String>,
@@ -100,6 +101,7 @@ impl<'a> SchemaContext<'a> {
             depths: IndexMap::new(),
             emitted_depths: IndexMap::new(),
             source_path: "spec.json".to_string(),
+            proto_paths: Vec::new(),
             current_schema: None,
             active_selector: None,
             current_operation: None,
@@ -129,6 +131,7 @@ impl<'a> SchemaContext<'a> {
             .source_path
             .clone()
             .unwrap_or_else(|| "spec.json".into());
+        ctx.proto_paths = config.proto_paths.clone();
         ctx.schema_names = config.schema_names.clone();
         ctx.schema_fields = config.schema_fields.clone();
         ctx.operation_selector = config.operation_selector.clone();
@@ -251,6 +254,10 @@ impl<'a> SchemaContext<'a> {
 
     fn retrieval(&self, reference: Option<&str>) -> String {
         let mut command = format!("vimanam {}", super::split::quote_shell(&self.source_path));
+        command.push_str(&super::split::proto_path_flags(
+            &self.source_path,
+            &self.proto_paths,
+        ));
 
         if let Some(selector) = &self.active_selector {
             command.push_str(&format!(
@@ -421,7 +428,9 @@ pub(super) fn first_success_response(endpoint: &Endpoint) -> Option<(&str, &Resp
     endpoint
         .responses
         .iter()
-        .find(|(code, _)| code.starts_with('2'))
+        .find(|(code, _)| {
+            code.starts_with('2') || (endpoint.method == "RPC" && code.as_str() == "result")
+        })
         .map(|(code, response)| (code.as_str(), response))
 }
 

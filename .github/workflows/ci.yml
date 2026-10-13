@@ -27,6 +27,13 @@ jobs:
           toolchain: stable
           components: rustfmt, clippy
 
+      - name: Install pinned protoc without system changes
+        run: |
+          curl -fsSL https://github.com/protocolbuffers/protobuf/releases/download/v36.2/protoc-36.2-linux-x86_64.zip -o "$RUNNER_TEMP/protoc.zip"
+          echo '121f6c7afe1d4d0e3ea6aab9432038599250134cbf4474cb1167d2c7decd4278  '"$RUNNER_TEMP/protoc.zip" | sha256sum --check
+          unzip -q "$RUNNER_TEMP/protoc.zip" -d "$RUNNER_TEMP/protoc"
+          echo "$RUNNER_TEMP/protoc/bin" >> "$GITHUB_PATH"
+
       - run: cargo fmt --check
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo test

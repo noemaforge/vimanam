@@ -15,9 +15,13 @@ use crate::models::{DetailLevel, DocConfig, GroupBy, OperationRef, OperationSele
 #[command(subcommand_negates_reqs = true, args_conflicts_with_subcommands = true)]
 #[command(group(ArgGroup::new("tree_output").args(["split", "output_mode"])))]
 pub struct Cli {
-    /// Path to the OpenAPI JSON or YAML file
+    /// OpenAPI JSON/YAML, protobuf .proto, or binary FileDescriptorSet
     #[arg(value_name = "FILE", required = true)]
     pub input: Option<PathBuf>,
+
+    /// Protobuf import root (repeatable); source compilation requires protoc
+    #[arg(short = 'I', long = "proto-path", value_name = "DIR")]
+    pub proto_paths: Vec<PathBuf>,
 
     #[command(subcommand)]
     pub command: Option<Commands>,
@@ -63,7 +67,7 @@ pub struct Cli {
     #[arg(long, value_delimiter = ',')]
     pub method_filter: Option<Vec<String>>,
 
-    /// Render exactly this operation, as "METHOD /path/template" (repeatable).
+    /// Render exactly this operation, as "METHOD /path/template" or "RPC package.Service.Method" (repeatable).
     /// The path must equal the spec's path template byte for byte (no
     /// substring, prefix or trailing-slash matching; Swagger 2 `basePath` is
     /// not part of it)
@@ -183,13 +187,21 @@ pub enum Commands {
     /// first media type of a body or response is compared.
     ///
     /// Example: `vimanam diff v1/openapi.json v2/openapi.json --fail-on-breaking`
-    Diff(DiffArgs),
+    Diff(Box<DiffArgs>),
 }
 
 /// Arguments of the `diff` subcommand. It has its own `-o/--output` because
 /// the top-level conversion flags conflict with subcommands.
 #[derive(Args, Debug)]
 pub struct DiffArgs {
+    /// Protobuf import root; Git-ref roots must be repository-relative
+    #[arg(short = 'I', long = "proto-path", value_name = "DIR")]
+    pub proto_paths: Vec<PathBuf>,
+
+    /// Compatibility dimensions for protobuf --fail-on-breaking (OpenAPI unchanged)
+    #[arg(long, value_enum, default_value_t = BreakingArg::All)]
+    pub breaking: BreakingArg,
+
     /// The older spec (JSON or YAML)
     #[arg(
         value_name = "OLD",
@@ -255,6 +267,13 @@ pub struct DiffArgs {
     /// Write the diff to FILE instead of stdout
     #[arg(short, long, value_name = "FILE")]
     pub output: Option<PathBuf>,
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, ValueEnum, Debug)]
+pub enum BreakingArg {
+    Wire,
+    Source,
+    All,
 }
 
 /// Output format of the `diff` subcommand.
@@ -381,6 +400,11 @@ pub fn build_config(cli: &Cli, notice: &mut dyn FnMut(&str)) -> DocConfig {
             .input
             .as_ref()
             .map(|path| path.to_string_lossy().into_owned()),
+        proto_paths: cli
+            .proto_paths
+            .iter()
+            .map(|path| path.to_string_lossy().into_owned())
+            .collect(),
         include_examples: cli.include_examples,
         include_auth: cli.include_auth,
         // `--toc`/`--no-toc` override each other (last one wins), so at most
@@ -439,7 +463,12 @@ fn parse_operation(value: &str) -> Result<OperationRef, String> {
     let path = rest.trim_start();
     if method.is_empty()
         || !method.chars().all(|c| c.is_ascii_alphabetic())
-        || !path.starts_with('/')
+        || !(path.starts_with('/')
+            || (method.eq_ignore_ascii_case("RPC")
+                && !path.is_empty()
+                && path
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.')))
     {
         return Err(usage());
     }
@@ -479,6 +508,7 @@ mod tests {
     fn test_detail_level_conversion() {
         let cli = Cli {
             input: Some(PathBuf::from("spec.json")),
+            proto_paths: Vec::new(),
             command: None,
             output: None,
             split: None,

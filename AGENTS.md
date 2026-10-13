@@ -70,3 +70,24 @@ and conservative review-only pagination inference; v2 JSON breaking exits use
 v2 summary verdicts. Markdown remains the existing OpenAPI report. Preserve
 explicit v1 fixture expectations. See `docs/neutral-contract-v2.md` for identity,
 input/output direction, pagination evidence and future GraphQL/protobuf mappings.
+
+
+## Protobuf adapter
+
+`src/contract/protobuf.rs` compiles `.proto` with explicitly required protoc and
+Rust-decodes complete binary FileDescriptorSets. Proto2/proto3 only: reject
+Editions/unknown syntax before prost-reflect, which cannot safely decode their
+features. Preserve original descriptor bytes and custom options. Neutral field
+IDs use message FQN+number; enum label IDs add names to preserve aliases. Safe
+same-number renames break source/JSON only; reserved-identity reuse and type
+changes supply wire evidence. Enum reserved bounds use wide integers.
+
+`--breaking` scopes protobuf failure gates only; `--contract 1` rejects protobuf
+before output creation. `cli::diff_inputs` materializes committed regular proto
+files in temp snapshots, using only ref-relative confined import roots. Do not
+read imports from current worktree during Git comparisons or extend OpenAPI
+candidate discovery implicitly. Renderer IR uses native RPC/result labels;
+existing budgets/schema selectors/Skill manifest protection apply. Tests in
+`tests/protobuf.rs` and `tests/protobuf_cli.rs` require protoc for source coverage;
+CI installs a pinned checksum-verified official compiler without system changes.
+See `docs/protobuf.md` and fixture provenance for limitations and native rules.

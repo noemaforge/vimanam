@@ -106,7 +106,25 @@ pub(super) fn quote_shell(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\\''"))
 }
 
-fn retrieval(input: &Path, split: SplitArg, endpoint: Option<&Endpoint>) -> String {
+pub(super) fn proto_path_flags(input: &str, paths: &[String]) -> String {
+    if !Path::new(input)
+        .extension()
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("proto"))
+    {
+        return String::new();
+    }
+    paths
+        .iter()
+        .map(|path| format!(" -I {}", quote_shell(path)))
+        .collect()
+}
+
+fn retrieval(
+    input: &Path,
+    split: SplitArg,
+    config: &DocConfig,
+    endpoint: Option<&Endpoint>,
+) -> String {
     let mode = match split {
         SplitArg::Service => "service",
         SplitArg::Tag => "tag",
@@ -115,9 +133,11 @@ fn retrieval(input: &Path, split: SplitArg, endpoint: Option<&Endpoint>) -> Stri
     let selection = endpoint
         .map(|ep| format!(" --operation {}", quote_shell(&endpoint_identity(ep))))
         .unwrap_or_default();
+    let source = input.to_string_lossy();
     format!(
-        "vimanam {} --split {mode} -o ./vimanam-full --detail full --include-schemas --include-examples --include-auth{selection}",
-        quote_shell(&input.to_string_lossy())
+        "vimanam {}{} --split {mode} -o ./vimanam-full --detail full --include-schemas --include-examples --include-auth{selection}",
+        quote_shell(&source),
+        proto_path_flags(&source, &config.proto_paths)
     )
 }
 
@@ -172,7 +192,7 @@ fn page_notice(
     format!(
         "\n> This page omits {} under the requested options. Retrieve fuller detail (in a separate directory):\n\n```sh\n{}\n```\n\n",
         omitted.join(", "),
-        retrieval(input, split, endpoint)
+        retrieval(input, split, config, endpoint)
     )
 }
 
@@ -378,7 +398,7 @@ fn render_tree(
     header.push_str("[API details](api.md) contain the global description and usage guidance.\n\n");
     let omitted = doc.endpoints.len().saturating_sub(endpoints.len());
     if omitted > 0 {
-        header.push_str(&format!("> Filters/selectors omitted {omitted} operations from this tree; they are still present in the spec. Retrieve the complete tree without filters:\n\n```sh\n{}\n```\n\n", retrieval(input, split, None)));
+        header.push_str(&format!("> Filters/selectors omitted {omitted} operations from this tree; they are still present in the spec. Retrieve the complete tree without filters:\n\n```sh\n{}\n```\n\n", retrieval(input, split, config, None)));
     }
     if config.include_auth {
         for server in &doc.servers {
@@ -488,7 +508,7 @@ fn apply_skill_profile(
     if !files.keys().any(|path| path.starts_with("schemas/")) {
         schema_hub.push_str(&format!(
             "Schema tables are absent under these options or no component schemas were reached. Absence here does not mean the spec has no schemas. Retrieve full schema documentation:\n\n```sh\n{}\n```\n",
-            retrieval(input, SplitArg::Endpoint, None)
+            retrieval(input, SplitArg::Endpoint, config, None)
         ));
     }
     let names: BTreeSet<&str> = endpoints
@@ -581,7 +601,7 @@ fn apply_skill_profile(
     }
     let omitted = doc.endpoints.len().saturating_sub(endpoints.len());
     if omitted > 0 {
-        header.push_str(&format!("\n> Filters/selectors omitted {omitted} operations from this tree; they remain in the spec. Retrieve all operations without filters:\n\n```sh\n{}\n```\n", retrieval(input, SplitArg::Endpoint, None)));
+        header.push_str(&format!("\n> Filters/selectors omitted {omitted} operations from this tree; they remain in the spec. Retrieve all operations without filters:\n\n```sh\n{}\n```\n", retrieval(input, SplitArg::Endpoint, config, None)));
     }
     let full = format!("{header}\n## Services\n\n{}", area_entries.concat());
     let budget = overview_budget.unwrap_or(1600);

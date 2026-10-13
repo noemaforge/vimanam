@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Protocol Buffers/gRPC source and descriptor-set inputs (#126), with imported
+  proto2/proto3 symbols, native field/enum identities, source/wire compatibility
+  verdicts, scoped `--breaking` gates, neutral v2 JSON, Markdown/report and
+  focused budget/Skill output. Source input requires protoc; Editions are
+  explicitly rejected by the current descriptor adapter. Git imports use
+  committed snapshots. Real public gRPC health release fixtures cover parity.
+
 - Format-neutral contract and change model (#124), with an OpenAPI adapter,
   adapter-owned compatibility verdicts, stable entity/change IDs, native
   locations, and JSON contract v2. Includes independent named-type facts,
@@ -19,7 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `vimanam diff --format json` now defaults to contract v2, including OpenAPI
   inputs. Select `--contract 1` for the legacy v1 envelope, change IDs, and
   verdicts. Existing OpenAPI library entry points and Markdown output remain
-  available. GraphQL and protobuf parsers are separate follow-ups.
+  available. GraphQL parsing is a separate follow-up.
 
 ### Fixed
 

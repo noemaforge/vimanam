@@ -512,6 +512,8 @@ pub struct DocConfig {
     pub schema_fields: Vec<String>,
     /// Source label used in retrieval commands; defaults to `spec.json`.
     pub source_path: Option<String>,
+    /// Protobuf import roots repeated in source retrieval commands.
+    pub proto_paths: Vec<String>,
     /// Include examples at full detail.
     pub include_examples: bool,
     /// Include server and authentication metadata.
@@ -551,6 +553,7 @@ impl DocConfig {
             schema_names: Vec::new(),
             schema_fields: Vec::new(),
             source_path: None,
+            proto_paths: Vec::new(),
             include_examples: false,
             include_auth: false,
             include_toc: true,
