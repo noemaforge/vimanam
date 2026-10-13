@@ -21,6 +21,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   verdicts. Existing OpenAPI library entry points and Markdown output remain
   available. GraphQL and protobuf parsers are separate follow-ups.
 
+### Fixed
+
+- Neutral contract v2 classifies `deprecated` on single-schema keywords,
+  attributes request-body schema changes to the first body argument, and
+  sorts pagination continuation names so declaration order is not a change.
+
 ## [1.7.0] - 2026-10-07
 
 ### Added

@@ -393,7 +393,9 @@ fn verdict(s: diff::Severity) -> Severity {
 /// operation-specific severity rules are reused, not inferred from neutral kind.
 /// Unused and shared named type facts are additional review records; affected
 /// operation records provide directional breaking verdicts.
-pub fn diff(old: &ApiDocumentation, new: &ApiDocumentation) -> Vec<Change> {
+///
+/// Duplicate entity IDs in an adapted surface are returned as an error.
+pub fn diff(old: &ApiDocumentation, new: &ApiDocumentation) -> anyhow::Result<Vec<Change>> {
     let legacy = diff::diff(old, new);
     let json = diff::json::to_json(&legacy, None, "", "");
     let mut changes = vec![];
@@ -431,6 +433,12 @@ pub fn diff(old: &ApiDocumentation, new: &ApiDocumentation) -> Vec<Change> {
                     K::ParameterRemoved { .. } => ChangeKind::ArgumentRemoved,
                     K::ParameterRequiredChanged { .. } => ChangeKind::ArgumentRequiredChanged,
                     K::ParameterSchemaChanged { change, .. } => {
+                        // `deprecated` under keywords the legacy canonicalizer
+                        // does not walk (`if`/`then`/`else`) is a deprecation
+                        // fact from the supplemental pass, not a constraint.
+                        if is_schema_deprecation_pointer(&change.pointer) {
+                            continue;
+                        }
                         pointer = change.pointer.clone();
                         resolved = true;
                         schema_kind(change, true)
@@ -453,12 +461,22 @@ pub fn diff(old: &ApiDocumentation, new: &ApiDocumentation) -> Vec<Change> {
                 }
             }
             K::RequestSchemaChanged { change } => {
+                if is_schema_deprecation_pointer(&change.pointer) {
+                    continue;
+                }
+                // Legacy comparison uses only the first `in: body` parameter.
                 parameter_in = Some("body".into());
                 pointer = change.pointer.clone();
                 resolved = true;
-                schema_kind(change, false)
+                if let Some(name) = first_body_name(e) {
+                    subject = body_argument_id(e, name);
+                }
+                schema_kind(change, true)
             }
             K::ResponseSchemaChanged { status: s, change } => {
+                if is_schema_deprecation_pointer(&change.pointer) {
+                    continue;
+                }
                 status = Some(s.clone());
                 subject = entity_id(
                     Format::Openapi,
@@ -500,9 +518,11 @@ pub fn diff(old: &ApiDocumentation, new: &ApiDocumentation) -> Vec<Change> {
             .collect(),
         ..c.clone()
     };
-    changes.extend(
-        compare(&types(&old_surface), &types(&new_surface), &OpenApiAdapter).expect("same format"),
-    );
+    changes.extend(compare(
+        &types(&old_surface),
+        &types(&new_surface),
+        &OpenApiAdapter,
+    )?);
     // The mature endpoint differ intentionally omits some neutral facts (for
     // example query defaults and deprecated inline response fields). Compare
     // operation-local schema nodes and append only facts outside its coverage.
@@ -545,12 +565,19 @@ pub fn diff(old: &ApiDocumentation, new: &ApiDocumentation) -> Vec<Change> {
                 })
         })
         .collect();
+    let first_body_ids: std::collections::HashSet<String> = old
+        .endpoints
+        .iter()
+        .chain(&new.endpoints)
+        .filter_map(|endpoint| {
+            first_body_name(endpoint).map(|name| body_argument_id(endpoint, name))
+        })
+        .collect();
     let supplemental = compare(
         &operations(&old_surface),
         &operations(&new_surface),
         &OpenApiAdapter,
-    )
-    .expect("same format")
+    )?
     .into_iter()
     .filter(|candidate| {
         let pointer = candidate
@@ -559,7 +586,13 @@ pub fn diff(old: &ApiDocumentation, new: &ApiDocumentation) -> Vec<Change> {
             .and_then(Value::as_str)
             .unwrap_or("");
         (candidate.kind == ChangeKind::DeprecatedChanged
-            && has_operation_schema_root(&candidate.subject, &old_surface, &new_surface))
+            && has_operation_schema_root(&candidate.subject, &old_surface, &new_surface)
+            && !later_request_body_subject(
+                &candidate.subject,
+                &old_surface,
+                &new_surface,
+                &first_body_ids,
+            ))
             || (candidate.kind == ChangeKind::ConstraintChanged
                 && candidate.details.get("structural") == Some(&json!("services")))
             || (candidate.kind == ChangeKind::DefaultChanged
@@ -605,6 +638,11 @@ pub fn diff(old: &ApiDocumentation, new: &ApiDocumentation) -> Vec<Change> {
         };
         let root = operation_coordinate(before);
         for parameter in &before.parameters {
+            if parameter.parameter_in == "body"
+                && first_body_name(before) != Some(parameter.name.as_str())
+            {
+                continue;
+            }
             let Some(next) = after
                 .parameters
                 .iter()
@@ -612,6 +650,9 @@ pub fn diff(old: &ApiDocumentation, new: &ApiDocumentation) -> Vec<Change> {
             else {
                 continue;
             };
+            if next.parameter_in == "body" && first_body_name(after) != Some(next.name.as_str()) {
+                continue;
+            }
             let left = parameter
                 .schema
                 .as_ref()
@@ -704,7 +745,7 @@ pub fn diff(old: &ApiDocumentation, new: &ApiDocumentation) -> Vec<Change> {
             }
         }
     }
-    changes
+    Ok(changes)
 }
 
 fn promote_schema_fact_to_use_root(change: &mut Change, old: &Contract, new: &Contract) {
@@ -818,49 +859,100 @@ fn append_deprecation_facts(
     }
 }
 
+fn first_body_name(endpoint: &Endpoint) -> Option<&str> {
+    endpoint
+        .parameters
+        .iter()
+        .find(|parameter| parameter.parameter_in == "body")
+        .map(|parameter| parameter.name.as_str())
+}
+
+fn body_argument_id(endpoint: &Endpoint, name: &str) -> String {
+    entity_id(
+        Format::Openapi,
+        EntityKind::Argument,
+        &format!(
+            "{}/arguments/{}/{}",
+            operation_coordinate(endpoint),
+            escape("body"),
+            escape(name)
+        ),
+    )
+}
+
+fn later_request_body_subject(
+    subject: &str,
+    old: &Contract,
+    new: &Contract,
+    first_body_ids: &std::collections::HashSet<String>,
+) -> bool {
+    fn find<'a>(contract: &'a Contract, id: &str) -> Option<&'a Entity> {
+        contract.entities.iter().find(|entity| entity.id == id)
+    }
+    let mut current = find(new, subject).or_else(|| find(old, subject));
+    while let Some(entity) = current {
+        if entity.kind == EntityKind::Argument {
+            let body = matches!(
+                &entity.native,
+                NativeLocation::Openapi {
+                    parameter_in: Some(location),
+                    ..
+                } if location == "body"
+            );
+            return body && !first_body_ids.contains(&entity.id);
+        }
+        if matches!(
+            entity.kind,
+            EntityKind::Result | EntityKind::Type | EntityKind::Operation | EntityKind::Service
+        ) {
+            return false;
+        }
+        current = entity
+            .parent
+            .as_deref()
+            .and_then(|id| find(new, id).or_else(|| find(old, id)));
+    }
+    false
+}
+
+/// True when `pointer` addresses a schema `deprecated` keyword.
+///
+/// Name maps (`properties`, `patternProperties`, `definitions`, `$defs`) and
+/// composition lists (`allOf`, `oneOf`, `anyOf`) consume the next token.
+/// Single-schema keywords (`items`, `not`, `additionalProperties`, `if`,
+/// `then`, `else`) are already inside the child schema, so that token is
+/// tested. `schema` is the argument-attribute wrapper around a body schema.
 fn is_schema_deprecation_pointer(pointer: &str) -> bool {
-    let Some(tokens) = pointer.strip_prefix('/').map(|p| {
-        p.split('/')
-            .map(|t| t.replace("~1", "/").replace("~0", "~"))
-            .collect::<Vec<_>>()
-    }) else {
+    let Some(path) = pointer.strip_prefix('/') else {
         return false;
     };
-    let mut schema = true;
-    let mut next_is_schema = false;
-    for token in tokens {
-        if next_is_schema {
-            next_is_schema = false;
-            schema = true;
-            continue;
-        }
-        if schema && token == "deprecated" {
+    if path.is_empty() {
+        return false;
+    }
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    enum Node {
+        Schema,
+        Name,
+        Index,
+        Opaque,
+    }
+    let mut node = Node::Schema;
+    for token in path.split('/').map(crate::utils::decode_json_pointer_token) {
+        if node == Node::Schema && token == "deprecated" {
             return true;
         }
-        if !schema {
-            continue;
-        }
-        if [
-            "properties",
-            "patternProperties",
-            "definitions",
-            "$defs",
-            "items",
-            "not",
-            "additionalProperties",
-            "if",
-            "then",
-            "else",
-            "allOf",
-            "oneOf",
-            "anyOf",
-        ]
-        .contains(&token.as_str())
-        {
-            next_is_schema = true;
-        } else if ["default", "enum", "required", "example", "examples"].contains(&token.as_str()) {
-            schema = false;
-        }
+        node = match node {
+            Node::Schema => match token.as_str() {
+                "properties" | "patternProperties" | "definitions" | "$defs" => Node::Name,
+                "allOf" | "oneOf" | "anyOf" => Node::Index,
+                "items" | "not" | "additionalProperties" | "if" | "then" | "else" | "schema" => {
+                    Node::Schema
+                }
+                _ => Node::Opaque,
+            },
+            Node::Name | Node::Index => Node::Schema,
+            Node::Opaque => Node::Opaque,
+        };
     }
     false
 }
@@ -881,7 +973,7 @@ fn pagination(e: &Endpoint, api: &ApiDocumentation) -> Option<Value> {
             let list = properties
                 .values()
                 .any(|v| v.get("type").is_some_and(|t| t == "array"));
-            let continuation: Vec<&String> = properties
+            let mut continuation: Vec<&String> = properties
                 .keys()
                 .filter(|key| {
                     [
@@ -895,6 +987,7 @@ fn pagination(e: &Endpoint, api: &ApiDocumentation) -> Option<Value> {
                     .contains(&key.as_str())
                 })
                 .collect();
+            continuation.sort();
             (list && !continuation.is_empty())
                 .then(|| json!({"status":s,"continuation":continuation}))
         })

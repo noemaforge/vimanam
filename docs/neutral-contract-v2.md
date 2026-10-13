@@ -61,8 +61,8 @@ The v2 envelope has `schema_version`, `generator`, `old`, `new`, `summary`, `cha
 let old = vimanam::parse_openapi("old.json")?;
 let new = vimanam::parse_openapi("new.json")?;
 let surface = vimanam::contract::openapi::adapt(&new);
-let changes = vimanam::contract::openapi::diff(&old, &new);
-let json = vimanam::contract::json::openapi(&old, &new, None, "old-hash", "new-hash");
+let changes = vimanam::contract::openapi::diff(&old, &new)?;
+let json = vimanam::contract::json::openapi(&old, &new, None, "old-hash", "new-hash")?;
 ```
 
 `openapi::parse` and `parse_bytes` return surfaces directly. Generic consumers implement `Adapter` and use `compare` on their own contracts. Neutral model kinds support renames, nullability, enum values, defaults, pagination and wire identity without forcing new parsers to use the HTTP-shaped v1 `Change` model.

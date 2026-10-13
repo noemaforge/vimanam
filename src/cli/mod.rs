@@ -75,8 +75,17 @@ fn run_diff<W: Write>(args: &DiffArgs, output: &mut W) -> Result<bool> {
         None
     };
 
-    let neutral = (args.format == DiffFormatArg::Json && args.contract == 2)
-        .then(|| crate::contract::json::openapi(&old, &new, deltas.as_ref(), &old_sha, &new_sha));
+    let neutral = if args.format == DiffFormatArg::Json && args.contract == 2 {
+        Some(crate::contract::json::openapi(
+            &old,
+            &new,
+            deltas.as_ref(),
+            &old_sha,
+            &new_sha,
+        )?)
+    } else {
+        None
+    };
     match (&args.output, args.format) {
         (Some(output_path), DiffFormatArg::Markdown) => {
             let mut writer = BufWriter::new(create_output_file(output_path)?);

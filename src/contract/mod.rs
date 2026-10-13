@@ -12,6 +12,7 @@ use serde_json::{Value, json};
 /// Source contract language (not its document version).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum Format {
     /// OpenAPI or Swagger.
     Openapi,
@@ -58,6 +59,7 @@ pub enum NativeLocation {
 /// Role of a contract entity.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum EntityKind {
     /// Service or GraphQL root.
     Service,
@@ -114,6 +116,7 @@ pub struct Contract {
 /// not fit these categories without inventing cross-format equivalences.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum ChangeKind {
     /// A service appeared.
     ServiceAdded,
@@ -172,6 +175,7 @@ pub enum ChangeKind {
 /// Adapter verdict, deliberately independent of neutral kind.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum Severity {
     /// Existing clients can break.
     Breaking,

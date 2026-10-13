@@ -57,22 +57,24 @@ impl JsonDiff {
     }
 }
 /// Build an OpenAPI neutral v2 comparison; input hashes come from exact parsed bytes.
+///
+/// Propagates duplicate entity IDs from the surface comparison instead of panicking.
 pub fn openapi(
     old: &crate::ApiDocumentation,
     new: &crate::ApiDocumentation,
     deltas: Option<&Deltas>,
     old_sha: &str,
     new_sha: &str,
-) -> JsonDiff {
+) -> anyhow::Result<JsonDiff> {
     let legacy = crate::diff::json::to_json(&crate::diff::diff(old, new), deltas, old_sha, new_sha);
-    to_json(
+    Ok(to_json(
         super::openapi::adapt(old),
         super::openapi::adapt(new),
-        super::openapi::diff(old, new),
+        super::openapi::diff(old, new)?,
         old_sha,
         new_sha,
         legacy.deltas,
-    )
+    ))
 }
 
 /// Build a v2 envelope for any adapter-created surfaces and classified facts.
