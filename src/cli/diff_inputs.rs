@@ -17,6 +17,7 @@ pub(super) struct Input {
     pub bytes: Vec<u8>,
     path: PathBuf,
     source: String,
+    snapshot: Option<(PathBuf, String)>,
 }
 
 impl Input {
@@ -27,19 +28,94 @@ impl Input {
             bytes,
             path: path.to_path_buf(),
             source,
+            snapshot: None,
         })
     }
 
-    fn committed(snapshot: MaterializedSpec, reference: &str) -> Self {
+    fn committed(snapshot: MaterializedSpec, reference: &str, root: &Path) -> Self {
         let source = format!(
             "OpenAPI spec at Git ref {reference:?}, path {:?}",
             snapshot.path
         );
         Self {
+            snapshot: Some((root.to_path_buf(), snapshot.commit.clone())),
             bytes: snapshot.bytes,
             path: snapshot.path,
             source,
         }
+    }
+
+    pub fn is_protobuf(&self) -> bool {
+        crate::contract::protobuf::is_input(&self.path)
+    }
+
+    pub fn protobuf(&self, includes: &[PathBuf]) -> Result<crate::contract::protobuf::Document> {
+        use crate::contract::protobuf::Document;
+        if !self
+            .path
+            .extension()
+            .is_some_and(|e| e.eq_ignore_ascii_case("proto"))
+        {
+            return Document::decode(&self.bytes);
+        }
+        let Some((root, commit)) = &self.snapshot else {
+            return crate::contract::protobuf::compile_bytes(&self.path, &self.bytes, includes);
+        };
+        for include in includes {
+            anyhow::ensure!(
+                !include.is_absolute()
+                    && !include.components().any(|c| matches!(
+                        c,
+                        std::path::Component::ParentDir
+                            | std::path::Component::RootDir
+                            | std::path::Component::Prefix(_)
+                    )),
+                "Git protobuf import roots must stay inside the committed repository"
+            );
+        }
+        let temp = tempfile::tempdir()?;
+        let repo = Repository::discover(root)?;
+        let listing = std::process::Command::new("git")
+            .current_dir(root)
+            .args(["ls-tree", "-rz", "--full-tree", commit])
+            .output()?;
+        anyhow::ensure!(
+            listing.status.success(),
+            "Failed to enumerate committed protobuf imports"
+        );
+        for record in listing.stdout.split(|b| *b == 0).filter(|r| !r.is_empty()) {
+            let tab = record
+                .iter()
+                .position(|b| *b == b'\t')
+                .context("Malformed Git tree entry")?;
+            #[cfg(unix)]
+            let path = {
+                use std::os::unix::ffi::OsStrExt;
+                PathBuf::from(std::ffi::OsStr::from_bytes(&record[tab + 1..]))
+            };
+            #[cfg(not(unix))]
+            let path = PathBuf::from(std::str::from_utf8(&record[tab + 1..])?);
+            if !path
+                .extension()
+                .is_some_and(|e| e.eq_ignore_ascii_case("proto"))
+            {
+                continue;
+            }
+            anyhow::ensure!(
+                record.starts_with(b"100644 ") || record.starts_with(b"100755 "),
+                "Historical protobuf imports must be regular committed files: {:?}",
+                path
+            );
+            let target = temp.path().join(&path);
+            std::fs::create_dir_all(target.parent().unwrap())?;
+            std::fs::write(target, repo.materialize(commit, &path)?.bytes)?;
+        }
+        let mut roots = includes
+            .iter()
+            .map(|p| temp.path().join(p))
+            .collect::<Vec<_>>();
+        roots.push(temp.path().to_path_buf());
+        Document::read(&temp.path().join(&self.path), &roots)
     }
 
     pub fn parse(&self) -> Result<ApiDocumentation> {
@@ -74,7 +150,10 @@ pub(super) fn read(args: &DiffArgs) -> Result<(Input, Input)> {
                     ))?;
                 (old, new)
             };
-            Ok((Input::committed(old, from), Input::committed(new, to)))
+            Ok((
+                Input::committed(old, from, repo.root()),
+                Input::committed(new, to, repo.root()),
+            ))
         }
         _ => bail!("Provide OLD NEW or both --from-ref and --to-ref"),
     }

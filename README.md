@@ -5,13 +5,31 @@
 [![License: Apache-2.0](https://img.shields.io/crates/l/vimanam.svg)](LICENSE)
 [![MSRV](https://img.shields.io/badge/MSRV-1.96-blue.svg)](Cargo.toml)
 
-Vimanam is a Rust CLI and library that turns OpenAPI/Swagger specs (JSON or YAML) into focused Markdown documentation and compares API contracts.
+Vimanam is a Rust CLI and library that turns OpenAPI/Swagger specs (JSON or YAML) and Protocol Buffers/gRPC contracts into focused Markdown documentation and compares API contracts.
 
 Vimanam stands for Aeroplane in Malayalam. Like an aeroplane, it can fly high and give you a 20,000 feet view of the APIs. It can fly low and give you a detailed view of the APIs. You can also run it along the ground to look deep into the API fields and descriptions.
 
 It supports OpenAPI 2.0 (Swagger) and OpenAPI 3.0 specifications, with [partial OpenAPI 3.1 support](#supported-openapi-versions).
 
 Besides producing documentation for humans, Vimanam is built for **feeding API specs to LLMs**: filter to the operations and fields you need, or generate a linked Skill tree that an agent can read on demand. See [Preparing API context for LLMs](#preparing-api-context-for-llms). Release history is in the [Changelog](CHANGELOG.md).
+
+## Protobuf and gRPC
+
+Read proto2/proto3 source with **protoc on PATH**, or read a complete binary
+`FileDescriptorSet` without external tools. Editions currently return an explicit
+unsupported-syntax error. See [protobuf inputs, rules and Git imports](docs/protobuf.md).
+
+```sh
+vimanam api.proto -I proto --detail full --include-schemas
+vimanam api.pb --operation-id example.v1.Service.List --max-tokens 1600
+vimanam api.pb --output-mode skill --detail full --include-schemas -o context/
+vimanam diff old.pb new.pb --format json --fail-on-breaking --breaking wire
+vimanam diff --from-ref v1 --to-ref v2 --spec proto/api.proto -I proto
+```
+
+Protobuf uses neutral JSON contract v2. `--breaking wire|source|all` scopes its
+failure gate; source includes JSON name compatibility. `--contract 1` remains
+OpenAPI-only.
 
 ## Rust library
 

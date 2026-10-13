@@ -60,7 +60,15 @@ pub(super) fn write_endpoint<W: Write>(
     if config.detail_level != DetailLevel::Basic {
         // Write parameters based on detail level
         if !endpoint.parameters.is_empty() {
-            writeln!(writer, "\n#### Parameters")?;
+            writeln!(
+                writer,
+                "\n#### {}",
+                if endpoint.method == "RPC" {
+                    "Input"
+                } else {
+                    "Parameters"
+                }
+            )?;
 
             // More detailed parameter listing
             writeln!(writer, "| Name | In | Required | Description |")?;
@@ -83,14 +91,37 @@ pub(super) fn write_endpoint<W: Write>(
                 writeln!(
                     writer,
                     "| `{}` | {} | {} | {} |",
-                    param.name, param.parameter_in, required_str, desc
+                    param.name,
+                    if endpoint.method == "RPC" {
+                        "message"
+                    } else {
+                        &param.parameter_in
+                    },
+                    required_str,
+                    desc
                 )?;
             }
         }
 
         // Write responses based on detail level
-        writeln!(writer, "\n#### Responses")?;
-        writeln!(writer, "| Code | Type | Description |")?;
+        writeln!(
+            writer,
+            "\n#### {}",
+            if endpoint.method == "RPC" {
+                "Result"
+            } else {
+                "Responses"
+            }
+        )?;
+        writeln!(
+            writer,
+            "| {} | Type | Description |",
+            if endpoint.method == "RPC" {
+                "Result"
+            } else {
+                "Code"
+            }
+        )?;
         writeln!(writer, "|------|------|-------------|")?;
 
         for (code, response) in &endpoint.responses {

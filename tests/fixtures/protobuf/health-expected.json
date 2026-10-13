@@ -1,0 +1,38 @@
+[
+  {
+    "kind": "operation_added",
+    "native_kind": "PROTOBUF_SURFACE_CHANGED",
+    "severity": "non_breaking",
+    "name": "grpc.health.v1.Health.Watch"
+  },
+  {
+    "kind": "constraint_changed",
+    "native_kind": "FILE_OPTIONS_CHANGED",
+    "severity": "review",
+    "name": "health-v1.0.0.proto"
+  },
+  {
+    "kind": "constraint_changed",
+    "native_kind": "FILE_OPTIONS_CHANGED",
+    "severity": "review",
+    "name": "health-v1.0.0.proto"
+  },
+  {
+    "kind": "constraint_changed",
+    "native_kind": "FILE_OPTIONS_CHANGED",
+    "severity": "review",
+    "name": "health-v1.0.0.proto"
+  },
+  {
+    "kind": "constraint_changed",
+    "native_kind": "FILE_OPTIONS_CHANGED",
+    "severity": "review",
+    "name": "health-v1.0.0.proto"
+  },
+  {
+    "kind": "enum_value_added",
+    "native_kind": "PROTOBUF_SURFACE_CHANGED",
+    "severity": "non_breaking",
+    "name": "grpc.health.v1.HealthCheckResponse.SERVICE_UNKNOWN"
+  }
+]

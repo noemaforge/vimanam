@@ -65,6 +65,54 @@ fn run_diff<W: Write>(args: &DiffArgs, output: &mut W) -> Result<bool> {
     let old_sha = diff::json::sha256_hex(&old_input.bytes);
     let new_sha = diff::json::sha256_hex(&new_input.bytes);
 
+    if old_input.is_protobuf() || new_input.is_protobuf() {
+        anyhow::ensure!(
+            old_input.is_protobuf() && new_input.is_protobuf(),
+            "Cannot compare different contract formats"
+        );
+        anyhow::ensure!(
+            args.contract == 2,
+            "Protobuf requires --contract 2; --contract 1 is OpenAPI-only"
+        );
+        let old = old_input.protobuf(&args.proto_paths)?;
+        let new = new_input.protobuf(&args.proto_paths)?;
+        let changes = crate::contract::protobuf::diff(&old, &new)?;
+        let breaking = changes.iter().any(|c| {
+            c.severity == crate::contract::Severity::Breaking
+                && match args.breaking {
+                    config::BreakingArg::All => true,
+                    config::BreakingArg::Wire => c.impacts.iter().any(|i| i == "wire"),
+                    config::BreakingArg::Source => {
+                        c.impacts.iter().any(|i| i == "source" || i == "wire_json")
+                    }
+                }
+        });
+        let document = crate::contract::json::to_json(
+            crate::contract::protobuf::adapt(&old),
+            crate::contract::protobuf::adapt(&new),
+            changes,
+            &old_sha,
+            &new_sha,
+            None,
+        );
+        let mut writer: Box<dyn Write + '_> = if let Some(path) = &args.output {
+            Box::new(BufWriter::new(create_output_file(path)?))
+        } else {
+            Box::new(output)
+        };
+        match args.format {
+            DiffFormatArg::Json => write_json_diff(&mut writer, &document)?,
+            DiffFormatArg::Markdown => crate::contract::protobuf::write_diff(
+                &mut writer,
+                &document.changes,
+                args.report,
+                &old,
+                &new,
+            )?,
+        };
+        return Ok(args.fail_on_breaking && breaking);
+    }
+
     let old = old_input.parse()?;
     let new = new_input.parse()?;
 
@@ -196,8 +244,14 @@ pub fn run<W: Write>(cli: &Cli, output: &mut W, notice: &mut dyn FnMut(&str)) ->
     let config = build_config(cli, notice);
 
     // Parse OpenAPI spec
-    let api_doc =
-        parse_openapi(input).with_context(|| format!("Failed to parse OpenAPI file: {input:?}"))?;
+    let api_doc = if crate::contract::protobuf::is_input(input) {
+        crate::contract::protobuf::documentation(&crate::contract::protobuf::Document::read(
+            input,
+            &cli.proto_paths,
+        )?)
+    } else {
+        parse_openapi(input).with_context(|| format!("Failed to parse OpenAPI file: {input:?}"))?
+    };
 
     // A selector naming no operation in the spec is a mistake, not an empty
     // document: fail before any output (or output file) is produced.

@@ -243,9 +243,11 @@ pub(super) fn render<W: Write>(
         ctx.protect_selection_path(protected_depth);
         writeln!(writer, "## {}\n", super::split::escape(&label))?;
         write_schema_table(writer, &selected, name, &mut ctx)?;
+        let source = config.source_path.as_deref().unwrap_or("spec.json");
         let command = format!(
-            "vimanam {} --schema {} --no-report",
-            super::split::quote_shell(config.source_path.as_deref().unwrap_or("spec.json")),
+            "vimanam {}{} --schema {} --no-report",
+            super::split::quote_shell(source),
+            super::split::proto_path_flags(source, &config.proto_paths),
             super::split::quote_shell(name)
         );
         writeln!(

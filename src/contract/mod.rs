@@ -5,6 +5,7 @@
 
 pub mod json;
 pub mod openapi;
+pub mod protobuf;
 use crate::diff::json::{canonical_json, sha256_hex};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};

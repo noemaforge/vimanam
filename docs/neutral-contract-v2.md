@@ -70,3 +70,13 @@ let json = vimanam::contract::json::openapi(&old, &new, None, "old-hash", "new-h
 ## Limits
 
 OpenAPI parsing, ref expansion cap and operation comparison limits remain as documented for v1: first request/response media type, exact HTTP path matching, composition compared by index, supported OpenAPI schema grammar rather than all JSON Schema. Independent type comparison retains local `$ref` identity and includes default/deprecation facts; descriptions/examples/titles/extensions are annotations. No automatic rename matching, GraphQL/protobuf parsing or focused multi-format Markdown/Skill rendering is included here. Large v2 surfaces add output volume by design; callers needing only changes can select that field after parsing.
+
+
+## Protobuf adapter
+
+The protobuf adapter now implements this surface for proto2/proto3 and complete
+FileDescriptorSets. Fields match on containing message FQN and field number;
+enum labels include their names to support aliases. Native locations retain FQN
+and number, with adapter-owned wire/source/JSON impacts and scoped failure gates.
+See [protobuf contracts](protobuf.md) for parser requirements, explicit Editions
+rejection, native rule names, stable identities and committed import handling.
