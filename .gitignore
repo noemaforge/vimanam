@@ -44,6 +44,7 @@ swagger*.json
 # Comparison-only fixtures (guard against *.md / openapi*.json patterns)
 !scripts/compare-fixtures/**
 !scripts/README.md
+!docs/**/*.md
 
 # Temporary files
 tmp/

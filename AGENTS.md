@@ -58,3 +58,15 @@ Unknown spec fields are preserved via `#[serde(flatten)] extensions` maps on mos
 - `--include-schemas` and `--include-examples` only take effect at `--detail full`. `--inline-schemas` only changes how `--include-schemas` renders, so it does nothing on its own.
 - Output determinism is a tested invariant (`output_is_deterministic` in `tests/cli/conversion.rs`): `paths`, `responses`, and `content` use `IndexMap` to preserve spec order. Don't swap them back to `HashMap`.
 - The blanket `*.md` ignore in `.gitignore` has explicit exceptions for `README.md`, `AGENTS.md`, `CLAUDE.md`, `tests/fixtures/**`, `scripts/compare-fixtures/**`, and `scripts/README.md` — new tracked markdown or fixtures need an exception too.
+
+## Neutral JSON contracts
+
+`src/contract/` adds the neutral surface, stable `ve2_` entity / `vc2_` change IDs,
+format-native coordinates and adapter-owned verdicts. `contract::openapi` adapts
+and compares OpenAPI beside unchanged `parse_openapi` / `diff::diff` APIs.
+`diff --format json` defaults to `--contract 2`; `--contract 1` selects the
+unchanged v1 serializer/IDs/verdict. V2 adds independent named-type/service facts
+and conservative review-only pagination inference; v2 JSON breaking exits use
+v2 summary verdicts. Markdown remains the existing OpenAPI report. Preserve
+explicit v1 fixture expectations. See `docs/neutral-contract-v2.md` for identity,
+input/output direction, pagination evidence and future GraphQL/protobuf mappings.

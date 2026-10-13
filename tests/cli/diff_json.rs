@@ -15,7 +15,7 @@ fn diff_json_run(args: &[&str]) -> (serde_json::Value, i32) {
     let output = vimanam()
         .arg("diff")
         .args(args)
-        .args(["--format", "json"])
+        .args(["--format", "json", "--contract", "1"])
         .output()
         .unwrap();
     let document: serde_json::Value =
@@ -359,6 +359,8 @@ fn diff_json_file_output_matches_stdout_bytes() {
             DIFF_NEW,
             "--format",
             "json",
+            "--contract",
+            "1",
             "-o",
             out_path.to_str().unwrap(),
         ])
@@ -368,7 +370,15 @@ fn diff_json_file_output_matches_stdout_bytes() {
 
     let file_bytes = std::fs::read(&out_path).unwrap();
     let stdout_bytes = vimanam()
-        .args(["diff", DIFF_OLD, DIFF_NEW, "--format", "json"])
+        .args([
+            "diff",
+            DIFF_OLD,
+            DIFF_NEW,
+            "--format",
+            "json",
+            "--contract",
+            "1",
+        ])
         .output()
         .unwrap()
         .stdout;
@@ -394,6 +404,8 @@ fn diff_json_fail_on_breaking_writes_the_complete_document_then_exits_3() {
             DIFF_NEW,
             "--format",
             "json",
+            "--contract",
+            "1",
             "--fail-on-breaking",
         ])
         .output()
@@ -413,6 +425,8 @@ fn diff_json_fail_on_breaking_writes_the_complete_document_then_exits_3() {
             DIFF_NEW,
             "--format",
             "json",
+            "--contract",
+            "1",
             "--fail-on-breaking",
             "-o",
             out_path.to_str().unwrap(),
@@ -435,6 +449,8 @@ fn diff_json_parse_failure_exits_1_with_empty_stdout() {
             "tests/fixtures/does_not_exist.json",
             "--format",
             "json",
+            "--contract",
+            "1",
         ])
         .assert()
         .failure()
@@ -461,7 +477,15 @@ fn diff_json_stdout_stays_parseable_when_diagnostics_fire() {
     let path = write_spec(&dir, "warny.json", &warny);
 
     let output = vimanam()
-        .args(["diff", &path, DIFF_NEW, "--format", "json"])
+        .args([
+            "diff",
+            &path,
+            DIFF_NEW,
+            "--format",
+            "json",
+            "--contract",
+            "1",
+        ])
         .env("RUST_LOG", "warn")
         .output()
         .unwrap();

@@ -184,7 +184,15 @@ fn cli_json_matches_library_bytes_and_deserializes_into_the_same_contract() {
             let mut expected = serde_json::to_vec_pretty(&document).unwrap();
             expected.push(b'\n');
             let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_vimanam"));
-            command.args(["diff", old_path, new_path, "--format", "json"]);
+            command.args([
+                "diff",
+                old_path,
+                new_path,
+                "--format",
+                "json",
+                "--contract",
+                "1",
+            ]);
             if report {
                 command.arg("--report");
             }
