@@ -239,6 +239,10 @@ pub struct DiffArgs {
     #[arg(long, value_enum, default_value_t = DiffFormatArg::Markdown)]
     pub format: DiffFormatArg,
 
+    /// JSON contract version (v2 neutral default; v1 legacy OpenAPI)
+    #[arg(long, value_parser = clap::value_parser!(u8).range(1..=2), default_value_t = 2)]
+    pub contract: u8,
+
     /// Exit with status 3 when any breaking change is found, after writing the
     /// full report
     ///

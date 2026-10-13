@@ -75,6 +75,17 @@ fn run_diff<W: Write>(args: &DiffArgs, output: &mut W) -> Result<bool> {
         None
     };
 
+    let neutral = if args.format == DiffFormatArg::Json && args.contract == 2 {
+        Some(crate::contract::json::openapi(
+            &old,
+            &new,
+            deltas.as_ref(),
+            &old_sha,
+            &new_sha,
+        )?)
+    } else {
+        None
+    };
     match (&args.output, args.format) {
         (Some(output_path), DiffFormatArg::Markdown) => {
             let mut writer = BufWriter::new(create_output_file(output_path)?);
@@ -86,7 +97,11 @@ fn run_diff<W: Write>(args: &DiffArgs, output: &mut W) -> Result<bool> {
         (Some(output_path), DiffFormatArg::Json) => {
             let document = diff::json::to_json(&spec_diff, deltas.as_ref(), &old_sha, &new_sha);
             let mut writer = BufWriter::new(create_output_file(output_path)?);
-            write_json_diff(&mut writer, &document)?;
+            if let Some(neutral) = &neutral {
+                write_json_diff(&mut writer, neutral)?;
+            } else {
+                write_json_diff(&mut writer, &document)?;
+            }
             info!("Diff written to: {:?}", output_path);
         }
         (None, DiffFormatArg::Markdown) => {
@@ -96,13 +111,21 @@ fn run_diff<W: Write>(args: &DiffArgs, output: &mut W) -> Result<bool> {
         }
         (None, DiffFormatArg::Json) => {
             let document = diff::json::to_json(&spec_diff, deltas.as_ref(), &old_sha, &new_sha);
-            write_json_diff(output, &document)?;
+            if let Some(neutral) = &neutral {
+                write_json_diff(output, neutral)?;
+            } else {
+                write_json_diff(output, &document)?;
+            }
         }
     }
 
     // The complete document is written and flushed before the exit code is
     // decided, so exit 3 never truncates the report.
-    if args.fail_on_breaking && spec_diff.has_breaking() {
+    if args.fail_on_breaking
+        && neutral
+            .as_ref()
+            .map_or_else(|| spec_diff.has_breaking(), |d| d.has_breaking())
+    {
         return Ok(true);
     }
     Ok(false)
@@ -119,7 +142,7 @@ fn file_extension(path: &Path) -> String {
 
 /// Pretty-prints the JSON diff with a trailing newline, flushing before
 /// returning so the exit-code check can never truncate the document.
-fn write_json_diff<W: Write>(writer: &mut W, document: &diff::json::JsonDiff) -> Result<()> {
+fn write_json_diff<W: Write, T: serde::Serialize>(writer: &mut W, document: &T) -> Result<()> {
     serde_json::to_writer_pretty(&mut *writer, document).context("Failed to write diff")?;
     writer.write_all(b"\n").context("Failed to write diff")?;
     writer.flush().context("Failed to write diff")

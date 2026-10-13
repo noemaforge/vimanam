@@ -36,7 +36,7 @@ mod render;
 mod value;
 
 pub use render::write_diff;
-use value::{Location, diff_values, locate};
+pub(crate) use value::{Location, diff_values, locate};
 pub use value::{ValueChange, ValueChangeKind};
 
 use std::collections::{HashMap, HashSet};

@@ -459,6 +459,7 @@ Options:
       --from-spec <PATH>  Literal repository-relative path at --from-ref; bypass rename discovery
       --to-spec <PATH>    Literal repository-relative path at --to-ref (requires --from-spec)
       --report            Append a Deltas section: spec hygiene counts for both specs and the estimated token size of each at --detail full --include-schemas
+      --contract <CONTRACT> JSON contract version [default: 2] [possible values: 1, 2]
       --format <FORMAT>   Output format: a Markdown report or machine-readable JSON with stable change IDs [default: markdown] [possible values: markdown, json]
       --fail-on-breaking  Exit with status 3 when any breaking change is found, after writing the full report
   -o, --output <FILE>     Write the diff to FILE instead of stdout
@@ -521,10 +522,10 @@ Unlike `--path-filter`, which is a substring match (`--path-filter /users` also 
 
 Under the default service grouping, services with no selected operation are left out, and an operation with several tags appears once under each of its services; add `--flat` to get each selected operation exactly once. The selection also scopes `--stats`, `--max-tokens` and the hygiene report.
 
-The selectors round-trip with [`diff --format json`](#json-output): every change record's `endpoint.method` and `endpoint.path` can be passed back as `--operation "<method> <path>"` to render that operation's contract from the old spec (for `endpoint_removed`) or the new one:
+The selectors round-trip with [`diff --format json`](#json-output): every legacy v1 change record's `endpoint.method` and `endpoint.path` can be passed back as `--operation "<method> <path>"` to render that operation's contract from the old spec (for `endpoint_removed`) or the new one:
 
 ```bash
-vimanam diff v1.json v2.json --format json \
+vimanam diff v1.json v2.json --format json --contract 1 \
   | jq -r '.changes[] | select(.kind != "endpoint_removed") | "\(.endpoint.method) \(.endpoint.path)"' \
   | sort -u | while read -r op; do vimanam v2.json --operation "$op" --detail full --include-schemas --flat --no-report; done
 ```
@@ -638,10 +639,34 @@ When a property is removed, the accompanying "removed from `required`" row for t
 
 ### JSON output
 
+`--format json` defaults to **schema version 2**, with neutral services,
+operations, arguments/results, named types, fields and enum values on both
+sides. Changes carry a stable `subject` ID, neutral `kind`, adapter-classified
+`severity`, native location/kind and factual details. `vc2_` change IDs exclude
+severity and raw input hashes. Independent named-type facts and inferred
+pagination facts supplement operation changes; unused or mixed-use type changes
+and pagination inference receive review verdicts. V2 summary counts include
+these facts, and its breaking count controls `--fail-on-breaking`.
+See [the model, identifiers, adapter mappings and pagination rules](docs/neutral-contract-v2.md).
+
+```bash
+vimanam diff old.json new.json --format json                 # neutral v2 default
+vimanam diff old.json new.json --format json --contract 2    # explicit v2
+vimanam diff old.json new.json --format json --contract 1    # legacy v1
+```
+
+For library use, `contract::openapi::adapt` builds a neutral surface,
+`contract::openapi::diff` returns neutral facts, and
+`contract::json::openapi` builds the v2 envelope. `contract::Adapter` and
+`contract::compare` support other adapter-created surfaces without HTTP identity.
+The existing `diff::json::to_json` remains the v1 library serializer.
+
+The reference below describes **explicit `--contract 1`** output.
+
 `--format json` prints the same comparison as a single pretty-printed JSON document (2-space indentation, trailing newline) on stdout or in `-o FILE`, for CI tools, review bots and coding agents. Exit codes are identical across formats, and under `--fail-on-breaking` the complete document is written and flushed before exit status 3. Diagnostics go to stderr only, so stdout is always one parseable document. `-o FILE` and stdout carry byte-identical bytes.
 
 ```bash
-vimanam diff old.json new.json --format json --report -o diff.json --fail-on-breaking
+vimanam diff old.json new.json --format json --contract 1 --report -o diff.json --fail-on-breaking
 ```
 
 ```json

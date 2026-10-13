@@ -215,7 +215,7 @@ fn malformed_operation_values_are_usage_errors() {
 /// <path>"` renders exactly that endpoint from the spec it exists in.
 fn assert_diff_round_trips(old: &str, new: &str) {
     let output = vimanam()
-        .args(["diff", old, new, "--format", "json"])
+        .args(["diff", old, new, "--format", "json", "--contract", "1"])
         .output()
         .unwrap();
     let document: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();

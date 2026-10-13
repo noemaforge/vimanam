@@ -27,6 +27,7 @@
 
 #![warn(missing_docs)]
 
+pub mod contract;
 #[cfg(feature = "cli")]
 mod costs;
 pub mod diff;
