@@ -15,7 +15,8 @@ use crate::models::{DetailLevel, DocConfig, GroupBy, OperationRef, OperationSele
 #[command(subcommand_negates_reqs = true, args_conflicts_with_subcommands = true)]
 #[command(group(ArgGroup::new("tree_output").args(["split", "output_mode"])))]
 pub struct Cli {
-    /// OpenAPI JSON/YAML, protobuf .proto, or binary FileDescriptorSet
+    /// OpenAPI JSON/YAML, protobuf .proto or FileDescriptorSet, GraphQL SDL
+    /// (.graphql/.graphqls file or directory) or introspection JSON
     #[arg(value_name = "FILE", required = true)]
     pub input: Option<PathBuf>,
 
@@ -67,7 +68,7 @@ pub struct Cli {
     #[arg(long, value_delimiter = ',')]
     pub method_filter: Option<Vec<String>>,
 
-    /// Render exactly this operation, as "METHOD /path/template" or "RPC package.Service.Method" (repeatable).
+    /// Render exactly this operation, as "METHOD /path/template", "RPC package.Service.Method" or "QUERY Query.field" (repeatable).
     /// The path must equal the spec's path template byte for byte (no
     /// substring, prefix or trailing-slash matching; Swagger 2 `basePath` is
     /// not part of it)
@@ -202,7 +203,7 @@ pub struct DiffArgs {
     #[arg(long, value_enum, default_value_t = BreakingArg::All)]
     pub breaking: BreakingArg,
 
-    /// The older spec (JSON or YAML)
+    /// The older spec (OpenAPI JSON/YAML, protobuf, or GraphQL SDL file/directory or introspection JSON)
     #[arg(
         value_name = "OLD",
         required_unless_present = "from_ref",
@@ -211,7 +212,7 @@ pub struct DiffArgs {
     )]
     pub old: Option<PathBuf>,
 
-    /// The newer spec (JSON or YAML)
+    /// The newer spec (same format as OLD)
     #[arg(
         value_name = "NEW",
         required_unless_present = "to_ref",
@@ -267,6 +268,15 @@ pub struct DiffArgs {
     /// Write the diff to FILE instead of stdout
     #[arg(short, long, value_name = "FILE")]
     pub output: Option<PathBuf>,
+
+    /// GraphQL Markdown only: append focused context for the affected root
+    /// fields of the new schema, with their reachable types
+    #[arg(long)]
+    pub context: bool,
+
+    /// Token budget for --context (detail is lowered until it fits)
+    #[arg(long, value_name = "N", requires = "context")]
+    pub max_tokens: Option<usize>,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, ValueEnum, Debug)]
@@ -464,7 +474,10 @@ fn parse_operation(value: &str) -> Result<OperationRef, String> {
     if method.is_empty()
         || !method.chars().all(|c| c.is_ascii_alphabetic())
         || !(path.starts_with('/')
-            || (method.eq_ignore_ascii_case("RPC")
+            || ((method.eq_ignore_ascii_case("RPC")
+                || ["QUERY", "MUTATION", "SUBSCRIPTION"]
+                    .iter()
+                    .any(|m| method.eq_ignore_ascii_case(m)))
                 && !path.is_empty()
                 && path
                     .chars()

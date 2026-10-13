@@ -88,3 +88,18 @@ existing budgets/schema selectors/Skill manifest protection apply. Tests in
 `tests/protobuf.rs` and `tests/protobuf_cli.rs` require protoc for source coverage;
 CI installs a pinned checksum-verified official compiler without system changes.
 See `docs/protobuf.md` and fixture provenance for limitations and native rules.
+
+## GraphQL adapter
+
+`src/contract/graphql.rs` parses SDL with graphql-parser (multi-file merge,
+extensions applied after all definitions, duplicate/unknown types rejected)
+and introspection JSON into one `Document`; built-in scalars and `__` types are
+excluded so both sources compare equal. Defaults are canonical GraphQL
+literals. `diff` owns the directional rule table and native rule names;
+`adapt` produces the v2 surface (root fields are operations, coordinates like
+`Type.field(arg:)`). Relay pagination needs edges/node/pageInfo plus
+first/after. Renderer IR uses `QUERY`/`MUTATION`/`SUBSCRIPTION` methods with
+coordinate paths and a `result` response. Introspection JSON is sniffed from
+bytes (`"__schema"`), so OpenAPI JSON detection is unchanged. `diff --context`
+is GraphQL-only. Tests: `tests/graphql.rs`, `tests/graphql_cli.rs`; see
+`docs/graphql.md` and fixture provenance.

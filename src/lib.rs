@@ -1,4 +1,6 @@
 //! Parse OpenAPI specs, compare their contracts, and render focused Markdown context.
+//! Protobuf and GraphQL adapters live in [`contract::protobuf`] and
+//! [`contract::graphql`], mapped onto the format-neutral [`contract`] model.
 //!
 //! The default `cli` feature includes the binary. Depend on the core alone with
 //! `vimanam = { version = "1.6", default-features = false }`.

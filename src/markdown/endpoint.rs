@@ -56,6 +56,10 @@ pub(super) fn write_endpoint<W: Write>(
         writeln!(writer, "**Operation ID:** `{}`", operation_id)?;
     }
 
+    // RPCs and GraphQL root fields use native input/result labels.
+    let graphql = crate::contract::graphql::OPERATION_METHODS.contains(&endpoint.method.as_str());
+    let native_result = endpoint.method == "RPC" || graphql;
+
     // Only include detailed information if detail level is not basic
     if config.detail_level != DetailLevel::Basic {
         // Write parameters based on detail level
@@ -65,6 +69,8 @@ pub(super) fn write_endpoint<W: Write>(
                 "\n#### {}",
                 if endpoint.method == "RPC" {
                     "Input"
+                } else if graphql {
+                    "Arguments"
                 } else {
                     "Parameters"
                 }
@@ -107,26 +113,23 @@ pub(super) fn write_endpoint<W: Write>(
         writeln!(
             writer,
             "\n#### {}",
-            if endpoint.method == "RPC" {
-                "Result"
-            } else {
-                "Responses"
-            }
+            if native_result { "Result" } else { "Responses" }
         )?;
         writeln!(
             writer,
             "| {} | Type | Description |",
-            if endpoint.method == "RPC" {
-                "Result"
-            } else {
-                "Code"
-            }
+            if native_result { "Result" } else { "Code" }
         )?;
         writeln!(writer, "|------|------|-------------|")?;
 
         for (code, response) in &endpoint.responses {
             let desc = response.description.as_deref().unwrap_or("-");
-            let content_type = extract_content_type(response).unwrap_or_default();
+            // GraphQL results have no media type; the description holds the type.
+            let content_type = if graphql {
+                "graphql".to_string()
+            } else {
+                extract_content_type(response).unwrap_or_default()
+            };
             writeln!(writer, "| {} | {} | {} |", code, content_type, desc)?;
         }
 

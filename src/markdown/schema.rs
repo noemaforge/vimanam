@@ -429,7 +429,11 @@ pub(super) fn first_success_response(endpoint: &Endpoint) -> Option<(&str, &Resp
         .responses
         .iter()
         .find(|(code, _)| {
-            code.starts_with('2') || (endpoint.method == "RPC" && code.as_str() == "result")
+            code.starts_with('2')
+                || ((endpoint.method == "RPC"
+                    || crate::contract::graphql::OPERATION_METHODS
+                        .contains(&endpoint.method.as_str()))
+                    && code.as_str() == "result")
         })
         .map(|(code, response)| (code.as_str(), response))
 }

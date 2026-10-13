@@ -1,0 +1,56 @@
+[
+  {
+    "coordinate": "HistoriesResult",
+    "kind": "type_added",
+    "native_kind": "TYPE_ADDED",
+    "severity": "non_breaking"
+  },
+  {
+    "coordinate": "MissionResult",
+    "kind": "type_added",
+    "native_kind": "TYPE_ADDED",
+    "severity": "non_breaking"
+  },
+  {
+    "coordinate": "Query.historiesResult",
+    "kind": "operation_added",
+    "native_kind": "FIELD_ADDED",
+    "severity": "non_breaking"
+  },
+  {
+    "coordinate": "Query.missionsResult",
+    "kind": "operation_added",
+    "native_kind": "FIELD_ADDED",
+    "severity": "non_breaking"
+  },
+  {
+    "coordinate": "Query.rocketsResult",
+    "kind": "operation_added",
+    "native_kind": "FIELD_ADDED",
+    "severity": "non_breaking"
+  },
+  {
+    "coordinate": "Query.shipsResult",
+    "kind": "operation_added",
+    "native_kind": "FIELD_ADDED",
+    "severity": "non_breaking"
+  },
+  {
+    "coordinate": "Result.count",
+    "kind": "field_removed",
+    "native_kind": "FIELD_REMOVED",
+    "severity": "breaking"
+  },
+  {
+    "coordinate": "RocketsResult",
+    "kind": "type_added",
+    "native_kind": "TYPE_ADDED",
+    "severity": "non_breaking"
+  },
+  {
+    "coordinate": "ShipsResult",
+    "kind": "type_added",
+    "native_kind": "TYPE_ADDED",
+    "severity": "non_breaking"
+  }
+]

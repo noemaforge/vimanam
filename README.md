@@ -5,7 +5,7 @@
 [![License: Apache-2.0](https://img.shields.io/crates/l/vimanam.svg)](LICENSE)
 [![MSRV](https://img.shields.io/badge/MSRV-1.96-blue.svg)](Cargo.toml)
 
-Vimanam is a Rust CLI and library that turns OpenAPI/Swagger specs (JSON or YAML) and Protocol Buffers/gRPC contracts into focused Markdown documentation and compares API contracts.
+Vimanam is a Rust CLI and library that turns OpenAPI/Swagger specs (JSON or YAML), Protocol Buffers/gRPC contracts and GraphQL schemas into focused Markdown documentation and compares API contracts.
 
 Vimanam stands for Aeroplane in Malayalam. Like an aeroplane, it can fly high and give you a 20,000 feet view of the APIs. It can fly low and give you a detailed view of the APIs. You can also run it along the ground to look deep into the API fields and descriptions.
 
@@ -30,6 +30,26 @@ vimanam diff --from-ref v1 --to-ref v2 --spec proto/api.proto -I proto
 Protobuf uses neutral JSON contract v2. `--breaking wire|source|all` scopes its
 failure gate; source includes JSON name compatibility. `--contract 1` remains
 OpenAPI-only.
+
+## GraphQL
+
+Read SDL (`.graphql`/`.graphqls`, or a directory whose SDL files are merged
+with their `extend` definitions) or an introspection result (`__schema` JSON).
+Root fields are operations (`QUERY Query.user`); types, fields, arguments and
+enum values use schema coordinates. See [GraphQL inputs and rules](docs/graphql.md).
+
+```sh
+vimanam schema.graphql --operation 'QUERY Query.user' --detail full --include-schemas --max-tokens 1600
+vimanam schema/ --output-mode skill --detail full --include-schemas -o context/
+vimanam diff old.graphql new.graphql --fail-on-breaking
+vimanam diff old.graphql introspection.json --format json
+vimanam diff old.graphql new.graphql --context --max-tokens 2000
+vimanam diff --from-ref v1 --to-ref v2 --spec api/schema.graphql
+```
+
+GraphQL uses neutral JSON contract v2; `--contract 1` remains OpenAPI-only.
+`--context` appends focused Markdown for the affected root fields and their
+reachable types.
 
 ## Rust library
 

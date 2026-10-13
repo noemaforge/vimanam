@@ -3,6 +3,7 @@
 //! OpenAPI is the first adapter. GraphQL and protobuf native locations are
 //! representable without making HTTP concepts part of neutral identity.
 
+pub mod graphql;
 pub mod json;
 pub mod openapi;
 pub mod protobuf;

@@ -66,6 +66,8 @@ tempfile = "3.27"
 prost = "0.14"
 prost-types = "0.14"
 prost-reflect = { version = "0.16", features = ["serde"] }
+# GraphQL SDL and literal parsing for the GraphQL adapter (#125)
+graphql-parser = "0.4"
 
 [dev-dependencies]
 # Testing
