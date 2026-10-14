@@ -384,12 +384,23 @@ pub(super) fn generate_by_method<W: Write>(
             .push(endpoint);
     }
 
+    // HTTP methods first in their conventional order, then native operation
+    // labels (RPC, GraphQL roots) sorted, so non-HTTP formats are not dropped.
+    let mut methods: Vec<&str> = vec![
+        "GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD", "TRACE",
+    ];
+    let mut native: Vec<&str> = method_endpoints
+        .keys()
+        .copied()
+        .filter(|m| !methods.contains(m))
+        .collect();
+    native.sort_unstable();
+    methods.extend(native);
+
     // Table of Contents (if enabled)
     if config.include_toc {
         writeln!(writer, "## HTTP Methods\n")?;
-        for method in [
-            "GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD", "TRACE",
-        ] {
+        for method in methods.iter().copied() {
             if let Some(endpoints) = method_endpoints.get(method)
                 && !endpoints.is_empty()
             {
@@ -405,17 +416,13 @@ pub(super) fn generate_by_method<W: Write>(
     prediscover_rendered_endpoints(
         &mut schema_ctx,
         config,
-        [
-            "GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD", "TRACE",
-        ]
-        .iter()
-        .filter_map(|method| method_endpoints.get(method))
-        .flatten()
-        .copied(),
+        methods
+            .iter()
+            .filter_map(|method| method_endpoints.get(method))
+            .flatten()
+            .copied(),
     );
-    for method in [
-        "GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD", "TRACE",
-    ] {
+    for method in methods.iter().copied() {
         if let Some(endpoints) = method_endpoints.get(method)
             && !endpoints.is_empty()
         {

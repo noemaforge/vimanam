@@ -14,7 +14,7 @@ Change IDs are `vc2_` plus SHA-256 of canonical `{v:2, subject, kind, details}`.
 
 ## Mapping designed for three adapters
 
-| Surface | OpenAPI (implemented) | GraphQL (designed) | Protobuf (paper check) |
+| Surface | OpenAPI (implemented) | GraphQL (implemented) | Protobuf (implemented) |
 |---|---|---|---|
 | Service | Declared/inferred tag; many-to-many operation membership | Query, Mutation, Subscription root | Fully qualified service |
 | Operation | METHOD + exact path | Root schema field coordinate | Fully qualified service RPC |
@@ -69,7 +69,7 @@ let json = vimanam::contract::json::openapi(&old, &new, None, "old-hash", "new-h
 
 ## Limits
 
-OpenAPI parsing, ref expansion cap and operation comparison limits remain as documented for v1: first request/response media type, exact HTTP path matching, composition compared by index, supported OpenAPI schema grammar rather than all JSON Schema. Independent type comparison retains local `$ref` identity and includes default/deprecation facts; descriptions/examples/titles/extensions are annotations. No automatic rename matching, GraphQL/protobuf parsing or focused multi-format Markdown/Skill rendering is included here. Large v2 surfaces add output volume by design; callers needing only changes can select that field after parsing.
+OpenAPI parsing, ref expansion cap and operation comparison limits remain as documented for v1: first request/response media type, exact HTTP path matching, composition compared by index, supported OpenAPI schema grammar rather than all JSON Schema. Independent type comparison retains local `$ref` identity and includes default/deprecation facts; descriptions/examples/titles/extensions are annotations. No automatic rename matching, GraphQL/protobuf parsing or focused multi-format Markdown/Skill rendering was part of #124; the protobuf and GraphQL adapters below add them. Large v2 surfaces add output volume by design; callers needing only changes can select that field after parsing.
 
 
 ## Protobuf adapter
@@ -80,3 +80,12 @@ enum labels include their names to support aliases. Native locations retain FQN
 and number, with adapter-owned wire/source/JSON impacts and scoped failure gates.
 See [protobuf contracts](protobuf.md) for parser requirements, explicit Editions
 rejection, native rule names, stable identities and committed import handling.
+
+## GraphQL adapter
+
+The GraphQL adapter implements this surface for SDL (single or merged files)
+and introspection results. Root fields are operations under their root
+service; types, fields, arguments, input fields and enum values use schema
+coordinates. Relay list-to-connection transitions are declared `breaking`
+pagination facts; connection control changes are `review`. See
+[GraphQL contracts](graphql.md).

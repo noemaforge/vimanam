@@ -58,12 +58,30 @@ fn write_output<W: Write>(
 /// (with deltas under `--report`) to the file or stdout, and returns exit
 /// status 3 under `--fail-on-breaking` when a breaking change was found. The
 /// full report is always written first.
-fn run_diff<W: Write>(args: &DiffArgs, output: &mut W) -> Result<bool> {
+fn run_diff<W: Write>(
+    args: &DiffArgs,
+    output: &mut W,
+    notice: &mut dyn FnMut(&str),
+) -> Result<bool> {
     // Each input is read once and parsed from the exact bytes that get hashed,
     // so `file_sha256` can never refer to different contents than the diff.
     let (old_input, new_input) = diff_inputs::read(args)?;
     let old_sha = diff::json::sha256_hex(&old_input.bytes);
     let new_sha = diff::json::sha256_hex(&new_input.bytes);
+
+    if old_input.is_graphql() || new_input.is_graphql() {
+        anyhow::ensure!(
+            old_input.is_graphql() && new_input.is_graphql(),
+            "Cannot compare different contract formats"
+        );
+        return run_graphql_diff(
+            args, &old_input, &new_input, &old_sha, &new_sha, output, notice,
+        );
+    }
+    anyhow::ensure!(
+        !args.context,
+        "--context is GraphQL-only; OpenAPI and protobuf diffs do not support it"
+    );
 
     if old_input.is_protobuf() || new_input.is_protobuf() {
         anyhow::ensure!(
@@ -179,6 +197,66 @@ fn run_diff<W: Write>(args: &DiffArgs, output: &mut W) -> Result<bool> {
     Ok(false)
 }
 
+/// GraphQL SDL/introspection diff through the neutral v2 model. Every
+/// argument is validated and both schemas parsed before output is created.
+fn run_graphql_diff<W: Write>(
+    args: &DiffArgs,
+    old_input: &diff_inputs::Input,
+    new_input: &diff_inputs::Input,
+    old_sha: &str,
+    new_sha: &str,
+    output: &mut W,
+    notice: &mut dyn FnMut(&str),
+) -> Result<bool> {
+    use crate::contract::graphql;
+    anyhow::ensure!(
+        args.contract == 2,
+        "GraphQL requires --contract 2; --contract 1 is OpenAPI-only"
+    );
+    anyhow::ensure!(
+        args.breaking == config::BreakingArg::All,
+        "--breaking wire|source applies to protobuf only"
+    );
+    anyhow::ensure!(
+        !(args.context && args.format == DiffFormatArg::Json),
+        "--context renders Markdown; it cannot be combined with --format json"
+    );
+    let old = old_input.graphql()?;
+    let new = new_input.graphql()?;
+    let changes = graphql::diff(&old, &new)?;
+    let document = crate::contract::json::to_json(
+        graphql::adapt(&old),
+        graphql::adapt(&new),
+        changes,
+        old_sha,
+        new_sha,
+        None,
+    );
+    let mut writer: Box<dyn Write + '_> = if let Some(path) = &args.output {
+        Box::new(BufWriter::new(create_output_file(path)?))
+    } else {
+        Box::new(output)
+    };
+    match args.format {
+        DiffFormatArg::Json => write_json_diff(&mut writer, &document)?,
+        DiffFormatArg::Markdown => {
+            graphql::write_diff(&mut writer, &document.changes, args.report, &old, &new)?;
+            if args.context {
+                writeln!(writer, "## Focused context\n")?;
+                graphql::write_focused_context(
+                    &mut writer,
+                    &new,
+                    &document.changes,
+                    args.max_tokens,
+                    notice,
+                )?;
+                writer.flush()?;
+            }
+        }
+    }
+    Ok(args.fail_on_breaking && document.has_breaking())
+}
+
 /// The raw file extension of `path`, used to pick the parser. Empty when the
 /// name has none; `parse_openapi_bytes` handles the case-insensitivity.
 fn file_extension(path: &Path) -> String {
@@ -230,7 +308,7 @@ pub fn run<W: Write>(cli: &Cli, output: &mut W, notice: &mut dyn FnMut(&str)) ->
                 .context("Failed to write shell completions")?;
             return Ok(false);
         }
-        Some(Commands::Diff(args)) => return run_diff(args, output),
+        Some(Commands::Diff(args)) => return run_diff(args, output, notice),
         None => {}
     }
 
@@ -244,7 +322,12 @@ pub fn run<W: Write>(cli: &Cli, output: &mut W, notice: &mut dyn FnMut(&str)) ->
     let config = build_config(cli, notice);
 
     // Parse OpenAPI spec
-    let api_doc = if crate::contract::protobuf::is_input(input) {
+    let api_doc = if crate::contract::graphql::is_input(input) {
+        crate::contract::graphql::documentation(
+            &crate::contract::graphql::Document::read(input)
+                .with_context(|| format!("Failed to parse GraphQL schema: {input:?}"))?,
+        )
+    } else if crate::contract::protobuf::is_input(input) {
         crate::contract::protobuf::documentation(&crate::contract::protobuf::Document::read(
             input,
             &cli.proto_paths,

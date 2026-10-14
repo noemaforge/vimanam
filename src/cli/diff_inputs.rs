@@ -18,17 +18,47 @@ pub(super) struct Input {
     path: PathBuf,
     source: String,
     snapshot: Option<(PathBuf, String)>,
+    /// Merged GraphQL SDL files when the input is a directory.
+    sdl_sources: Option<Vec<(String, String)>>,
 }
 
 impl Input {
     fn file(path: &Path) -> Result<Self> {
-        let source = format!("OpenAPI file: {path:?}");
+        if path.is_dir() {
+            // Directory inputs are merged GraphQL SDL. The hashed bytes are
+            // each relative path and file content, NUL-separated, in merge order.
+            let sources = crate::contract::graphql::read_sdl_dir(path)
+                .with_context(|| format!("Failed to read GraphQL schema directory: {path:?}"))?;
+            let mut bytes = Vec::new();
+            for (file, text) in &sources {
+                let relative = Path::new(file)
+                    .strip_prefix(path)
+                    .unwrap_or(Path::new(file));
+                bytes.extend_from_slice(relative.to_string_lossy().as_bytes());
+                bytes.push(0);
+                bytes.extend_from_slice(text.as_bytes());
+                bytes.push(0);
+            }
+            return Ok(Self {
+                bytes,
+                path: path.to_path_buf(),
+                source: format!("GraphQL schema directory: {path:?}"),
+                snapshot: None,
+                sdl_sources: Some(sources),
+            });
+        }
+        let source = if crate::contract::graphql::is_sdl_path(path) {
+            format!("GraphQL schema: {path:?}")
+        } else {
+            format!("OpenAPI file: {path:?}")
+        };
         let bytes = fs::read(path).with_context(|| format!("Failed to parse {source}"))?;
         Ok(Self {
             bytes,
             path: path.to_path_buf(),
             source,
             snapshot: None,
+            sdl_sources: None,
         })
     }
 
@@ -42,7 +72,26 @@ impl Input {
             bytes: snapshot.bytes,
             path: snapshot.path,
             source,
+            sdl_sources: None,
         }
+    }
+
+    /// GraphQL SDL file or directory, or introspection JSON (sniffed from
+    /// the exact bytes, so Git-ref inputs are recognised too).
+    pub fn is_graphql(&self) -> bool {
+        self.sdl_sources.is_some()
+            || crate::contract::graphql::is_sdl_path(&self.path)
+            || crate::contract::graphql::is_introspection_bytes(&self.bytes)
+    }
+
+    pub fn graphql(&self) -> Result<crate::contract::graphql::Document> {
+        use crate::contract::graphql::Document;
+        let label = self.path.display().to_string();
+        match &self.sdl_sources {
+            Some(sources) => Document::from_sdl(sources),
+            None => Document::from_bytes(&self.bytes, &label),
+        }
+        .with_context(|| format!("Failed to parse GraphQL schema: {label}"))
     }
 
     pub fn is_protobuf(&self) -> bool {

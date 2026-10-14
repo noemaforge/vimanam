@@ -19,6 +19,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- GraphQL schema inputs (#125): SDL files or merged SDL directories and
+  introspection JSON, mapped onto the neutral model with schema-coordinate
+  identities. Directional breaking rules for removals, nullability, required
+  arguments/input fields, type changes, union members, interfaces and type
+  kinds; review for output enum additions and defaults; Relay connection
+  pagination facts. Markdown report, neutral v2 JSON, `--fail-on-breaking`,
+  `diff --context [--max-tokens N]` focused context, Git refs and native
+  Markdown/Skill output. Public SpaceX Land schema fixtures at two versions. Backward-only
+  (`last`/`before`) Relay connections are detected, and symlinked SDL files
+  and directories are followed (loop-safe, each file merged once).
+
 - Protocol Buffers/gRPC source and descriptor-set inputs (#126), with imported
   proto2/proto3 symbols, native field/enum identities, source/wire compatibility
   verdicts, scoped `--breaking` gates, neutral v2 JSON, Markdown/report and
@@ -36,13 +47,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `vimanam diff --format json` now defaults to contract v2, including OpenAPI
   inputs. Select `--contract 1` for the legacy v1 envelope, change IDs, and
   verdicts. Existing OpenAPI library entry points and Markdown output remain
-  available. GraphQL parsing is a separate follow-up.
+  available.
 
 ### Fixed
 
 - Neutral contract v2 classifies `deprecated` on single-schema keywords,
   attributes request-body schema changes to the first body argument, and
   sorts pagination continuation names so declaration order is not a change.
+- `--group-by method` no longer drops non-HTTP operations: protobuf `RPC` and
+  GraphQL root-field sections follow the HTTP methods, sorted by label.
+  OpenAPI output is unchanged.
 
 ## [1.7.0] - 2026-10-07
 
