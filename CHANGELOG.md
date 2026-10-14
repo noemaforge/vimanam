@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.0] - 2026-10-14
+
+### Breaking
+
+- `vimanam diff --format json` now emits JSON contract v2 by default, for
+  OpenAPI inputs too. Scripts that parse the v1 envelope must pass
+  `--contract 1`, which keeps the v1 shape, change IDs and verdicts. The
+  library's v1 entry points (`diff::diff`, `diff::json::to_json`) are
+  unchanged.
+
 ### Added
 
 - Protocol Buffers/gRPC source and descriptor-set inputs (#126), with imported
@@ -441,7 +451,8 @@ already on `main`; only the version bump was missing.
 - Initial release: OpenAPI 2.0 (Swagger) JSON to Markdown with grouping,
   filtering, sorting, and detail levels
 
-[Unreleased]: https://github.com/noemaforge/vimanam/compare/v1.7.0...HEAD
+[Unreleased]: https://github.com/noemaforge/vimanam/compare/v2.0.0...HEAD
+[2.0.0]: https://github.com/noemaforge/vimanam/compare/v1.7.0...v2.0.0
 [1.7.0]: https://github.com/noemaforge/vimanam/compare/v1.6.0...v1.7.0
 [1.6.0]: https://github.com/noemaforge/vimanam/compare/v1.5.0...v1.6.0
 [1.5.0]: https://github.com/noemaforge/vimanam/compare/v1.4.2...v1.5.0
