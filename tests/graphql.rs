@@ -840,3 +840,81 @@ fn subscription_roots_are_operations() {
             .any(|e| e.method == "SUBSCRIPTION" && e.path == "Subscription.userChanged")
     );
 }
+
+const BACKWARD: &str = "users(last: Int = 10, before: String): UserConnection!";
+
+#[test]
+fn backward_only_connection_is_detected() {
+    let doc =
+        sdl(&format!("{BASE}{CONNECTION}").replace("users(first: Int = 10): [User!]!", BACKWARD));
+    let field = doc.types["Query"]
+        .fields
+        .iter()
+        .find(|f| f.name == "users")
+        .unwrap();
+    let evidence = graphql::pagination_evidence(&doc, field).unwrap();
+    assert_eq!(evidence["shape"], "connection");
+    assert_eq!(evidence["controls"]["last"]["default"], "10");
+    assert!(evidence["controls"].get("first").is_none());
+}
+
+#[test]
+fn list_to_backward_connection_is_pagination_changed() {
+    let old = format!("{BASE}{CONNECTION}");
+    let new = old.replace("users(first: Int = 10): [User!]!", BACKWARD);
+    let p = only(&changes(&old, &new), "RELAY_CONNECTION_ADOPTED");
+    assert_eq!(p.kind, ChangeKind::PaginationChanged);
+    assert_eq!(p.severity, Severity::Breaking);
+}
+
+#[test]
+fn backward_control_changes_are_review() {
+    let old = format!("{BASE}{CONNECTION}").replace("users(first: Int = 10): [User!]!", BACKWARD);
+    let default = changes(&old, &old.replace("last: Int = 10", "last: Int = 25"));
+    assert_eq!(
+        only(&default, "RELAY_CONNECTION_CONTROLS_CHANGED").severity,
+        Severity::Review
+    );
+    assert_eq!(
+        only(&default, "ARG_DEFAULT_CHANGED").severity,
+        Severity::Review
+    );
+    let retyped = changes(&old, &old.replace("before: String", "before: ID"));
+    let p = only(&retyped, "RELAY_CONNECTION_CONTROLS_CHANGED");
+    assert_eq!(p.severity, Severity::Review);
+    assert_eq!(p.details["after"]["controls"]["before"]["type"], "ID");
+}
+
+#[cfg(unix)]
+#[test]
+fn symlinked_sdl_is_followed_once_and_loops_terminate() {
+    use std::os::unix::fs::symlink;
+    let t = tempfile::tempdir().unwrap();
+    let shared = t.path().join("shared");
+    std::fs::create_dir(&shared).unwrap();
+    std::fs::write(shared.join("types.graphql"), "type Extra { x: Int }").unwrap();
+    let root = t.path().join("schema");
+    std::fs::create_dir(&root).unwrap();
+    std::fs::write(root.join("query.graphql"), "type Query { e: Extra }").unwrap();
+    symlink(shared.join("types.graphql"), root.join("link.graphql")).unwrap();
+    symlink(&shared, root.join("shared-dir")).unwrap(); // same file again via a dir link
+    symlink(&root, root.join("loop")).unwrap(); // cycle back to the root
+    let files = graphql::sdl_files(&root).unwrap();
+    assert_eq!(
+        files,
+        [root.join("link.graphql"), root.join("query.graphql")]
+    );
+    let doc = Document::read(&root).unwrap();
+    assert!(doc.types.contains_key("Extra"));
+    symlink(
+        t.path().join("missing.graphql"),
+        root.join("dangling.graphql"),
+    )
+    .unwrap();
+    assert!(
+        graphql::sdl_files(&root)
+            .unwrap_err()
+            .to_string()
+            .contains("dangling.graphql")
+    );
+}

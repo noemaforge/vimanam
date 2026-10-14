@@ -500,25 +500,49 @@ pub fn read_sdl_dir(dir: &Path) -> Result<Vec<(String, String)>> {
         .collect()
 }
 
-/// SDL files below a directory, sorted for deterministic merging. Symlinks
-/// are not followed.
+/// SDL files below a directory, sorted by path for deterministic merging.
+/// Symlinks are followed; a directory reached twice (including symlink loops)
+/// is listed once, and a file reached through several paths is merged once,
+/// under its first path in sort order. A dangling SDL-named link is an error.
 pub fn sdl_files(dir: &Path) -> Result<Vec<PathBuf>> {
     let mut out = vec![];
+    let mut visited = std::collections::HashSet::new();
     let mut stack = vec![dir.to_path_buf()];
     while let Some(d) = stack.pop() {
+        let canonical = d
+            .canonicalize()
+            .with_context(|| format!("Failed to resolve {d:?}"))?;
+        if !visited.insert(canonical) {
+            continue;
+        }
         for entry in std::fs::read_dir(&d).with_context(|| format!("Failed to list {d:?}"))? {
-            let entry = entry?;
-            let kind = entry.file_type()?;
-            let path = entry.path();
-            if kind.is_dir() {
+            let path = entry?.path();
+            let metadata = match std::fs::metadata(&path) {
+                Ok(m) => m,
+                Err(e) if is_sdl_path(&path) => {
+                    return Err(e).with_context(|| format!("Unreadable GraphQL SDL {path:?}"));
+                }
+                Err(_) => continue,
+            };
+            if metadata.is_dir() {
                 stack.push(path);
-            } else if kind.is_file() && is_sdl_path(&path) {
+            } else if metadata.is_file() && is_sdl_path(&path) {
                 out.push(path);
             }
         }
     }
     out.sort();
-    Ok(out)
+    let mut seen = std::collections::HashSet::new();
+    let mut unique = vec![];
+    for path in out {
+        let canonical = path
+            .canonicalize()
+            .with_context(|| format!("Failed to resolve {path:?}"))?;
+        if seen.insert(canonical) {
+            unique.push(path);
+        }
+    }
+    Ok(unique)
 }
 
 /// `.graphql` or `.graphqls`, case-insensitively.
@@ -1028,8 +1052,9 @@ pub fn adapt(doc: &Document) -> Contract {
 /// Pagination evidence for an output field. A list result is
 /// `{"shape":"list"}`. A Relay connection requires a named object/interface
 /// result with `pageInfo` and `edges` whose type has `node`, plus `first` and
-/// `after` arguments; its evidence records the item type and the
-/// `first`/`after`/`last`/`before` control types and defaults. GraphQL has no
+/// `after` (or `last` and `before`) arguments; its evidence records the item type and the
+/// `first`/`after`/`last`/`before` control types and defaults. Backward-only
+/// connections (`last` and `before`) qualify too. GraphQL has no
 /// standard declaration of page-size limits, so limits are not inferred.
 pub fn pagination_evidence(doc: &Document, field: &FieldDef) -> Option<Value> {
     if field.ty.is_list() {
@@ -1044,7 +1069,8 @@ pub fn pagination_evidence(doc: &Document, field: &FieldDef) -> Option<Value> {
     let edge = doc.types.get(edges.ty.named())?;
     let node = edge.fields.iter().find(|f| f.name == "node")?;
     let has = |n: &str| field.args.iter().any(|a| a.name == n);
-    if !(has("first") && has("after")) {
+    // Forward (`first`/`after`) or backward-only (`last`/`before`) Relay paging.
+    if !((has("first") && has("after")) || (has("last") && has("before"))) {
         return None;
     }
     let controls: BTreeMap<_, _> = field

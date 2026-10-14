@@ -3,8 +3,11 @@
 Vimanam reads GraphQL schemas as:
 
 - **SDL**: a `.graphql` or `.graphqls` file, or a directory. Every SDL file
-  below a directory (recursively, sorted by path, symlinks not followed) is
-  merged; `extend type`/`extend enum`/… may appear in any file. Duplicate type
+  below a directory (recursively, sorted by path) is merged. Symlinked files
+  and directories are followed; a directory reached twice (including symlink
+  loops) is read once, and a file reachable through several paths is merged
+  once, under its first path in sort order. A dangling `.graphql`/`.graphqls`
+  link is an error; `extend type`/`extend enum`/… may appear in any file. Duplicate type
   definitions, duplicate members from extensions, extensions of undefined
   types and references to undefined types are errors naming the file.
 - **Introspection JSON**: the result of an introspection query, either
@@ -96,7 +99,7 @@ stricter, input positions may only become looser.
 
 A field is a Relay connection when its named result type (object or
 interface) has `pageInfo` and `edges`, the edge type has `node`, and the field
-accepts `first` and `after`. Evidence records the connection and node types
+accepts `first` and `after` (forward) or `last` and `before` (backward-only). Evidence records the connection and node types
 and the `first`/`after`/`last`/`before` argument types and defaults; a list
 result records `shape: list`. A list field becoming a connection (or the
 reverse) is a breaking `pagination_changed` fact with `confidence: declared`,

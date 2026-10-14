@@ -16,7 +16,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   kinds; review for output enum additions and defaults; Relay connection
   pagination facts. Markdown report, neutral v2 JSON, `--fail-on-breaking`,
   `diff --context [--max-tokens N]` focused context, Git refs and native
-  Markdown/Skill output. Public SpaceX Land schema fixtures at two versions.
+  Markdown/Skill output. Public SpaceX Land schema fixtures at two versions. Backward-only
+  (`last`/`before`) Relay connections are detected, and symlinked SDL files
+  and directories are followed (loop-safe, each file merged once).
 
 - Protocol Buffers/gRPC source and descriptor-set inputs (#126), with imported
   proto2/proto3 symbols, native field/enum identities, source/wire compatibility
