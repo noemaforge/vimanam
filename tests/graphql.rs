@@ -587,6 +587,137 @@ fn connection_shape_without_first_after_is_not_pagination() {
     );
 }
 
+/// Matrix 3 of #139: `items` becomes `ItemConnection` with these fields.
+fn connection_adoption(fields: &str, args: &str, page_info: &str) -> Vec<Change> {
+    let old = "type Item { id: ID! }\ntype Query { items: [Item!]! }\n";
+    let new = format!(
+        "type Item {{ id: ID! }}\ntype PageInfo {{ {page_info} }}\n\
+         type ItemEdge {{ node: Item! cursor: String! }}\n\
+         type ItemConnection {{ {fields} }}\ntype Query {{ items({args}): ItemConnection! }}\n"
+    );
+    changes(old, &new)
+}
+const FULL_PAGE_INFO: &str = "endCursor: String hasNextPage: Boolean!";
+
+#[test]
+fn nodes_connections_are_pagination_with_matched_fields() {
+    for (fields, args, matched) in [
+        (
+            "edges: [ItemEdge!]! pageInfo: PageInfo!",
+            "first: Int, after: String",
+            "edges",
+        ),
+        (
+            "nodes: [Item!]! pageInfo: PageInfo!",
+            "first: Int, after: String",
+            "nodes",
+        ),
+        (
+            "edges: [ItemEdge!]! nodes: [Item!]! pageInfo: PageInfo!",
+            "first: Int, after: String",
+            "edges+nodes",
+        ),
+        (
+            "edges: [ItemEdge!]! pageInfo: PageInfo!",
+            "last: Int, before: String",
+            "edges",
+        ),
+        (
+            "nodes: [Item!]! pageInfo: PageInfo! totalCount: Int!",
+            "first: Int, after: String",
+            "nodes",
+        ),
+        (
+            "nodes: [Item!]! pageInfo: PageInfo!",
+            "last: Int, before: String",
+            "nodes",
+        ),
+    ] {
+        let all = connection_adoption(fields, args, FULL_PAGE_INFO);
+        let p = only(&all, "RELAY_CONNECTION_ADOPTED");
+        assert_eq!(p.kind, ChangeKind::PaginationChanged, "{fields}");
+        assert_eq!(p.severity, Severity::Breaking, "{fields}");
+        assert_eq!(p.details["confidence"], "declared", "{fields}");
+        assert_eq!(p.details["connection_fields"], matched, "{fields}");
+        assert_eq!(p.details["after"]["item"], "Item", "{fields}");
+        assert_eq!(p.details["after"]["connection"], "ItemConnection");
+    }
+}
+
+#[test]
+fn nodes_connection_without_full_page_info_is_inferred() {
+    let all = connection_adoption(
+        "nodes: [Item!]! pageInfo: PageInfo!",
+        "first: Int, after: String",
+        "hasNextPage: Boolean!",
+    );
+    let p = only(&all, "RELAY_CONNECTION_ADOPTED");
+    assert_eq!(p.details["confidence"], "inferred");
+    assert_eq!(p.details["connection_fields"], "nodes");
+    // Relay `edges` stays declared whatever `pageInfo` declares.
+    let all = connection_adoption(
+        "edges: [ItemEdge!]! pageInfo: PageInfo!",
+        "first: Int, after: String",
+        "hasNextPage: Boolean!",
+    );
+    assert_eq!(
+        only(&all, "RELAY_CONNECTION_ADOPTED").details["confidence"],
+        "declared"
+    );
+}
+
+#[test]
+fn non_connection_shapes_stay_undetected() {
+    for (fields, args) in [
+        (
+            "items: [Item!]! nextCursor: String",
+            "limit: Int, cursor: String",
+        ),
+        ("edges: [ItemEdge!]!", "first: Int, after: String"),
+        ("nodes: [Item!]!", "first: Int, after: String"),
+        // `nodes` must be a list.
+        (
+            "nodes: Item pageInfo: PageInfo!",
+            "first: Int, after: String",
+        ),
+        (
+            "nodes: [Item!]! pageInfo: PageInfo!",
+            "limit: Int, cursor: String",
+        ),
+    ] {
+        assert!(
+            connection_adoption(fields, args, FULL_PAGE_INFO)
+                .iter()
+                .all(|c| c.kind != ChangeKind::PaginationChanged),
+            "{fields} ({args})"
+        );
+    }
+}
+
+#[test]
+fn adding_nodes_beside_edges_is_not_a_pagination_change() {
+    let before = format!(
+        "type Item {{ id: ID! }}\ntype PageInfo {{ {FULL_PAGE_INFO} }}\n\
+         type ItemEdge {{ node: Item! cursor: String! }}\n\
+         type ItemConnection {{ edges: [ItemEdge!]! pageInfo: PageInfo! }}\n\
+         type Query {{ items(first: Int, after: String): ItemConnection! }}\n"
+    );
+    let after = before.replace(
+        "edges: [ItemEdge!]! pageInfo",
+        "edges: [ItemEdge!]! nodes: [Item!]! pageInfo",
+    );
+    assert!(
+        changes(&before, &after)
+            .iter()
+            .all(|c| c.kind != ChangeKind::PaginationChanged)
+    );
+    // Removing a nodes connection reports the shape it had.
+    let nodes = after.replace("edges: [ItemEdge!]! ", "");
+    let list = "type Item { id: ID! }\ntype Query { items: [Item!]! }\n";
+    let p = only(&changes(&nodes, list), "RELAY_CONNECTION_REMOVED");
+    assert_eq!(p.details["connection_fields"], "nodes");
+}
+
 // ----------------------------------------------------------------------------
 // Input handling
 

@@ -66,3 +66,67 @@ fn invalid_contract_is_usage_error_and_report_file_matches_stdout() {
     let document: Value = serde_json::from_slice(&stdout.stdout).unwrap();
     assert!(document["deltas"].is_object());
 }
+
+/// Swagger 2 keeps non-body parameter keywords and unmodelled schema keywords
+/// in `extensions` `HashMap`s; v2 JSON used to serialize them in random key
+/// order, so identical runs differed byte-for-byte.
+#[test]
+fn swagger_2_v2_json_is_byte_deterministic() {
+    let spec = |page_type: &str| {
+        serde_json::json!({
+            "swagger": "2.0",
+            "info": {"title": "Items", "version": "1"},
+            "paths": {"/items": {"get": {
+                "operationId": "listItems",
+                "parameters": [
+                    {"name": "page_token", "in": "query", "type": "string",
+                     "format": "byte", "minLength": 1, "maxLength": 64,
+                     "pattern": "^[a-z]+$", "default": "a", "x-order": 1},
+                    {"name": "page_size", "in": "query", "type": page_type,
+                     "format": "int32", "minimum": 1, "maximum": 100,
+                     "default": 10, "multipleOf": 1, "x-order": 2}
+                ],
+                "responses": {"200": {"description": "ok", "schema": {
+                    "$ref": "#/definitions/Page"}}}
+            }}},
+            "definitions": {"Page": {"type": "object", "properties": {
+                "items": {"type": "array", "items": {"type": "string",
+                    "readOnly": true, "minLength": 1, "maxLength": 9,
+                    "pattern": "^x", "x-name": "Item", "uniqueItems": false}},
+                "nextPageToken": {"type": "string", "readOnly": true,
+                    "minLength": 1, "maxLength": 64, "pattern": "^[a-z]+$",
+                    "x-name": "Token", "x-order": 3}
+            }}}
+        })
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let old = crate::common::write_spec(&dir, "old.json", &spec("integer"));
+    let new = crate::common::write_spec(&dir, "new.json", &spec("number"));
+    let run = || {
+        vimanam()
+            .args(["diff", &old, &new, "--format", "json"])
+            .output()
+            .unwrap()
+            .stdout
+    };
+    let first = run();
+    for _ in 0..7 {
+        assert_eq!(first, run(), "v2 JSON differed between identical runs");
+    }
+    // Extension-derived keys serialize sorted.
+    let document: Value = serde_json::from_slice(&first).unwrap();
+    let argument = document["new"]["contract"]["entities"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|e| e["kind"] == "argument" && e["name"] == "page_token")
+        .unwrap();
+    let keys: Vec<&String> = argument["attributes"]["schema"]
+        .as_object()
+        .unwrap()
+        .keys()
+        .collect();
+    let mut sorted = keys.clone();
+    sorted.sort();
+    assert_eq!(keys, sorted);
+}

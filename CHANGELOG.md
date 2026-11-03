@@ -7,7 +7,86 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- GraphQL schema inputs (#125, #133; merged after the 2.0.0 tag, which
+  cannot read GraphQL): SDL files or merged SDL directories and introspection
+  JSON, mapped onto the neutral model with schema-coordinate
+  identities. Directional breaking rules for removals, nullability, required
+  arguments/input fields, type changes, union members, interfaces and type
+  kinds; review for output enum additions and defaults; Relay connection
+  pagination facts. Markdown report, neutral v2 JSON, `--fail-on-breaking`,
+  `diff --context [--max-tokens N]` focused context, Git refs and native
+  Markdown/Skill output. Public SpaceX Land schema fixtures at two versions.
+  Backward-only (`last`/`before`) Relay connections are detected, and
+  symlinked SDL files and directories are followed (loop-safe, each file
+  merged once).
+- OpenAPI `diff` pairs an operation moved to a new path (#137): after exact
+  method+path matching, leftover operations of one method pair by an
+  `operationId`, then by path equality ignoring whole `v<digits>` segments
+  (`/v1/items` ↔ `/v2/items`), each key unique across the whole old and new
+  spec; ambiguous keys stay removed plus added. A pair is a breaking
+  `operation_moved` fact (Markdown "Endpoint moved") followed by the
+  operation's inner changes, including `pagination_changed`, attributed to the
+  new path; in v2 JSON, removal facts keep their old-side subjects and native
+  locations. `diff --exact-paths` restores exact matching. `--contract 1`
+  JSON is unchanged, and the library defaults (`diff::diff`,
+  `contract::openapi::diff`, `contract::json::openapi`) stay exact; the new
+  `diff_with`/`openapi_with` functions take `diff::EndpointMatching::Moves`.
+- README table of input formats by release (#136).
+
+### Changed
+
+- `vimanam diff` Markdown and v2 JSON output (the defaults) change for specs
+  where an operation moved path (#137): what 2.0.0 reported as an "Endpoint
+  removed" plus an "Endpoint added" (`operation_removed` + `operation_added`)
+  is now one breaking "Endpoint moved" (`operation_moved`) plus the inner
+  changes, with different `vc2_` IDs and summary counts. Pass `--exact-paths`
+  for the 2.0.0 output; `--format json --contract 1` is byte-identical.
+- OpenAPI pagination inference (#138) matches continuation names
+  case-insensitively ignoring `_`, `-`, `@` and `.`, with more specific names
+  (`continuationToken`, `nextLink`, `@odata.nextLink`, `after_cursor`,
+  `LastEvaluatedKey`, `next_url`, ...), continuations one object level down
+  (`response_metadata.next_cursor`, `links.next`), and generic names (`cursor`,
+  `next`, `after`) only when a token control or an end-of-results flag
+  (`has_more`, `end_of_stream`, `is_last`, `drained`, ...) corroborates them.
+  Details record the matched paths, `evidence_rule`, and a `corroborated`
+  confidence when an end flag adds to sufficient evidence. On a side the
+  2.0.0 rule (a top-level array plus one of its six top-level names) matches,
+  the evidence, confidence and rule are exactly 2.0.0's and extra end flags or
+  names are ignored. A pagination fact 2.0.0 emitted therefore keeps its
+  details and `vc2_` ID when the 2.0.0 rule matches both sides, or one side
+  while the broader rules find nothing on the other. It changes when the other
+  side has evidence only the broader rules see: renaming `nextPageToken` to
+  `next_token`, or moving it under `meta`, was a removal (`after: null`) in
+  2.0.0 and is now a fact with the new side's evidence and a new `vc2_` ID, so
+  a suppression list keyed on 2.0.0 IDs can fire again for such an operation.
+  Otherwise the new rules only add detections 2.0.0 missed.
+- GraphQL connections with `nodes` and `pageInfo` (no `edges`) are recognised
+  as pagination (#139), with the same native kinds. Details name the matched
+  `connection_fields` (`edges`, `nodes`, `edges+nodes`); a `nodes` connection
+  is `declared` when `pageInfo` has `hasNextPage` and `endCursor`, else
+  `inferred`. Because every GraphQL `pagination_changed` fact (Relay `edges`
+  ones included) now carries `connection_fields`, its `vc2_` ID differs from
+  builds of unreleased `main` after #133; no release contained GraphQL.
+
+### Fixed
+
+- `--group-by method` no longer drops non-HTTP operations: protobuf `RPC` and
+  GraphQL root-field sections follow the HTTP methods, sorted by label.
+  OpenAPI output is unchanged. (Merged with #133 after the 2.0.0 tag.)
+- The changelog no longer lists GraphQL under 2.0.0 (#136).
+- `vimanam diff --format json` (contract v2) is byte-deterministic:
+  schema keywords and Swagger 2 parameter keywords kept in the models'
+  `extensions` maps serialized in random `HashMap` order, so entity attributes
+  and pagination details of the same inputs could differ in key order between
+  runs. They are now sorted. `ve2_`/`vc2_` IDs were already stable (they hash
+  canonical JSON); Markdown and `--contract 1` output are unchanged.
+
 ## [2.0.0] - 2026-10-14
+
+GraphQL support (#125, #133) is not part of this release: it merged after the
+`v2.0.0` tag and is listed under [Unreleased].
 
 ### Breaking
 
@@ -18,17 +97,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   unchanged.
 
 ### Added
-
-- GraphQL schema inputs (#125): SDL files or merged SDL directories and
-  introspection JSON, mapped onto the neutral model with schema-coordinate
-  identities. Directional breaking rules for removals, nullability, required
-  arguments/input fields, type changes, union members, interfaces and type
-  kinds; review for output enum additions and defaults; Relay connection
-  pagination facts. Markdown report, neutral v2 JSON, `--fail-on-breaking`,
-  `diff --context [--max-tokens N]` focused context, Git refs and native
-  Markdown/Skill output. Public SpaceX Land schema fixtures at two versions. Backward-only
-  (`last`/`before`) Relay connections are detected, and symlinked SDL files
-  and directories are followed (loop-safe, each file merged once).
 
 - Protocol Buffers/gRPC source and descriptor-set inputs (#126), with imported
   proto2/proto3 symbols, native field/enum identities, source/wire compatibility
@@ -47,16 +115,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `vimanam diff --format json` now defaults to contract v2, including OpenAPI
   inputs. Select `--contract 1` for the legacy v1 envelope, change IDs, and
   verdicts. Existing OpenAPI library entry points and Markdown output remain
-  available.
+  available. GraphQL parsing is a separate follow-up.
 
 ### Fixed
 
 - Neutral contract v2 classifies `deprecated` on single-schema keywords,
   attributes request-body schema changes to the first body argument, and
   sorts pagination continuation names so declaration order is not a change.
-- `--group-by method` no longer drops non-HTTP operations: protobuf `RPC` and
-  GraphQL root-field sections follow the HTTP methods, sorted by label.
-  OpenAPI output is unchanged.
 
 ## [1.7.0] - 2026-10-07
 

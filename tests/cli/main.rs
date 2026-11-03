@@ -5,6 +5,7 @@ mod conversion;
 mod costs;
 mod diff;
 mod diff_json;
+mod diff_moves;
 mod diff_refs;
 mod neutral_json;
 mod report;

@@ -1049,27 +1049,65 @@ pub fn adapt(doc: &Document) -> Contract {
 // ---------------------------------------------------------------------------
 // Pagination
 
-/// Pagination evidence for an output field. A list result is
-/// `{"shape":"list"}`. A Relay connection requires a named object/interface
-/// result with `pageInfo` and `edges` whose type has `node`, plus `first` and
-/// `after` (or `last` and `before`) arguments; its evidence records the item type and the
-/// `first`/`after`/`last`/`before` control types and defaults. Backward-only
-/// connections (`last` and `before`) qualify too. GraphQL has no
-/// standard declaration of page-size limits, so limits are not inferred.
-pub fn pagination_evidence(doc: &Document, field: &FieldDef) -> Option<Value> {
-    if field.ty.is_list() {
-        return Some(json!({"shape": "list", "item": field.ty.named()}));
-    }
+/// How a connection type was recognised: its item fields and whether its
+/// `pageInfo` declares `hasNextPage` and `endCursor`.
+struct ConnectionMatch<'a> {
+    /// `edges`, `nodes` or `edges+nodes`.
+    fields: &'static str,
+    /// The item type: the edge's `node`, else the `nodes` element.
+    item: &'a str,
+    /// `pageInfo` has both `hasNextPage` and `endCursor`.
+    page_info_complete: bool,
+}
+
+/// Recognises a connection result: a named object/interface with `pageInfo`
+/// and either `edges` whose type has `node` (Relay) or a list `nodes`.
+fn connection_match<'a>(doc: &'a Document, field: &FieldDef) -> Option<ConnectionMatch<'a>> {
     let connection = doc.types.get(field.ty.named())?;
     if !matches!(connection.kind, TypeKind::Object | TypeKind::Interface) {
         return None;
     }
-    let edges = connection.fields.iter().find(|f| f.name == "edges")?;
-    connection.fields.iter().find(|f| f.name == "pageInfo")?;
-    let edge = doc.types.get(edges.ty.named())?;
-    let node = edge.fields.iter().find(|f| f.name == "node")?;
+    let member = |name: &str| connection.fields.iter().find(|f| f.name == name);
+    let page_info = member("pageInfo")?;
+    let edge_node = member("edges")
+        .and_then(|edges| doc.types.get(edges.ty.named()))
+        .and_then(|edge| edge.fields.iter().find(|f| f.name == "node"));
+    let nodes = member("nodes").filter(|nodes| nodes.ty.is_list());
+    let (fields, item) = match (edge_node, nodes) {
+        (Some(node), Some(_)) => ("edges+nodes", node.ty.named()),
+        (Some(node), None) => ("edges", node.ty.named()),
+        (None, Some(nodes)) => ("nodes", nodes.ty.named()),
+        (None, None) => return None,
+    };
+    let page_info_complete = doc.types.get(page_info.ty.named()).is_some_and(|t| {
+        ["hasNextPage", "endCursor"]
+            .iter()
+            .all(|name| t.fields.iter().any(|f| f.name == *name))
+    });
+    Some(ConnectionMatch {
+        fields,
+        item,
+        page_info_complete,
+    })
+}
+
+/// Pagination evidence for an output field. A list result is
+/// `{"shape":"list"}`. A connection requires a named object/interface result
+/// with `pageInfo` and either `edges` whose type has `node` (Relay) or a list
+/// `nodes` field (the GitHub-style shortcut), plus `first` and `after` (or
+/// `last` and `before`) arguments; its evidence records the item type and the
+/// `first`/`after`/`last`/`before` control types and defaults. Backward-only
+/// connections (`last` and `before`) qualify too. Which item fields matched
+/// is reported in the change details, not here, so adding `nodes` beside
+/// `edges` is not an evidence change. GraphQL has no standard declaration of
+/// page-size limits, so limits are not inferred.
+pub fn pagination_evidence(doc: &Document, field: &FieldDef) -> Option<Value> {
+    if field.ty.is_list() {
+        return Some(json!({"shape": "list", "item": field.ty.named()}));
+    }
+    let matched = connection_match(doc, field)?;
     let has = |n: &str| field.args.iter().any(|a| a.name == n);
-    // Forward (`first`/`after`) or backward-only (`last`/`before`) Relay paging.
+    // Forward (`first`/`after`) or backward-only (`last`/`before`) paging.
     if !((has("first") && has("after")) || (has("last") && has("before"))) {
         return None;
     }
@@ -1086,8 +1124,8 @@ pub fn pagination_evidence(doc: &Document, field: &FieldDef) -> Option<Value> {
         .collect();
     Some(json!({
         "shape": "connection",
-        "connection": connection.name,
-        "item": node.ty.named(),
+        "connection": field.ty.named(),
+        "item": matched.item,
         "controls": controls,
     }))
 }
@@ -1370,11 +1408,30 @@ impl Facts<'_> {
             // covered by the underlying type and argument facts.
             _ => return,
         };
+        // The connection side describes the match: `edges` (Relay) is
+        // declared; a `nodes`-only connection is declared only when `pageInfo`
+        // has `hasNextPage` and `endCursor`, else inferred.
+        let (doc, field) = if shape(&after).as_deref() == Some("connection") {
+            (self.new, n)
+        } else {
+            (self.old, o)
+        };
+        let matched = connection_match(doc, field).expect("connection evidence");
+        let confidence = if matched.fields != "nodes" || matched.page_info_complete {
+            "declared"
+        } else {
+            "inferred"
+        };
         self.push(
             entity_kind,
             c,
             (ChangeKind::PaginationChanged, native, severity),
-            json!({"confidence": "declared", "before": before, "after": after}),
+            json!({
+                "confidence": confidence,
+                "connection_fields": matched.fields,
+                "before": before,
+                "after": after,
+            }),
         );
     }
 

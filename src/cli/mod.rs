@@ -74,6 +74,10 @@ fn run_diff<W: Write>(
             old_input.is_graphql() && new_input.is_graphql(),
             "Cannot compare different contract formats"
         );
+        anyhow::ensure!(
+            !args.exact_paths,
+            "--exact-paths is OpenAPI-only; GraphQL and protobuf diffs do not support it"
+        );
         return run_graphql_diff(
             args, &old_input, &new_input, &old_sha, &new_sha, output, notice,
         );
@@ -91,6 +95,10 @@ fn run_diff<W: Write>(
         anyhow::ensure!(
             args.contract == 2,
             "Protobuf requires --contract 2; --contract 1 is OpenAPI-only"
+        );
+        anyhow::ensure!(
+            !args.exact_paths,
+            "--exact-paths is OpenAPI-only; GraphQL and protobuf diffs do not support it"
         );
         let old = old_input.protobuf(&args.proto_paths)?;
         let new = new_input.protobuf(&args.proto_paths)?;
@@ -134,7 +142,15 @@ fn run_diff<W: Write>(
     let old = old_input.parse()?;
     let new = new_input.parse()?;
 
-    let spec_diff = diff::diff(&old, &new);
+    // The v1 JSON contract keeps exact matching so its bytes and IDs never
+    // change; Markdown and v2 pair moved operations unless --exact-paths.
+    let v1_json = args.format == DiffFormatArg::Json && args.contract == 1;
+    let matching = if args.exact_paths || v1_json {
+        diff::EndpointMatching::Exact
+    } else {
+        diff::EndpointMatching::Moves
+    };
+    let spec_diff = diff::diff_with(&old, &new, matching);
     let deltas = if args.report {
         Some(diff::compute_deltas(&old, &new).context("Failed to compute deltas")?)
     } else {
@@ -142,12 +158,13 @@ fn run_diff<W: Write>(
     };
 
     let neutral = if args.format == DiffFormatArg::Json && args.contract == 2 {
-        Some(crate::contract::json::openapi(
+        Some(crate::contract::json::openapi_from(
             &old,
             &new,
             deltas.as_ref(),
             &old_sha,
             &new_sha,
+            &spec_diff,
         )?)
     } else {
         None

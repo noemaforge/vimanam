@@ -6,8 +6,8 @@ use anyhow::Result;
 use serde_json::Value;
 
 use super::{
-    Change, ChangeKind, Deltas, Location, Severity, SpecDiff, ValueChange, ValueChangeKind, locate,
-    severity,
+    Change, ChangeKind, Deltas, Location, MoveRule, Severity, SpecDiff, ValueChange,
+    ValueChangeKind, locate, severity,
 };
 
 /// Writes the diff as Markdown: a title, a one-line summary, one table per
@@ -33,9 +33,15 @@ pub fn write_diff<W: Write>(
     if diff.changes.is_empty() {
         writeln!(writer, "**Summary:** No changes.")?;
     } else {
+        // "N moved" appears only when moves were matched, so exact-path
+        // reports keep their established summary line.
+        let moved = match diff.endpoints_moved() {
+            0 => String::new(),
+            n => format!(", {n} moved"),
+        };
         writeln!(
             writer,
-            "**Summary:** {} added, {} removed, {} changed; {} breaking, {} non-breaking, {} to review",
+            "**Summary:** {} added, {} removed{moved}, {} changed; {} breaking, {} non-breaking, {} to review",
             pluralize(diff.endpoints_added(), "endpoint"),
             diff.endpoints_removed(),
             diff.endpoints_changed(),
@@ -131,6 +137,7 @@ fn change_label(kind: &ChangeKind) -> &'static str {
     match kind {
         ChangeKind::EndpointAdded => "Endpoint added",
         ChangeKind::EndpointRemoved { .. } => "Endpoint removed",
+        ChangeKind::EndpointMoved { .. } => "Endpoint moved",
         ChangeKind::ParameterAdded { .. } => "Parameter added",
         ChangeKind::ParameterRemoved { .. } => "Parameter removed",
         ChangeKind::ParameterRequiredChanged {
@@ -162,6 +169,15 @@ fn change_detail(kind: &ChangeKind) -> String {
             "-"
         }
         .to_string(),
+        ChangeKind::EndpointMoved {
+            from, matched_by, ..
+        } => format!(
+            "from `{from}` (matched by {})",
+            match matched_by {
+                MoveRule::OperationId => "operationId",
+                MoveRule::VersionSegment => "version segment",
+            }
+        ),
         ChangeKind::ParameterAdded {
             name,
             location,

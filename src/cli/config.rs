@@ -181,8 +181,13 @@ pub enum Commands {
     /// Compare two versions of a spec and report what changed, classified as
     /// breaking, non-breaking or needing review
     ///
-    /// Endpoints are matched by method and path, parameters by name and
-    /// location, responses by status code. Request and response bodies are
+    /// Endpoints are matched by method and path. For OpenAPI, operations left
+    /// over on each side are then paired as moved when they share the method
+    /// and an operationId, or the path ignoring whole `v<digits>` segments,
+    /// that is unique across each whole spec; `--exact-paths` (and
+    /// `--format json --contract 1`) report a move as removed plus added.
+    /// Parameters are matched by name and location, responses by status
+    /// code. Request and response bodies are
     /// compared as fully resolved schemas, so a change to a shared component
     /// schema is reported on every endpoint that references it. Only the
     /// first media type of a body or response is compared.
@@ -255,6 +260,13 @@ pub struct DiffArgs {
     /// JSON contract version (v2 neutral default; v1 legacy OpenAPI)
     #[arg(long, value_parser = clap::value_parser!(u8).range(1..=2), default_value_t = 2)]
     pub contract: u8,
+
+    /// OpenAPI only: match operations by exact METHOD and path, reporting a
+    /// moved operation (`/v1/x` → `/v2/x`, or a unique operationId at a new
+    /// path) as removed plus added. `--format json --contract 1` always
+    /// matches exactly
+    #[arg(long)]
+    pub exact_paths: bool,
 
     /// Exit with status 3 when any breaking change is found, after writing the
     /// full report
