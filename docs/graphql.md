@@ -78,7 +78,7 @@ Impacts are `source`. Native rule names appear in `native_kind`.
 | Required argument / input field added | breaking | `ARG_ADDED_REQUIRED`, `INPUT_FIELD_ADDED_REQUIRED` |
 | Type removed from a union | breaking | `UNION_MEMBER_REMOVED` |
 | Interface removed from an object/interface | breaking | `INTERFACE_REMOVED` |
-| List field became a Relay connection, or back | breaking | `RELAY_CONNECTION_ADOPTED`, `RELAY_CONNECTION_REMOVED` |
+| List field became a connection (`edges` or `nodes`), or back | breaking | `RELAY_CONNECTION_ADOPTED`, `RELAY_CONNECTION_REMOVED` |
 | Type, field, root type or optional argument/input field added | non-breaking | `TYPE_ADDED`, `FIELD_ADDED`, `ROOT_TYPE_ADDED`, `*_ADDED_OPTIONAL` |
 | Output field made non-null | non-breaking | `FIELD_MADE_NON_NULL` |
 | Input made nullable, or non-null with a default | non-breaking | `*_MADE_NULLABLE`, `*_MADE_NON_NULL_WITH_DEFAULT` |
@@ -97,15 +97,23 @@ stricter, input positions may only become looser.
 
 ## Pagination
 
-A field is a Relay connection when its named result type (object or
-interface) has `pageInfo` and `edges`, the edge type has `node`, and the field
-accepts `first` and `after` (forward) or `last` and `before` (backward-only). Evidence records the connection and node types
-and the `first`/`after`/`last`/`before` argument types and defaults; a list
-result records `shape: list`. A list field becoming a connection (or the
-reverse) is a breaking `pagination_changed` fact with `confidence: declared`,
-beside the underlying `field_type_changed` fact. A change of connection
-control types, defaults or presence is `review`. GraphQL has no standard
-declaration of page-size limits, so limits are not inferred.
+A field is a connection when its named result type (object or interface) has
+`pageInfo` and either `edges` whose type has `node` (Relay) or a list `nodes`
+field (the GitHub-style shortcut), and the field accepts `first` and `after`
+(forward) or `last` and `before` (backward-only). Evidence records the
+connection and item types (the edge's `node`, else the `nodes` element) and the
+`first`/`after`/`last`/`before` argument types and defaults; a list result
+records `shape: list`. A list field becoming a connection (or the reverse) is a
+breaking `pagination_changed` fact (`RELAY_CONNECTION_ADOPTED`/`_REMOVED`)
+beside the underlying `field_type_changed` fact. Details name the matched
+`connection_fields` (`edges`, `nodes` or `edges+nodes`) and `confidence`:
+`declared` for `edges`, and for `nodes` when `pageInfo` has `hasNextPage` and
+`endCursor`; otherwise `inferred`. (`connection_fields` is part of the hashed
+details, so these `vc2_` IDs differ from pre-release builds that lacked it.) Adding `nodes` beside `edges` is not an
+evidence change. A change of connection control types, defaults or presence is
+`review`. Non-Relay shapes (`items` + `nextCursor`) and `edges` without
+`pageInfo` are not connections. GraphQL has no standard declaration of
+page-size limits, so limits are not inferred.
 
 ## Output
 

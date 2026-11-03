@@ -5,6 +5,7 @@ use crate::diff::{self, Location, ValueChange, ValueChangeKind};
 use crate::utils::resolve_schema_value;
 use crate::{ApiDocumentation, Endpoint, Schema};
 use serde_json::json;
+use std::collections::{HashMap, HashSet};
 
 /// Conservative compatibility policy for context-free surface comparisons.
 pub struct OpenApiAdapter;
@@ -57,7 +58,7 @@ impl Adapter for OpenApiAdapter {
 
     fn classify(&self, subject: &Entity, kind: ChangeKind, _: &Value) -> (Severity, Vec<String>) {
         let severity = match kind {
-            ChangeKind::OperationRemoved => Severity::Breaking,
+            ChangeKind::OperationRemoved | ChangeKind::OperationMoved => Severity::Breaking,
             ChangeKind::OperationAdded | ChangeKind::TypeAdded | ChangeKind::ServiceAdded => {
                 Severity::NonBreaking
             }
@@ -277,7 +278,7 @@ pub fn adapt(api: &ApiDocumentation) -> Contract {
                 .schema
                 .as_ref()
                 .map(schema_value)
-                .unwrap_or_else(|| json!(p.extensions));
+                .unwrap_or_else(|| extensions_value(&p.extensions));
             let mut argument = node(
                 EntityKind::Argument,
                 &p.name,
@@ -395,17 +396,162 @@ fn verdict(s: diff::Severity) -> Severity {
 /// operation records provide directional breaking verdicts.
 ///
 /// Duplicate entity IDs in an adapted surface are returned as an error.
+/// Operations match by exact method and path; see [`diff_with`] for moves.
 pub fn diff(old: &ApiDocumentation, new: &ApiDocumentation) -> anyhow::Result<Vec<Change>> {
-    let legacy = diff::diff(old, new);
-    let json = diff::json::to_json(&legacy, None, "", "");
+    diff_with(old, new, diff::EndpointMatching::Exact)
+}
+
+/// [`diff()`] with explicit operation matching.
+///
+/// With [`diff::EndpointMatching::Moves`], an operation paired across a path
+/// move ([`diff::diff_with`]) emits one breaking `operation_moved` fact whose
+/// subject is the operation at its **new** coordinate, with the old method,
+/// path, pairing rule, differing operationIds and old entity ID
+/// (`from_operation`) in details. Inner facts (arguments, results, schema,
+/// deprecation, pagination) compare the pair as one operation and follow the
+/// exact-mode sides: removals (`argument_removed`, `result_removed`,
+/// `field_removed`, `enum_value_removed`) use old-side subjects and native
+/// locations, which resolve in the old surface; additions and changed facts
+/// use the new-side ones, which resolve in the new surface.
+pub fn diff_with(
+    old: &ApiDocumentation,
+    new: &ApiDocumentation,
+    matching: diff::EndpointMatching,
+) -> anyhow::Result<Vec<Change>> {
+    diff_from(old, new, &diff::diff_with(old, new, matching))
+}
+
+/// [`diff_with`] over an already computed endpoint diff of the same specs, so
+/// callers that also render it compute operation moves once.
+pub(crate) fn diff_from(
+    old: &ApiDocumentation,
+    new: &ApiDocumentation,
+    legacy: &diff::SpecDiff,
+) -> anyhow::Result<Vec<Change>> {
+    // Moved operations: (method, old path) -> new path.
+    let moved: HashMap<(&str, &str), &str> = legacy
+        .changes
+        .iter()
+        .filter_map(|c| match &c.kind {
+            diff::ChangeKind::EndpointMoved { from, .. } => Some((
+                (from.method.as_str(), from.path.as_str()),
+                c.endpoint.path.as_str(),
+            )),
+            _ => None,
+        })
+        .collect();
+    // The old spec with each moved operation re-keyed to its new path, so the
+    // supplemental passes below compare a moved pair as one operation.
+    let aligned;
+    let original_old = old;
+    let old = if moved.is_empty() {
+        old
+    } else {
+        let mut copy = old.clone();
+        for endpoint in &mut copy.endpoints {
+            if let Some(path) = moved.get(&(endpoint.method.as_str(), endpoint.path.as_str())) {
+                endpoint.path = (*path).to_string();
+            }
+        }
+        aligned = copy;
+        &aligned
+    };
+    let changes = compare_aligned(old, new, legacy)?;
+    if moved.is_empty() {
+        return Ok(changes);
+    }
+    Ok(restore_removal_sides(
+        changes,
+        original_old,
+        old,
+        new,
+        &moved,
+    ))
+}
+
+/// Re-keys removal facts on moved operations from the aligned old copy (old
+/// operation at the new path) back to the real old subject and native
+/// location, so they resolve in the old surface exactly as in exact mode.
+fn restore_removal_sides(
+    mut changes: Vec<Change>,
+    original_old: &ApiDocumentation,
+    aligned_old: &ApiDocumentation,
+    new: &ApiDocumentation,
+    moved: &HashMap<(&str, &str), &str>,
+) -> Vec<Change> {
+    let original = adapt(original_old);
+    let aligned = adapt(aligned_old);
+    debug_assert_eq!(original.entities.len(), aligned.entities.len());
+    let subjects: HashMap<&str, &str> = aligned
+        .entities
+        .iter()
+        .zip(&original.entities)
+        .filter(|(a, o)| a.id != o.id)
+        .map(|(a, o)| (a.id.as_str(), o.id.as_str()))
+        .collect();
+    let new_ids: HashSet<String> = adapt(new).entities.into_iter().map(|e| e.id).collect();
+    // (method, new path) -> old path
+    let old_paths: HashMap<(&str, &str), &str> = moved
+        .iter()
+        .map(|(&(method, from), &to)| ((method, to), from))
+        .collect();
+    for change in &mut changes {
+        let removal = matches!(
+            change.kind,
+            ChangeKind::ArgumentRemoved
+                | ChangeKind::ResultRemoved
+                | ChangeKind::FieldRemoved
+                | ChangeKind::EnumValueRemoved
+        );
+        let Some(&subject) = subjects.get(change.subject.as_str()) else {
+            continue;
+        };
+        if !removal && new_ids.contains(&change.subject) {
+            continue;
+        }
+        change.subject = subject.to_string();
+        if let NativeLocation::Openapi {
+            method: Some(method),
+            path: Some(path),
+            ..
+        } = &mut change.native
+            && let Some(&from) = old_paths.get(&(method.as_str(), path.as_str()))
+        {
+            *path = from.to_string();
+        }
+        change.refresh_id();
+    }
+    changes
+}
+
+/// The fact passes of [`diff_from`] over specs whose moved operations share a
+/// path, so every pair is compared as one operation.
+fn compare_aligned(
+    old: &ApiDocumentation,
+    new: &ApiDocumentation,
+    legacy: &diff::SpecDiff,
+) -> anyhow::Result<Vec<Change>> {
+    // Endpoint lookup for each legacy change: old spec first, then new.
+    let mut by_key: HashMap<(&str, &str), &Endpoint> = HashMap::new();
+    for e in old.endpoints.iter().chain(&new.endpoints) {
+        by_key
+            .entry((e.method.as_str(), e.path.as_str()))
+            .or_insert(e);
+    }
+    let new_by_key: HashMap<(&str, &str), &Endpoint> = new
+        .endpoints
+        .iter()
+        .map(|e| ((e.method.as_str(), e.path.as_str()), e))
+        .collect();
+    let json = diff::json::to_json(legacy, None, "", "");
     let mut changes = vec![];
     for (change, record) in legacy.changes.iter().zip(json.changes) {
         use diff::ChangeKind as K;
-        let e = old
-            .endpoints
-            .iter()
-            .chain(&new.endpoints)
-            .find(|e| e.method == change.endpoint.method && e.path == change.endpoint.path)
+        let e = *by_key
+            .get(&(
+                change.endpoint.method.as_str(),
+                change.endpoint.path.as_str(),
+            ))
             .expect("diff endpoint exists");
         let root = operation_coordinate(e);
         let mut subject = entity_id(Format::Openapi, EntityKind::Operation, &root);
@@ -413,8 +559,21 @@ pub fn diff(old: &ApiDocumentation, new: &ApiDocumentation) -> anyhow::Result<Ve
         let mut status = None;
         let mut pointer = String::new();
         let mut resolved = false;
+        let mut details = serde_json::to_value(record.details).unwrap();
         let kind = match &change.kind {
             K::EndpointAdded => ChangeKind::OperationAdded,
+            K::EndpointMoved { from, .. } => {
+                details["from_operation"] = json!(entity_id(
+                    Format::Openapi,
+                    EntityKind::Operation,
+                    &format!(
+                        "/paths/{}/{}",
+                        escape(&from.path),
+                        from.method.to_lowercase()
+                    ),
+                ));
+                ChangeKind::OperationMoved
+            }
             K::EndpointRemoved { .. } => ChangeKind::OperationRemoved,
             K::OperationIdChanged { .. } => ChangeKind::OperationRenamed,
             K::DeprecatedChanged { .. } => ChangeKind::DeprecatedChanged,
@@ -500,7 +659,7 @@ pub fn diff(old: &ApiDocumentation, new: &ApiDocumentation) -> anyhow::Result<Ve
                 .as_str()
                 .unwrap()
                 .into(),
-            details: serde_json::to_value(record.details).unwrap(),
+            details,
         };
         c.refresh_id();
         changes.push(c);
@@ -629,11 +788,7 @@ pub fn diff(old: &ApiDocumentation, new: &ApiDocumentation) -> anyhow::Result<Ve
     // operation uses for deprecation changes that the legacy schema differ
     // strips. The subject and native coordinate remain use-site specific.
     for before in &old.endpoints {
-        let Some(after) = new
-            .endpoints
-            .iter()
-            .find(|e| e.method == before.method && e.path == before.path)
-        else {
+        let Some(&after) = new_by_key.get(&(before.method.as_str(), before.path.as_str())) else {
             continue;
         };
         let root = operation_coordinate(before);
@@ -657,12 +812,12 @@ pub fn diff(old: &ApiDocumentation, new: &ApiDocumentation) -> anyhow::Result<Ve
                 .schema
                 .as_ref()
                 .map(|s| resolve_schema_value(s, old))
-                .unwrap_or_else(|| json!(parameter.extensions));
+                .unwrap_or_else(|| extensions_value(&parameter.extensions));
             let right = next
                 .schema
                 .as_ref()
                 .map(|s| resolve_schema_value(s, new))
-                .unwrap_or_else(|| json!(next.extensions));
+                .unwrap_or_else(|| extensions_value(&next.extensions));
             let subject = entity_id(
                 Format::Openapi,
                 EntityKind::Argument,
@@ -718,11 +873,7 @@ pub fn diff(old: &ApiDocumentation, new: &ApiDocumentation) -> anyhow::Result<Ve
         }
     }
     for e in &old.endpoints {
-        if let Some(next) = new
-            .endpoints
-            .iter()
-            .find(|n| n.method == e.method && n.path == e.path)
-        {
+        if let Some(&next) = new_by_key.get(&(e.method.as_str(), e.path.as_str())) {
             let before = pagination(e, old);
             let after = pagination(next, new);
             if before != after && (before.is_some() || after.is_some()) {
@@ -738,7 +889,14 @@ pub fn diff(old: &ApiDocumentation, new: &ApiDocumentation) -> anyhow::Result<Ve
                     impacts: vec!["source".into()],
                     native: native(Some(e), "", None, None, true),
                     native_kind: "pagination_inferred".into(),
-                    details: json!({"before":before,"after":after,"confidence":"inferred","evidence_rule":"list+request_controls+continuation"}),
+                    details: {
+                        // The side that now holds evidence describes it; for a
+                        // removal, the old evidence does.
+                        let (confidence, rule) = pagination_strength(
+                            after.as_ref().or(before.as_ref()).expect("one side"),
+                        );
+                        json!({"before":before,"after":after,"confidence":confidence,"evidence_rule":rule})
+                    },
                 };
                 c.refresh_id();
                 changes.push(c);
@@ -956,42 +1114,272 @@ fn is_schema_deprecation_pointer(pointer: &str) -> bool {
     }
     false
 }
+/// Request controls that establish an endpoint as possibly paginated. Names are
+/// exact (unchanged since 2.0.0, so existing evidence and IDs are stable).
+const PAGINATION_CONTROLS: &[&str] = &[
+    "page",
+    "size",
+    "pageSize",
+    "page_size",
+    "pageToken",
+    "page_token",
+    "cursor",
+    "limit",
+    "offset",
+];
+/// The exact top-level continuation names 2.0.0 recognised. A match on these
+/// keeps the 2.0.0 evidence shape (see [`pagination`]).
+const LEGACY_CONTINUATIONS: &[&str] = &[
+    "nextPageToken",
+    "next_page_token",
+    "nextPage",
+    "next_page",
+    "nextCursor",
+    "next_cursor",
+];
+/// Controls that carry a continuation token back to the server; they
+/// corroborate a generically named continuation field.
+const TOKEN_CONTROLS: &[&str] = &["cursor", "pageToken", "page_token"];
+/// Continuation field names that are specific enough on their own, compared
+/// after [`pagination_key`] normalisation.
+const SPECIFIC_CONTINUATIONS: &[&str] = &[
+    "nextpagetoken",
+    "nextpage",
+    "nextcursor",
+    "nextpagecursor",
+    "nexttoken",
+    "nextmarker",
+    "nextlink",
+    "nexturl",
+    "nextpageurl",
+    "nextpagelink",
+    "aftercursor",
+    "continuationtoken",
+    "continuation",
+    "lastevaluatedkey",
+    "odatanextlink",
+];
+/// Common words that are continuations only with corroboration: a string
+/// field (not a date) plus a token request control or an end-of-results flag.
+const GENERIC_CONTINUATIONS: &[&str] = &["cursor", "next", "after", "marker"];
+/// Boolean end-of-results (or more-results) flags: supporting evidence only.
+const END_FLAGS: &[&str] = &[
+    "hasmore",
+    "hasnext",
+    "hasnextpage",
+    "hasmoreresults",
+    "moreresults",
+    "endofstream",
+    "endofresults",
+    "islast",
+    "islastpage",
+    "lastpage",
+    "complete",
+    "iscomplete",
+    "done",
+    "drained",
+    "truncated",
+    "istruncated",
+];
+
+/// Case-insensitive name key ignoring `_`, `-`, `@` and `.` separators, so
+/// `next_cursor`, `nextCursor` and `@odata.nextLink` compare by their words.
+fn pagination_key(name: &str) -> String {
+    name.chars()
+        .filter(|c| !matches!(c, '_' | '-' | '@' | '.'))
+        .flat_map(char::to_lowercase)
+        .collect()
+}
+
+fn schema_has_type(schema: &Value, ty: &str) -> bool {
+    match schema.get("type") {
+        Some(Value::String(t)) => t == ty,
+        Some(Value::Array(types)) => types.iter().any(|t| t == ty),
+        _ => false,
+    }
+}
+
+/// A schema-less (Swagger 2 non-body) parameter's keywords as a JSON object
+/// with sorted keys. `extensions` is a `HashMap`, and `preserve_order` would
+/// otherwise serialize its random iteration order, making v2 JSON bytes vary
+/// between runs (IDs hash canonical JSON and were already stable).
+fn extensions_value(extensions: &HashMap<String, Value>) -> Value {
+    let mut entries: Vec<(&String, &Value)> = extensions.iter().collect();
+    entries.sort_by_key(|(key, _)| *key);
+    Value::Object(
+        entries
+            .into_iter()
+            .map(|(key, value)| (key.clone(), value.clone()))
+            .collect(),
+    )
+}
+
+/// A generic continuation must be an opaque string, not a timestamp filter.
+fn opaque_string(schema: &Value) -> bool {
+    schema_has_type(schema, "string")
+        && !schema
+            .get("format")
+            .and_then(Value::as_str)
+            .is_some_and(|f| matches!(f, "date" | "date-time" | "time"))
+}
+
+/// Inferred OpenAPI pagination evidence for one operation, or `None`.
+///
+/// Requires at least one exact [`PAGINATION_CONTROLS`] query parameter and a
+/// 2xx response whose ref-resolved schema has a direct array property and a
+/// continuation field, at the top level or one object level down
+/// (`links/next`). Specific names qualify alone; generic names need a token
+/// control or an end flag. Evidence records the controls and, per response,
+/// the matched continuation paths (top-level names bare, nested ones as
+/// pointer tokens joined by `/`), plus `generic_continuation` and `end_flags`
+/// keys only when present.
+///
+/// Stability: when the 2.0.0 rule (a top-level property whose `type` is the
+/// string `"array"` plus one of [`LEGACY_CONTINUATIONS`] at the top level)
+/// matches any response, the evidence is exactly the 2.0.0 evidence, built from
+/// only the responses that rule matched. The broader rules apply only when it
+/// matches none. This is per side: a 2.0.0 fact keeps its `vc2_` ID when the
+/// rule matches both sides, or one side while this returns `None` for the
+/// other. If the other side has broader-only evidence, it replaces 2.0.0's
+/// `null` and the fact's ID changes (pinned by
+/// `evidence_2_0_0_on_one_side_with_broader_evidence_on_the_other_changes_the_id`).
 fn pagination(e: &Endpoint, api: &ApiDocumentation) -> Option<Value> {
-    let mut controls:Vec<Value>=e.parameters.iter().filter(|p|p.parameter_in=="query"&&["page","size","pageSize","page_size","pageToken","page_token","cursor","limit","offset"].contains(&p.name.as_str())).map(|p|json!({"name":p.name,"schema":semantic_attributes(&p.schema.as_ref().map(schema_value).unwrap_or_else(||json!(p.extensions)))})).collect();
+    let query = || e.parameters.iter().filter(|p| p.parameter_in == "query");
+    let mut controls: Vec<Value> = query()
+        .filter(|p| PAGINATION_CONTROLS.contains(&p.name.as_str()))
+        .map(|p| {
+            json!({"name":p.name,"schema":semantic_attributes(&p.schema.as_ref().map(schema_value).unwrap_or_else(||extensions_value(&p.extensions)))})
+        })
+        .collect();
     controls.sort_by_key(canonical_json);
     if controls.is_empty() {
         return None;
     }
-    let mut responses: Vec<Value> = e
+    let resolved: Vec<(&String, Value)> = e
         .responses
         .iter()
         .filter(|(s, _)| s.starts_with('2'))
         .filter_map(|(s, r)| {
-            let schema = crate::markdown::response_schema(r)?;
-            let value = resolve_schema_value(schema, api);
+            crate::markdown::response_schema(r).map(|schema| (s, resolve_schema_value(schema, api)))
+        })
+        .collect();
+    let mut legacy: Vec<Value> = resolved
+        .iter()
+        .filter_map(|(s, value)| {
             let properties = value.get("properties")?.as_object()?;
             let list = properties
                 .values()
                 .any(|v| v.get("type").is_some_and(|t| t == "array"));
             let mut continuation: Vec<&String> = properties
                 .keys()
-                .filter(|key| {
-                    [
-                        "nextPageToken",
-                        "next_page_token",
-                        "nextPage",
-                        "next_page",
-                        "nextCursor",
-                        "next_cursor",
-                    ]
-                    .contains(&key.as_str())
-                })
+                .filter(|key| LEGACY_CONTINUATIONS.contains(&key.as_str()))
                 .collect();
             continuation.sort();
             (list && !continuation.is_empty())
                 .then(|| json!({"status":s,"continuation":continuation}))
         })
         .collect();
+    if !legacy.is_empty() {
+        legacy.sort_by_key(canonical_json);
+        return Some(json!({"controls":controls,"responses":legacy}));
+    }
+    let token_control = query().any(|p| TOKEN_CONTROLS.contains(&p.name.as_str()));
+    let mut responses: Vec<Value> = resolved
+        .iter()
+        .filter_map(|(s, value)| {
+            let properties = value.get("properties")?.as_object()?;
+            let list = properties.values().any(|v| schema_has_type(v, "array"));
+            if !list {
+                return None;
+            }
+            // Candidate `(path, key, schema)`: direct properties, then one
+            // object level down.
+            let mut fields: Vec<(String, String, &Value)> = vec![];
+            for (name, schema) in properties {
+                fields.push((name.clone(), pagination_key(name), schema));
+                if let Some(inner) = schema.get("properties").and_then(Value::as_object) {
+                    for (child, schema) in inner {
+                        let path = format!("{}/{}", escape(name), escape(child));
+                        fields.push((path, pagination_key(child), schema));
+                    }
+                }
+            }
+            let select = |accept: &dyn Fn(&str, &Value) -> bool| -> Vec<String> {
+                let mut paths: Vec<String> = fields
+                    .iter()
+                    .filter(|(_, key, schema)| accept(key, schema))
+                    .map(|(path, _, _)| path.clone())
+                    .collect();
+                paths.sort();
+                paths
+            };
+            let end_flags = select(&|key, schema| {
+                schema_has_type(schema, "boolean") && END_FLAGS.contains(&key)
+            });
+            let mut specific = select(&|key, _| SPECIFIC_CONTINUATIONS.contains(&key));
+            let corroborated = token_control || !end_flags.is_empty();
+            let generic = select(&|key, schema| {
+                corroborated && opaque_string(schema) && GENERIC_CONTINUATIONS.contains(&key)
+            });
+            if specific.is_empty() && generic.is_empty() {
+                return None;
+            }
+            specific.extend(generic.iter().cloned());
+            specific.sort();
+            let mut evidence = json!({"status":s,"continuation":specific});
+            if !generic.is_empty() {
+                evidence["generic_continuation"] = json!(generic);
+            }
+            if !end_flags.is_empty() {
+                evidence["end_flags"] = json!(end_flags);
+            }
+            Some(evidence)
+        })
+        .collect();
     responses.sort_by_key(canonical_json);
     (!responses.is_empty()).then(|| json!({"controls":controls,"responses":responses}))
+}
+
+/// `(confidence, evidence_rule)` for one side's evidence. A generic
+/// continuation needs one corroboration to be inferred at all; an end-of-results
+/// flag beyond that minimum raises confidence to `corroborated`. Never
+/// `declared`: OpenAPI has no pagination declaration.
+fn pagination_strength(evidence: &Value) -> (&'static str, String) {
+    let responses = evidence["responses"]
+        .as_array()
+        .map_or(&[][..], Vec::as_slice);
+    // The strongest response: specific names beat generic-only ones.
+    let specific = responses.iter().any(|r| {
+        r["continuation"].as_array().map_or(0, Vec::len)
+            > r["generic_continuation"].as_array().map_or(0, Vec::len)
+    });
+    let end_flag = responses.iter().any(|r| r.get("end_flags").is_some());
+    let token = evidence["controls"].as_array().is_some_and(|controls| {
+        controls.iter().any(|c| {
+            c["name"]
+                .as_str()
+                .is_some_and(|n| TOKEN_CONTROLS.contains(&n))
+        })
+    });
+    let mut rule = String::from("list+request_controls+");
+    rule.push_str(if specific {
+        "continuation"
+    } else {
+        "generic_continuation"
+    });
+    if !specific && token {
+        rule.push_str("+token_control");
+    }
+    if end_flag {
+        rule.push_str("+end_flag");
+    }
+    let corroborated = end_flag && (specific || token);
+    (
+        if corroborated {
+            "corroborated"
+        } else {
+            "inferred"
+        },
+        rule,
+    )
 }

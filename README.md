@@ -11,6 +11,16 @@ Vimanam stands for Aeroplane in Malayalam. Like an aeroplane, it can fly high an
 
 It supports OpenAPI 2.0 (Swagger) and OpenAPI 3.0 specifications, with [partial OpenAPI 3.1 support](#supported-openapi-versions).
 
+**Format support by release.** Check `vimanam --version` before depending on a format:
+
+| Input format | Supported since |
+|---|---|
+| OpenAPI 2.0 / 3.0 JSON | every release |
+| OpenAPI YAML (`.yaml`/`.yml`) | 1.0.0 |
+| OpenAPI 3.1 (partial; `type` arrays such as `["string", "null"]` parse) | 0.5.1 |
+| Protocol Buffers / gRPC (`.proto`, descriptor sets) | 2.0.0 |
+| GraphQL (SDL, introspection JSON) | 2.1.0 (not in 2.0.0) |
+
 Besides producing documentation for humans, Vimanam is built for **feeding API specs to LLMs**: filter to the operations and fields you need, or generate a linked Skill tree that an agent can read on demand. See [Preparing API context for LLMs](#preparing-api-context-for-llms). Release history is in the [Changelog](CHANGELOG.md).
 
 ## Protobuf and gRPC
@@ -498,6 +508,7 @@ Options:
       --to-spec <PATH>    Literal repository-relative path at --to-ref (requires --from-spec)
       --report            Append a Deltas section: spec hygiene counts for both specs and the estimated token size of each at --detail full --include-schemas
       --contract <CONTRACT> JSON contract version [default: 2] [possible values: 1, 2]
+      --exact-paths       OpenAPI only: match operations by exact METHOD and path, reporting a moved operation as removed plus added. `--format json --contract 1` always matches exactly
       --format <FORMAT>   Output format: a Markdown report or machine-readable JSON with stable change IDs [default: markdown] [possible values: markdown, json]
       --fail-on-breaking  Exit with status 3 when any breaking change is found, after writing the full report
   -o, --output <FILE>     Write the diff to FILE instead of stdout
@@ -657,13 +668,15 @@ before an output file is created or truncated.
 | Request schema changed | `POST /widgets` | `/properties/weight/format` changed `float` → `double` |
 ```
 
-**What is compared.** Endpoints are matched by method and path, parameters by name and location, responses by status code. Request and response bodies are compared as *resolved* schemas: every `$ref` is inlined first, so a change to a shared component schema shows up on every endpoint that references it — even when the operation object itself is byte-identical, which is the case a path-level or operation-level diff misses. Field-level differences are reported as JSON pointers into the resolved schema (`/properties/pricing`, `/items/type`). Descriptions, titles, examples and `x-*` extensions are ignored, and the order of `required` and `enum` members is irrelevant.
+**What is compared.** Endpoints are matched by method and path (then moved OpenAPI operations are paired, below), parameters by name and location, responses by status code. Request and response bodies are compared as *resolved* schemas: every `$ref` is inlined first, so a change to a shared component schema shows up on every endpoint that references it — even when the operation object itself is byte-identical, which is the case a path-level or operation-level diff misses. Field-level differences are reported as JSON pointers into the resolved schema (`/properties/pricing`, `/items/type`). Descriptions, titles, examples and `x-*` extensions are ignored, and the order of `required` and `enum` members is irrelevant.
+
+**Moved operations.** After exact matching, an operation left over on each side is paired when it has the same method and either the same `operationId` (unique across each whole spec) or the same path once whole `v<digits>` segments are ignored (`/api/v1/items` ↔ `/api/v2/items`; `/v1beta` is not a version segment), again unique across each whole spec. An ambiguous key pairs nothing: old `/v1/items` + `/v2/items` against new `/v2/items` + `/v3/items` is one exact match plus a removal and an addition. A pair is reported as a breaking **Endpoint moved** row (`operation_moved` in JSON v2) followed by every change inside the operation, attributed to the new path (in JSON v2, removals keep their old-side subjects), so new parameters, response fields and pagination are not lost. `--exact-paths` restores removal plus addition; `--contract 1` JSON always matches exactly.
 
 **Severity.** Every change is classified from the point of view of an existing client:
 
 | Severity | Examples |
 |----------|----------|
-| Breaking | endpoint or response code removed; parameter removed, newly required or moved; `operationId` changed; a `type` changed anywhere; request: property removed, property added to `required`, `enum` member removed, `additionalProperties` set to `false`, `nullable` set to `false` (clients sending `null` now fail); response: schema removed entirely, property removed, property removed from `required`, `enum` member removed, `nullable` set to `true` |
+| Breaking | endpoint or response code removed; endpoint moved to a new path; parameter removed, newly required or moved; `operationId` changed; a `type` changed anywhere; request: property removed, property added to `required`, `enum` member removed, `additionalProperties` set to `false`, `nullable` set to `false` (clients sending `null` now fail); response: schema removed entirely, property removed, property removed from `required`, `enum` member removed, `nullable` set to `true` |
 | Non-breaking | endpoint or response code added; optional parameter added; parameter made optional; `deprecated` toggled; `operationId` added; request: property added, `required` member removed, `enum` member added, `nullable` set to `true`; response: property added, `required` member added, `nullable` set to `false` |
 | Needs review | a response `enum` gaining a member (strictly typed clients reject values they do not know); anything else in a schema — `format`, `minimum`/`maximum`, `pattern`, `items` shape, `allOf`/`oneOf`/`anyOf` variants, other `additionalProperties` changes. Never trips `--fail-on-breaking` |
 
@@ -673,7 +686,7 @@ When a property is removed, the accompanying "removed from `required`" row for t
 
 `--report` appends a `## Deltas` section with the spec hygiene counts for both versions and the estimated token size of each at `--detail full --include-schemas`, so a spec update's documentation cost is visible alongside its API changes. `-o FILE` writes the report to a file (the subcommand has its own `-o`; the conversion flags do not apply to `diff`).
 
-**Known limitations.** Only the first media type of a request body or response is compared. A path-template rename (`/pets/{id}` → `/pets/{petId}`) appears as a removal plus an addition. `allOf`/`oneOf`/`anyOf` lists are compared index-wise, so reordering variants is reported as changes. The model drops `null` from OpenAPI 3.1 type arrays (`type: ["string", "null"]` is folded to `string`), so a nullability change expressed as a type array is not detected — only `nullable: true`/`false` is.
+**Known limitations.** Only the first media type of a request body or response is compared. A path-template rename (`/pets/{id}` → `/pets/{petId}`) appears as a removal plus an addition unless the operation keeps a unique `operationId`. `allOf`/`oneOf`/`anyOf` lists are compared index-wise, so reordering variants is reported as changes. The model drops `null` from OpenAPI 3.1 type arrays (`type: ["string", "null"]` is folded to `string`), so a nullability change expressed as a type array is not detected — only `nullable: true`/`false` is.
 
 ### JSON output
 
@@ -695,7 +708,9 @@ vimanam diff old.json new.json --format json --contract 1    # legacy v1
 
 For library use, `contract::openapi::adapt` builds a neutral surface,
 `contract::openapi::diff` returns neutral facts, and
-`contract::json::openapi` builds the v2 envelope. `contract::Adapter` and
+`contract::json::openapi` builds the v2 envelope. Both match operations by exact
+path; `contract::openapi::diff_with`, `contract::json::openapi_with` and
+`diff::diff_with` take `diff::EndpointMatching::Moves` for the CLI's move pairing. `contract::Adapter` and
 `contract::compare` support other adapter-created surfaces without HTTP identity.
 The existing `diff::json::to_json` remains the v1 library serializer.
 

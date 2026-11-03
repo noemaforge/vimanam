@@ -127,6 +127,9 @@ pub enum JsonChangeKind {
     EndpointAdded,
     /// An operation from the old spec was removed.
     EndpointRemoved,
+    /// An operation moved to a new path. Only produced by move matching,
+    /// which `--contract 1` never uses.
+    EndpointMoved,
     /// A parameter was added to a surviving operation.
     ParameterAdded,
     /// A parameter was removed from a surviving operation.
@@ -391,6 +394,23 @@ fn json_kind_and_details(kind: &ChangeKind) -> (JsonChangeKind, JsonDetails) {
             JsonChangeKind::EndpointRemoved,
             details(vec![("was_deprecated", json!(was_deprecated))]),
         ),
+        ChangeKind::EndpointMoved {
+            from,
+            matched_by,
+            old_operation_id,
+            new_operation_id,
+        } => {
+            let mut entries = vec![
+                ("old_method", json!(from.method)),
+                ("old_path", json!(from.path)),
+                ("matched_by", json!(matched_by.as_str())),
+            ];
+            if old_operation_id != new_operation_id {
+                entries.push(("old_operation_id", json!(old_operation_id)));
+                entries.push(("new_operation_id", json!(new_operation_id)));
+            }
+            (JsonChangeKind::EndpointMoved, details(entries))
+        }
         ChangeKind::ParameterAdded {
             name,
             location,
@@ -664,6 +684,28 @@ mod tests {
         }));
         assert_eq!(kind, "endpoint_removed");
         assert_eq!(details, json!({ "was_deprecated": true }));
+    }
+
+    #[test]
+    fn endpoint_moved_maps_origin_rule_and_differing_operation_ids() {
+        let moved = |old: &str, new: &str| ChangeKind::EndpointMoved {
+            from: EndpointRef {
+                method: "GET".into(),
+                path: "/v1/widgets".into(),
+            },
+            matched_by: crate::diff::MoveRule::VersionSegment,
+            old_operation_id: Some(old.into()),
+            new_operation_id: Some(new.into()),
+        };
+        let (kind, details) = contract(&record(moved("list", "list")));
+        assert_eq!(kind, "endpoint_moved");
+        assert_eq!(
+            details,
+            json!({"old_method": "GET", "old_path": "/v1/widgets", "matched_by": "version_segment"})
+        );
+        let (_, details) = contract(&record(moved("list", "export")));
+        assert_eq!(details["old_operation_id"], "list");
+        assert_eq!(details["new_operation_id"], "export");
     }
 
     #[test]

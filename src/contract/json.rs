@@ -66,14 +66,62 @@ pub fn openapi(
     old_sha: &str,
     new_sha: &str,
 ) -> anyhow::Result<JsonDiff> {
-    let legacy = crate::diff::json::to_json(&crate::diff::diff(old, new), deltas, old_sha, new_sha);
+    openapi_with(
+        old,
+        new,
+        deltas,
+        old_sha,
+        new_sha,
+        crate::diff::EndpointMatching::Exact,
+    )
+}
+
+/// [`openapi`] with explicit operation matching; `Moves` pairs operations
+/// moved across a path change (see [`super::openapi::diff_with`]).
+pub fn openapi_with(
+    old: &crate::ApiDocumentation,
+    new: &crate::ApiDocumentation,
+    deltas: Option<&Deltas>,
+    old_sha: &str,
+    new_sha: &str,
+    matching: crate::diff::EndpointMatching,
+) -> anyhow::Result<JsonDiff> {
+    openapi_from(
+        old,
+        new,
+        deltas,
+        old_sha,
+        new_sha,
+        &crate::diff::diff_with(old, new, matching),
+    )
+}
+
+/// [`openapi_with`] over an endpoint diff the caller already computed for the
+/// same specs (and also renders), so operation moves are paired once.
+pub(crate) fn openapi_from(
+    old: &crate::ApiDocumentation,
+    new: &crate::ApiDocumentation,
+    deltas: Option<&Deltas>,
+    old_sha: &str,
+    new_sha: &str,
+    legacy: &crate::diff::SpecDiff,
+) -> anyhow::Result<JsonDiff> {
+    // Deltas do not depend on the changes; convert them without re-diffing.
+    let empty = crate::diff::SpecDiff {
+        old_title: legacy.old_title.clone(),
+        old_version: legacy.old_version.clone(),
+        new_title: legacy.new_title.clone(),
+        new_version: legacy.new_version.clone(),
+        changes: Vec::new(),
+    };
+    let legacy_json = crate::diff::json::to_json(&empty, deltas, old_sha, new_sha);
     Ok(to_json(
         super::openapi::adapt(old),
         super::openapi::adapt(new),
-        super::openapi::diff(old, new)?,
+        super::openapi::diff_from(old, new, legacy)?,
         old_sha,
         new_sha,
-        legacy.deltas,
+        legacy_json.deltas,
     ))
 }
 
@@ -100,6 +148,13 @@ pub fn to_json(
             e.kind == super::EntityKind::Operation && old.entities.iter().any(|o| o.id == e.id)
         })
         .map(|e| e.id.as_str())
+        // A moved operation survives under its new coordinate.
+        .chain(
+            changes
+                .iter()
+                .filter(|c| c.kind == super::ChangeKind::OperationMoved)
+                .map(|c| c.subject.as_str()),
+        )
         .collect();
     let operations_changed = changes
         .iter()

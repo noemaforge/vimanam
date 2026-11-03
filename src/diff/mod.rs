@@ -20,14 +20,28 @@
 //!
 //! Only a response's first media type is compared (the same one the renderer
 //! documents, see `response_schema`), and only the first request-body media
-//! type. `allOf`/`oneOf`/`anyOf` lists are compared index-wise. A path-template
-//! rename (`/pets/{id}` → `/pets/{petId}`) appears as a removal plus an
-//! addition.
+//! type. `allOf`/`oneOf`/`anyOf` lists are compared index-wise. With [`diff`]
+//! a path-template rename (`/pets/{id}` → `/pets/{petId}`) appears as a
+//! removal plus an addition; [`diff_with`] and [`EndpointMatching::Moves`]
+//! pair it when the operationId is unique across both specs.
+//!
+//! # Moved operations
+//!
+//! [`diff`] matches by exact `(METHOD, path)` only. [`diff_with`] with
+//! [`EndpointMatching::Moves`] then pairs the leftover removed and added
+//! operations of the same method, first by `operationId`, then by path
+//! equality after replacing whole `v<digits>` segments (`/api/v1/items` ↔
+//! `/api/v2/items`; `/v1beta` is not a version segment). A key pairs only when
+//! it is unique across the whole old and the whole new document, so pairings
+//! are one-to-one; ambiguity keeps the removal and addition. A pair yields [`ChangeKind::EndpointMoved`]
+//! followed by the ordinary changes inside the operation, all attributed to
+//! the new endpoint.
 //!
 //! # Determinism
 //!
 //! Changes are emitted in old-spec order (old endpoints first, then endpoints
-//! only the new spec has, each in its spec's order) and the canonical schema
+//! only the new spec has, each in its spec's order; a moved operation sits at
+//! its old position) and the canonical schema
 //! values have sorted keys, so the same pair of specs always produces
 //! byte-identical output.
 
@@ -88,6 +102,19 @@ pub enum ChangeKind {
     EndpointRemoved {
         /// Whether the removed endpoint was already deprecated.
         was_deprecated: bool,
+    },
+    /// An operation moved to a new path (reported only by [`diff_with`] with
+    /// [`EndpointMatching::Moves`]). The change's `endpoint` is the new one;
+    /// callers of `from` break.
+    EndpointMoved {
+        /// The old-spec method and path.
+        from: EndpointRef,
+        /// The rule that paired the two operations.
+        matched_by: MoveRule,
+        /// The old operationId.
+        old_operation_id: Option<String>,
+        /// The new operationId.
+        new_operation_id: Option<String>,
     },
     /// A parameter was added to a surviving operation.
     ParameterAdded {
@@ -170,6 +197,37 @@ pub enum ChangeKind {
     },
 }
 
+/// How [`diff_with`] pairs operations across the two specs.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum EndpointMatching {
+    /// Exact `(METHOD, path)` only; what [`diff`] uses.
+    #[default]
+    Exact,
+    /// Exact first, then unique moves of the leftovers (see the module docs).
+    Moves,
+}
+
+/// Why two operations at different paths were treated as one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum MoveRule {
+    /// The same `operationId`, unique in each whole document.
+    OperationId,
+    /// Paths equal once whole `v<digits>` segments are ignored.
+    VersionSegment,
+}
+
+impl MoveRule {
+    /// Stable snake_case name used in JSON details.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            MoveRule::OperationId => "operation_id",
+            MoveRule::VersionSegment => "version_segment",
+        }
+    }
+}
+
 /// The outcome of comparing two specs.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SpecDiff {
@@ -202,7 +260,16 @@ impl SpecDiff {
             .count()
     }
 
-    /// Endpoints present in both specs with at least one change.
+    /// Count operations paired across a path move.
+    pub fn endpoints_moved(&self) -> usize {
+        self.changes
+            .iter()
+            .filter(|change| matches!(change.kind, ChangeKind::EndpointMoved { .. }))
+            .count()
+    }
+
+    /// Endpoints present in both specs (including moved ones) with at least
+    /// one change.
     pub fn endpoints_changed(&self) -> usize {
         self.changes
             .iter()
@@ -238,6 +305,7 @@ impl SpecDiff {
 /// | Change | Severity |
 /// |---|---|
 /// | Endpoint removed | Breaking |
+/// | Endpoint moved (callers of the old path break) | Breaking |
 /// | Endpoint added | Non-breaking |
 /// | Parameter removed | Breaking |
 /// | Parameter added, required | Breaking |
@@ -288,7 +356,7 @@ impl SpecDiff {
 pub fn severity(change: &Change) -> Severity {
     match &change.kind {
         ChangeKind::EndpointAdded => Severity::NonBreaking,
-        ChangeKind::EndpointRemoved { .. } => Severity::Breaking,
+        ChangeKind::EndpointRemoved { .. } | ChangeKind::EndpointMoved { .. } => Severity::Breaking,
         ChangeKind::ParameterAdded { required, .. } => {
             if *required {
                 Severity::Breaking
@@ -379,8 +447,18 @@ fn response_schema_severity(change: &ValueChange) -> Severity {
 
 // ── structural diff ─────────────────────────────────────────────────────────
 
-/// Compares two specs (see the module docs for identity and ordering rules).
+/// Compares two specs by exact `(METHOD, path)` (see the module docs for
+/// identity and ordering rules).
 pub fn diff(old: &ApiDocumentation, new: &ApiDocumentation) -> SpecDiff {
+    diff_with(old, new, EndpointMatching::Exact)
+}
+
+/// Compares two specs with the given operation matching.
+pub fn diff_with(
+    old: &ApiDocumentation,
+    new: &ApiDocumentation,
+    matching: EndpointMatching,
+) -> SpecDiff {
     let mut changes = Vec::new();
 
     // Lookup tables only; iteration always follows the endpoint vectors so the
@@ -390,28 +468,51 @@ pub fn diff(old: &ApiDocumentation, new: &ApiDocumentation) -> SpecDiff {
         .iter()
         .map(|endpoint| ((endpoint.method.as_str(), endpoint.path.as_str()), endpoint))
         .collect();
+    let moves = match matching {
+        EndpointMatching::Exact => Vec::new(),
+        EndpointMatching::Moves => endpoint_moves(old, new),
+    };
+    let mut moved_from: Vec<Option<&EndpointMove>> = vec![None; old.endpoints.len()];
+    let mut moved_to = vec![false; new.endpoints.len()];
+    for m in &moves {
+        moved_from[m.old] = Some(m);
+        moved_to[m.new] = true;
+    }
+
+    for (index, old_endpoint) in old.endpoints.iter().enumerate() {
+        let key = (old_endpoint.method.as_str(), old_endpoint.path.as_str());
+        if let Some(new_endpoint) = new_by_key.get(&key) {
+            diff_endpoint(old_endpoint, new_endpoint, old, new, &mut changes);
+        } else if let Some(pair) = moved_from[index] {
+            let new_endpoint = &new.endpoints[pair.new];
+            changes.push(Change {
+                endpoint: EndpointRef::from(new_endpoint),
+                kind: ChangeKind::EndpointMoved {
+                    from: EndpointRef::from(old_endpoint),
+                    matched_by: pair.rule,
+                    old_operation_id: old_endpoint.operation_id.clone(),
+                    new_operation_id: new_endpoint.operation_id.clone(),
+                },
+            });
+            diff_endpoint(old_endpoint, new_endpoint, old, new, &mut changes);
+        } else {
+            changes.push(Change {
+                endpoint: EndpointRef::from(old_endpoint),
+                kind: ChangeKind::EndpointRemoved {
+                    was_deprecated: old_endpoint.deprecated,
+                },
+            });
+        }
+    }
+
     let old_keys: HashSet<(&str, &str)> = old
         .endpoints
         .iter()
         .map(|endpoint| (endpoint.method.as_str(), endpoint.path.as_str()))
         .collect();
-
-    for old_endpoint in &old.endpoints {
-        let key = (old_endpoint.method.as_str(), old_endpoint.path.as_str());
-        match new_by_key.get(&key) {
-            Some(new_endpoint) => diff_endpoint(old_endpoint, new_endpoint, old, new, &mut changes),
-            None => changes.push(Change {
-                endpoint: EndpointRef::from(old_endpoint),
-                kind: ChangeKind::EndpointRemoved {
-                    was_deprecated: old_endpoint.deprecated,
-                },
-            }),
-        }
-    }
-
-    for new_endpoint in &new.endpoints {
+    for (index, new_endpoint) in new.endpoints.iter().enumerate() {
         let key = (new_endpoint.method.as_str(), new_endpoint.path.as_str());
-        if !old_keys.contains(&key) {
+        if !old_keys.contains(&key) && !moved_to[index] {
             changes.push(Change {
                 endpoint: EndpointRef::from(new_endpoint),
                 kind: ChangeKind::EndpointAdded,
@@ -428,6 +529,113 @@ pub fn diff(old: &ApiDocumentation, new: &ApiDocumentation) -> SpecDiff {
     }
 }
 
+/// One operation paired across a path move: indexes into the old and new
+/// endpoint vectors.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct EndpointMove {
+    pub(crate) old: usize,
+    pub(crate) new: usize,
+    pub(crate) rule: MoveRule,
+}
+
+/// Pairs operations left over by exact `(METHOD, path)` matching: first by a
+/// shared `operationId`, then by version-normalised path. A key pairs only
+/// when it is unique across the **whole** document on each side (not merely
+/// among the leftovers), both holders are leftovers and their methods agree,
+/// so ambiguity keeps removal plus addition. Sorted by old index, so the
+/// result is deterministic. Linear in the endpoint count.
+pub(crate) fn endpoint_moves(old: &ApiDocumentation, new: &ApiDocumentation) -> Vec<EndpointMove> {
+    fn keys(doc: &ApiDocumentation) -> HashSet<(&str, &str)> {
+        doc.endpoints
+            .iter()
+            .map(|e| (e.method.as_str(), e.path.as_str()))
+            .collect()
+    }
+    let (old_keys, new_keys) = (keys(old), keys(new));
+    let mut removed: Vec<bool> = old
+        .endpoints
+        .iter()
+        .map(|e| !new_keys.contains(&(e.method.as_str(), e.path.as_str())))
+        .collect();
+    let mut added: Vec<bool> = new
+        .endpoints
+        .iter()
+        .map(|e| !old_keys.contains(&(e.method.as_str(), e.path.as_str())))
+        .collect();
+    if !removed.contains(&true) || !added.contains(&true) {
+        return Vec::new();
+    }
+
+    let mut moves = Vec::new();
+    type MoveKey = fn(&Endpoint) -> Option<String>;
+    let rules: [(MoveRule, MoveKey); 2] = [
+        (MoveRule::OperationId, |e| e.operation_id.clone()),
+        (MoveRule::VersionSegment, |e| {
+            version_normalized_path(&e.path).map(|path| format!("{} {path}", e.method))
+        }),
+    ];
+    for (rule, key) in rules {
+        // key -> (holders in the whole document, first holder's index)
+        let index = |doc: &ApiDocumentation| {
+            let mut map: HashMap<String, (usize, usize)> = HashMap::new();
+            for (i, e) in doc.endpoints.iter().enumerate() {
+                if let Some(k) = key(e) {
+                    map.entry(k).or_insert((0, i)).0 += 1;
+                }
+            }
+            map
+        };
+        let (old_index, new_index) = (index(old), index(new));
+        for (o, before) in old.endpoints.iter().enumerate() {
+            if !removed[o] {
+                continue;
+            }
+            let Some(k) = key(before) else { continue };
+            if old_index.get(&k).map(|&(count, _)| count) != Some(1) {
+                continue;
+            }
+            let Some(&(1, n)) = new_index.get(&k) else {
+                continue;
+            };
+            if !added[n] || new.endpoints[n].method != before.method {
+                continue;
+            }
+            moves.push(EndpointMove {
+                old: o,
+                new: n,
+                rule,
+            });
+            removed[o] = false;
+            added[n] = false;
+        }
+    }
+    moves.sort_by_key(|m| m.old);
+    moves
+}
+
+/// The path with every whole `v<digits>` segment replaced by `v*`, or `None`
+/// when it has no such segment (so unversioned paths never pair this way).
+fn version_normalized_path(path: &str) -> Option<String> {
+    let is_version = |segment: &str| {
+        segment
+            .strip_prefix(['v', 'V'])
+            .is_some_and(|digits| !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit()))
+    };
+    let mut found = false;
+    let normalized: Vec<&str> = path
+        .split('/')
+        .map(|segment| {
+            if is_version(segment) {
+                found = true;
+                "v*"
+            } else {
+                segment
+            }
+        })
+        .collect();
+    found.then(|| normalized.join("/"))
+}
+
 fn diff_endpoint(
     old_endpoint: &Endpoint,
     new_endpoint: &Endpoint,
@@ -435,7 +643,9 @@ fn diff_endpoint(
     new_doc: &ApiDocumentation,
     changes: &mut Vec<Change>,
 ) {
-    let endpoint = EndpointRef::from(old_endpoint);
+    // Attributed to the new endpoint: identical to the old one for an exact
+    // match, and the destination for a moved operation.
+    let endpoint = EndpointRef::from(new_endpoint);
 
     if old_endpoint.operation_id != new_endpoint.operation_id {
         changes.push(Change {
@@ -1017,6 +1227,43 @@ mod tests {
             })),
             Severity::Breaking
         );
+    }
+
+    #[test]
+    fn severity_endpoint_moved_is_breaking() {
+        assert_eq!(
+            severity(&change(ChangeKind::EndpointMoved {
+                from: EndpointRef {
+                    method: "GET".into(),
+                    path: "/v1/widgets".into(),
+                },
+                matched_by: MoveRule::VersionSegment,
+                old_operation_id: None,
+                new_operation_id: None,
+            })),
+            Severity::Breaking
+        );
+    }
+
+    #[test]
+    fn version_segments_are_whole_v_digit_segments() {
+        assert_eq!(
+            version_normalized_path("/api/v1/items").as_deref(),
+            Some("/api/v*/items")
+        );
+        assert_eq!(
+            version_normalized_path("/V12/items/{id}").as_deref(),
+            Some("/v*/items/{id}")
+        );
+        for unversioned in [
+            "/items",
+            "/v1beta/items",
+            "/v/items",
+            "/items/v1x",
+            "/av1/x",
+        ] {
+            assert_eq!(version_normalized_path(unversioned), None, "{unversioned}");
+        }
     }
 
     #[test]

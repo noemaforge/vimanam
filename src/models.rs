@@ -2,6 +2,19 @@ use indexmap::{IndexMap, IndexSet};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+/// Serializes a flattened `extensions` map with sorted keys. `HashMap`
+/// iteration order is random per process and serde_json's `preserve_order`
+/// would keep it, so JSON built from these models (neutral contract v2
+/// attributes) would otherwise differ byte-for-byte between runs.
+fn sorted_extensions<S: serde::Serializer>(
+    extensions: &HashMap<String, serde_json::Value>,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    let mut entries: Vec<_> = extensions.iter().collect();
+    entries.sort_by_key(|(key, _)| *key);
+    serializer.collect_map(entries)
+}
+
 /// OpenAPI spec model with flexibility for both 2.0 and 3.0 formats
 #[derive(Debug, Deserialize, Serialize)]
 pub(crate) struct OpenApiSpec {
@@ -27,7 +40,7 @@ pub(crate) struct OpenApiSpec {
     pub security: Option<Vec<HashMap<String, Vec<String>>>>,
 
     // Capture all other fields we don't explicitly model
-    #[serde(flatten)]
+    #[serde(flatten, serialize_with = "sorted_extensions")]
     pub extensions: HashMap<String, serde_json::Value>,
 }
 /// Policy for extra properties of an object schema.
@@ -173,7 +186,7 @@ pub struct Parameter {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub examples: Option<IndexMap<String, Example>>,
     /// Unrecognized source fields preserved as JSON values.
-    #[serde(flatten)]
+    #[serde(flatten, serialize_with = "sorted_extensions")]
     pub extensions: HashMap<String, serde_json::Value>,
 }
 
@@ -234,7 +247,7 @@ pub struct Schema {
     /// Whether extra object properties are allowed, or their schema.
     pub additional_properties: Option<AdditionalProperties>,
     /// Unrecognized source fields preserved as JSON values.
-    #[serde(flatten)]
+    #[serde(flatten, serialize_with = "sorted_extensions")]
     pub extensions: HashMap<String, serde_json::Value>,
 }
 
@@ -254,7 +267,7 @@ pub struct Response {
     #[serde(rename = "content", skip_serializing_if = "Option::is_none")]
     pub content: Option<IndexMap<String, MediaType>>,
     /// Unrecognized source fields preserved as JSON values.
-    #[serde(flatten)]
+    #[serde(flatten, serialize_with = "sorted_extensions")]
     pub extensions: HashMap<String, serde_json::Value>,
 }
 
@@ -290,7 +303,7 @@ pub(crate) struct Components {
     pub security_schemes: Option<IndexMap<String, SecurityScheme>>,
     pub links: Option<HashMap<String, Link>>,
     pub callbacks: Option<HashMap<String, Callback>>,
-    #[serde(flatten)]
+    #[serde(flatten, serialize_with = "sorted_extensions")]
     pub extensions: HashMap<String, serde_json::Value>,
 }
 
@@ -313,7 +326,7 @@ pub struct Example {
     #[serde(rename = "externalValue", skip_serializing_if = "Option::is_none")]
     pub external_value: Option<String>,
     /// Unrecognized source fields preserved as JSON values.
-    #[serde(flatten)]
+    #[serde(flatten, serialize_with = "sorted_extensions")]
     pub extensions: HashMap<String, serde_json::Value>,
 }
 
@@ -345,7 +358,7 @@ pub struct MediaType {
     /// Per-property encoding declarations.
     pub encoding: Option<HashMap<String, Encoding>>,
     /// Unrecognized source fields preserved as JSON values.
-    #[serde(flatten)]
+    #[serde(flatten, serialize_with = "sorted_extensions")]
     pub extensions: HashMap<String, serde_json::Value>,
 }
 
@@ -648,7 +661,7 @@ pub enum SortMethod {
 }
 
 /// Intermediate representation for documentation generation
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ApiDocumentation {
     /// Declared title.
     pub title: String,

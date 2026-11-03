@@ -130,6 +130,10 @@ pub enum ChangeKind {
     OperationRemoved,
     /// An operation's declared name changed.
     OperationRenamed,
+    /// An operation kept its identity across a native coordinate change (an
+    /// OpenAPI path move). The subject is the new coordinate; details name the
+    /// old one.
+    OperationMoved,
     /// A type appeared.
     TypeAdded,
     /// A type disappeared.
