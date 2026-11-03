@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.1.0] - 2026-11-04
+
 ### Added
 
 - GraphQL schema inputs (#125, #133; merged after the 2.0.0 tag, which
@@ -530,7 +532,8 @@ already on `main`; only the version bump was missing.
 - Initial release: OpenAPI 2.0 (Swagger) JSON to Markdown with grouping,
   filtering, sorting, and detail levels
 
-[Unreleased]: https://github.com/noemaforge/vimanam/compare/v2.0.0...HEAD
+[Unreleased]: https://github.com/noemaforge/vimanam/compare/v2.1.0...HEAD
+[2.1.0]: https://github.com/noemaforge/vimanam/compare/v2.0.0...v2.1.0
 [2.0.0]: https://github.com/noemaforge/vimanam/compare/v1.7.0...v2.0.0
 [1.7.0]: https://github.com/noemaforge/vimanam/compare/v1.6.0...v1.7.0
 [1.6.0]: https://github.com/noemaforge/vimanam/compare/v1.5.0...v1.6.0
