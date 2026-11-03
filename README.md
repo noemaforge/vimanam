@@ -725,7 +725,7 @@ vimanam diff old.json new.json --format json --contract 1 --report -o diff.json 
 ```json
 {
   "schema_version": 1,
-  "generator": { "name": "vimanam", "version": "2.0.0" },
+  "generator": { "name": "vimanam", "version": "2.1.0" },
   "old": { "title": "Widgets API", "version": "1.0.0", "file_sha256": "<64 lowercase hex>" },
   "new": { "title": "Widgets API", "version": "1.1.0", "file_sha256": "<64 lowercase hex>" },
   "summary": {
@@ -787,7 +787,7 @@ Generate your API docs in CI with the [vimanam GitHub Action](https://github.com
 ```yaml
 - uses: noemaforge/vimanam-action@4599a14c84d9d7bce1ec34ed9f12f3036f06b518 # v1
   with:
-    version: v2.0.0
+    version: v2.1.0
     spec: openapi.json
     output: docs/api-map.md
     detail: summary
