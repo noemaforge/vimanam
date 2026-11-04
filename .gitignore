@@ -47,6 +47,7 @@ swagger*.json
 !docs/**/*.md
 
 # Temporary files
+__pycache__/
 tmp/
 temp/
 .tmp/

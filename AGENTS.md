@@ -19,7 +19,11 @@ cargo fmt && cargo clippy            # format / lint
 scripts/compare-baseline.sh          # byte-for-byte output comparison against a baseline binary (see scripts/README.md)
 ```
 
-CI (`.github/workflows/ci.yml`) runs `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, and `cargo test` on every push and pull request, plus an MSRV build on Rust 1.96. The release workflow (`.github/workflows/release.yml`) fires on a `v*` tag: it verifies the tag matches the `Cargo.toml` version, publishes to crates.io, and builds cross-platform binaries packaged as compressed archives with SHA256 checksums.
+CI (`.github/workflows/ci.yml`) runs format, lint, default/core-only tests, release-gate Python tests, action pin validation, and an MSRV 1.96 build on main pushes and PRs. Stable and MSRV builds have separate Rust caches; only main saves caches. Superseded PR runs are cancelled; main runs are retained. Packaging checks run on main and on PRs changing release configuration/manifests. Scheduled CI runs only the dependency audit.
+
+Release (`.github/workflows/release.yml`) requires the exact tagged commit's latest full `ci.yml` push run on main to succeed, including all required jobs; it waits up to ten minutes for queued/running CI and never reruns tests. The tag must match `Cargo.toml`. After the five platform builds and hosting succeed, the reusable `publish-crate.yml` publishes the verified crate with `cargo publish --locked`, alongside Homebrew publication. Crates.io retains prerelease publishing; Homebrew remains stable-only.
+
+Regenerate release CI with `python3 scripts/generate-release.py`, not bare `dist generate`. Native action SHA pins live in `dist-workspace.toml`; the helper preserves the pre-plan CI guard and crates.io prerelease behavior. `python3 scripts/generate-release.py --check` verifies the full output without editing the worktree. Run gate regressions with `python3 -m unittest discover -s scripts -p 'test_*.py'`. See `scripts/README.md`.
 
 Real-world specs for manual testing may live at the repo root: `swagger.json` (small), `openapi.json` and `openapiv2.swagger.json` (~3 MB each). These and the root `*.md` sample outputs (`summary*.md`, `basicoutput.md`, `fulloutput.md`, etc.) are gitignored local artifacts — they won't exist in a fresh clone, and they're not docs to edit.
 
