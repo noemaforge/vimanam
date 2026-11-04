@@ -1,5 +1,39 @@
 # scripts
 
+## Release workflow maintenance
+
+Use cargo-dist 0.32.0 and Python 3.11+ to regenerate the release workflow:
+
+```bash
+python3 scripts/generate-release.py
+python3 scripts/generate-release.py --check
+python3 -m unittest discover -s scripts -p 'test_*.py'
+```
+
+`generate-release.py` generates from the current tracked and unignored files in
+an isolated temporary snapshot, so `--check` never edits the worktree. Action
+SHA pins come from `[dist.github-action-commits]` in `dist-workspace.toml`.
+Update those pins before regenerating when Dependabot changes release actions.
+Do not use bare `dist generate`: it omits two intentional customizations.
+
+- The plan job calls `require-green-ci.py` **before any dist commands**, with
+  read access to Actions. It resolves the checked-out commit and requires the
+  latest full `ci.yml` push run on `main` for that exact SHA to succeed. It checks
+  the stable test, MSRV build, and dependency audit jobs in the latest attempt,
+  rejecting missing/skipped jobs, failed/cancelled runs, PRs and scheduled audits.
+  Queued/running or not-yet-visible CI is polled for up to ten minutes; API
+  errors block the release. The tag must be `v` plus the package version.
+  A failed plan blocks both builds and publishing. A parallel custom plan job
+  is insufficient: cargo-dist's host job allows skipped build jobs.
+- The reusable crates.io publisher runs after successful builds and hosting,
+  including prereleases, while the Homebrew tap remains stable-only. Cargo's
+  packaged-source verification build is retained; release never runs tests.
+
+CI checks the generated output and packaging plan on main and on PRs changing
+manifests, workflow files or release scripts. Ordinary source-only PRs skip that
+step. Gate regression tests always run and use mocked read-only GitHub API
+responses, without publishing or sleeping.
+
 ## `benchmark-gitrefs.py`
 
 Measures the Git history engine through two release CLI binaries on generated

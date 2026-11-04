@@ -11,6 +11,11 @@ on:
 permissions:
   contents: read
 
+# Cancel obsolete PR runs, but keep every main commit's release-eligible CI run.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   test:
     name: Format, lint, test (stable)
@@ -20,12 +25,53 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 2
+
+      - name: Require all actions to be pinned to a full commit SHA
+        run: |
+          set -euo pipefail
+          unpinned="$(grep -rEn '^[[:space:]]*-?[[:space:]]*uses:[[:space:]]' .github/workflows \
+            | grep -vE 'uses:[[:space:]]*\./' \
+            | grep -vE 'uses:[[:space:]]*[^@]+@[0-9a-f]{40}([[:space:]]|"|$)' || true)"
+          if [ -n "$unpinned" ]; then
+            echo "::error::These actions are not pinned to a full commit SHA:"
+            echo "$unpinned"
+            exit 1
+          fi
+
+      - name: Test release gate
+        run: python3 -m unittest discover -s scripts -p 'test_*.py'
+
+      - name: Detect release configuration changes
+        id: release-config
+        run: |
+          # PR checkout is a merge commit: its first parent is the PR base.
+          changed_files="$(git diff --name-only HEAD^ HEAD -- Cargo.toml Cargo.lock dist-workspace.toml .github/workflows scripts/require-green-ci.py scripts/generate-release.py scripts/test_require_green_ci.py)"
+          if [ -n "$changed_files" ]; then
+            echo 'changed=true' >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check release packaging configuration
+        if: github.event_name == 'push' || steps.release-config.outputs.changed == 'true'
+        shell: bash
+        run: |
+          DIST_VERSION="$(python3 -c 'import tomllib; print(tomllib.load(open("dist-workspace.toml", "rb"))["dist"]["cargo-dist-version"])')"
+          curl --proto '=https' --tlsv1.2 -LsSf "https://github.com/axodotdev/cargo-dist/releases/download/v${DIST_VERSION}/cargo-dist-installer.sh" | sh
+          python3 scripts/generate-release.py --check
+          dist plan --output-format=json
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master 2026-06-20
         with:
           toolchain: stable
           components: rustfmt, clippy
+
+      - run: cargo fmt --check
+
+      - name: Cache Rust dependencies and build outputs
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Install pinned protoc without system changes
         run: |
@@ -34,16 +80,15 @@ jobs:
           unzip -q "$RUNNER_TEMP/protoc.zip" -d "$RUNNER_TEMP/protoc"
           echo "$RUNNER_TEMP/protoc/bin" >> "$GITHUB_PATH"
 
-      - run: cargo fmt --check
-      - run: cargo clippy --all-targets -- -D warnings
-      - run: cargo test
+      - run: cargo clippy --locked --all-targets -- -D warnings
+      - run: cargo test --locked
       - name: Core library without CLI dependencies
         run: |
-          cargo build --lib --no-default-features
-          cargo clippy --lib --no-default-features -- -D warnings
-          cargo test --no-default-features
-          RUSTDOCFLAGS='-D warnings' cargo doc --no-default-features --no-deps
-          if cargo tree --no-default-features --edges normal --prefix none | grep -E '^(clap|clap_complete|env_logger) '; then
+          cargo build --locked --lib --no-default-features
+          cargo clippy --locked --lib --no-default-features -- -D warnings
+          cargo test --locked --no-default-features
+          RUSTDOCFLAGS='-D warnings' cargo doc --locked --no-default-features --no-deps
+          if cargo tree --locked --no-default-features --edges normal --prefix none | grep -E '^(clap|clap_complete|env_logger) '; then
             echo "CLI-only dependency found in the core library graph"
             exit 1
           fi
@@ -62,7 +107,12 @@ jobs:
         with:
           toolchain: "1.96"
 
-      - run: cargo build
+      - name: Cache Rust dependencies and build outputs
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - run: cargo build --locked
 
   audit:
     name: Dependency security audit
@@ -74,30 +124,3 @@ jobs:
 
       - name: Audit dependencies
         uses: actions-rust-lang/audit@72c09e02f132669d52284a3323acdb503cfc1a24 # v1.2.7
-
-  pin-check:
-    name: Actions pinned to SHA
-    if: github.event_name != 'schedule'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Require all actions to be pinned to a full commit SHA
-        run: |
-          set -euo pipefail
-          # Every `uses:` (except local ./ actions) must be pinned to a 40-char commit SHA.
-          # dist's generated release.yml is hand-pinned post-generation; this guards against a
-          # regeneration silently reverting it to mutable tags.
-          unpinned="$(grep -rEn '^[[:space:]]*-?[[:space:]]*uses:[[:space:]]' .github/workflows \
-            | grep -vE 'uses:[[:space:]]*\./' \
-            | grep -vE 'uses:[[:space:]]*[^@]+@[0-9a-f]{40}([[:space:]]|"|$)' || true)"
-          if [ -n "$unpinned" ]; then
-            echo "::error::These actions are not pinned to a full commit SHA:"
-            echo "$unpinned"
-            echo "Pin like: uses: owner/repo@<40-char-sha> # vX"
-            exit 1
-          fi
-          echo "All workflow actions are SHA-pinned."
-

@@ -1,11 +1,6 @@
-# NOTE — GitHub Action pinning:
-# dist emits mutable major tags (actions/checkout@v6, etc.) in the generated
-# .github/workflows/release.yml and does NOT pin to commit SHAs. We hand-pin those to full
-# commit SHAs after generation for supply-chain safety. `allow-dirty = ["ci"]` below tells dist
-# to tolerate the hand-edited workflow (otherwise `dist plan` fails it as "out of date"), and
-# the ci.yml "pin-check" job fails if any action is left unpinned.
-# IMPORTANT: `dist generate` / `dist init` still REWRITE release.yml back to tag pins. After
-# regenerating, re-pin the actions to SHAs — the pin-check job will flag it if you forget.
+# Regenerate with: python3 scripts/generate-release.py
+# SHA pins are native dist configuration below. The helper adds the green-CI
+# guard before dist planning; dist has no hook for steps before its plan job.
 
 [workspace]
 members = ["cargo:."]
@@ -16,13 +11,16 @@ members = ["cargo:."]
 cargo-dist-version = "0.32.0"
 # CI backends to support
 ci = "github"
-# Tolerate the hand-pinned (commit-SHA) actions in release.yml; see the note at the top of
-# this file. Without this, `dist plan` fails the workflow as out of date.
+# The helper adds the pre-plan guard and preserves crates.io prereleases.
+# CI checks the complete output with scripts/generate-release.py --check.
 allow-dirty = ["ci"]
+# PR packaging checks live in CI and run only for release/configuration changes.
+pr-run-mode = "skip"
 # The installers to generate for each app
 installers = ["shell", "powershell", "homebrew"]
 # Publish the Homebrew formula to a self-hosted tap on each release
-publish-jobs = ["homebrew"]
+publish-jobs = ["homebrew", "./publish-crate"]
+github-custom-job-permissions = { "publish-crate" = { contents = "read" } }
 # Tap repo that receives the generated formula (-> `brew install noemaforge/tap/vimanam`)
 tap = "noemaforge/homebrew-tap"
 formula = "vimanam"
@@ -36,3 +34,8 @@ install-path = "CARGO_HOME"
 hosting = "github"
 # Whether to install an updater program
 install-updater = false
+
+[dist.github-action-commits]
+"actions/checkout" = "3d3c42e5aac5ba805825da76410c181273ba90b1"
+"actions/upload-artifact" = "cf430e030ddbb5b0abf93d22962f4752f3646cd9"
+"actions/download-artifact" = "9000827ccba6bdab643e8b6fd33ac0654aef8333"
