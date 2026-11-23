@@ -98,8 +98,9 @@ See `docs/protobuf.md` and fixture provenance for limitations and native rules.
 
 ## GraphQL adapter
 
-`src/contract/graphql.rs` parses SDL with graphql-parser (multi-file merge,
-extensions applied after all definitions, duplicate/unknown types rejected)
+`src/contract/graphql.rs` parses SDL with apollo-parser (multi-file merge,
+schema and type extensions applied after all definitions, duplicate/unknown
+types rejected)
 and introspection JSON into one `Document`; built-in scalars and `__` types are
 excluded so both sources compare equal. Defaults are canonical GraphQL
 literals. `diff` owns the directional rule table and native rule names;

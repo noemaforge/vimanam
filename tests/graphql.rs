@@ -928,19 +928,65 @@ fn focused_context_reports_budget_overage() {
 }
 
 #[test]
-fn extend_schema_is_rejected_explicitly() {
-    let err = Document::from_sdl(&[(
+fn extend_schema_merges_roots_and_rejects_duplicates() {
+    // Implicit Query root + `extend schema` adding a mutation root.
+    let doc = Document::from_sdl(&[(
         "a.graphql".into(),
         "type Query { a: Int } type M { b: Int }\nextend schema { mutation: M }".into(),
     )])
+    .unwrap();
+    assert_eq!(doc.roots.get("query").map(String::as_str), Some("Query"));
+    assert_eq!(doc.roots.get("mutation").map(String::as_str), Some("M"));
+
+    // Explicit schema definition + multi-file `extend schema`.
+    let multi = Document::from_sdl(&[
+        (
+            "schema.graphql".into(),
+            "\"Schema description\" schema { query: Root } type Root { ping: String }".into(),
+        ),
+        (
+            "sub.graphql".into(),
+            "extend schema { subscription: Events } type Events { tick: Int }".into(),
+        ),
+    ])
+    .unwrap();
+    assert_eq!(multi.roots.get("query").map(String::as_str), Some("Root"));
+    assert_eq!(
+        multi.roots.get("subscription").map(String::as_str),
+        Some("Events")
+    );
+    assert!(!multi.roots.contains_key("mutation"));
+
+    // Duplicate root operation kind from `extend schema` is rejected.
+    let err = Document::from_sdl(&[
+        (
+            "a.graphql".into(),
+            "schema { query: Root } type Root { a: Int } type Other { b: Int }".into(),
+        ),
+        ("b.graphql".into(), "extend schema { query: Other }".into()),
+    ])
     .unwrap_err()
     .to_string();
     assert!(
-        err.contains("Unsupported `extend schema` in a.graphql"),
+        err.contains("Duplicate GraphQL query root operation in b.graphql"),
         "{err}"
     );
-    // The words inside descriptions, strings and comments are not schema extensions.
-    sdl(r#""extend schema" type Query { a(x: String = "extend schema"): Int } # extend schema"#);
+
+    // Executable operations are rejected in SDL inputs.
+    let exec_err = Document::from_sdl(&[("q.graphql".into(), "query { viewer { id } }".into())])
+        .unwrap_err()
+        .to_string();
+    assert!(exec_err.contains("executable definitions"), "{exec_err}");
+
+    // Modern GraphQL SDL: repeatable directives and @oneOf parse cleanly.
+    let modern = sdl(r#"
+directive @tag(name: String!) repeatable on FIELD_DEFINITION
+input Lookup @oneOf { id: ID, slug: String }
+"extend schema" type Query {
+  a(x: String = "extend schema", by: Lookup): Int @tag(name: "v1") @tag(name: "public")
+}
+"#);
+    assert!(modern.types.contains_key("Lookup"));
 }
 
 #[test]
