@@ -1,0 +1,79 @@
+---
+title: "OpenAPI & Swagger"
+description: "Convert OpenAPI 2.0, 3.0, and 3.1 JSON and YAML specifications to deterministic Markdown with grouping, schema linking, and hygiene checks."
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+Vimanam parses OpenAPI 2.0 (Swagger), OpenAPI 3.0, and OpenAPI 3.1 specs in both JSON and YAML, producing byte-identical Markdown from equivalent JSON and YAML inputs.
+
+## Supported input formats and YAML parsing
+
+Format detection checks the file extension (`.json`, `.yaml`, `.yml`, case-insensitively) and falls back to the alternate parser for extension-less or misnamed files.
+
+In `v2.2.0`, YAML parsing runs on pure-Rust `serde-saphyr` (`#![forbid(unsafe_code)]`) with the following OpenAPI-safe rules:
+
+- **YAML 1.2 Core booleans**: unquoted strings such as `NO`, `yes`, `on`, and `off` remain strings instead of turning into booleans in enums, examples, and extensions.
+- **JSON-aligned scalar handling**: leading-zero strings (`007`) and underscored scalars (`1_000`) stay strings in untyped JSON values, while unquoted numeric HTTP status keys (`200:`, `404:`) map cleanly to response codes.
+- **Merge keys & duplicate rejection**: expands YAML `&anchor` and `<<: *anchor` merge keys and rejects duplicate mapping keys with line-and-column diagnostics.
+- **Built-in parsing budgets**: guards against YAML alias bombs while supporting multi-megabyte OpenAPI specs (including specs with hundreds of shared anchor references).
+
+## Control detail levels and grouping
+
+Pick the detail level that matches your audience:
+
+| Flag value | What Vimanam includes | Typical use |
+|---|---|---|
+| `summary` *(default)* | Service headings, HTTP methods, paths, and one-line summaries | Always-loaded LLM map or high-level inventory |
+| `basic` | Summary plus endpoint descriptions and operation IDs | Quick endpoint lookup |
+| `standard` | Basic plus parameters, request/response media types, and status codes | Day-to-day API reference |
+| `full` | Standard plus schema tables (`--include-schemas`) and examples (`--include-examples`) | Complete technical documentation |
+
+Control endpoint layout with grouping and sorting flags:
+
+- **Grouping precedence**: `--flat` overrides `--method`, which overrides `--group-by <service|method|path>`, which defaults to `service`.
+- **Sorting**: `--sort alpha` (default), `--sort path-length`, or `--sort none` (preserves spec declaration order).
+- **Table of contents**: enabled by default (`--toc`); disable with `--no-toc`.
+
+```bash
+# Full reference with linked schemas, examples, and auth schemes
+vimanam openapi.yaml \
+  --detail full \
+  --include-schemas \
+  --include-examples \
+  --include-auth \
+  -o api-reference.md
+```
+
+## Render shared schemas once or inline
+
+By default, `--detail full --include-schemas` renders each component `$ref` as a one-row link (`[Order](#schema-order)`) and expands its fields once in a trailing `Schema Definitions` section. That eliminates exponential duplication on specs with shared models.
+
+Pass `--inline-schemas` if you need every `$ref` expanded directly inside each endpoint's request and response tables (cycle-guarded for recursive schemas):
+
+```bash
+vimanam openapi.yaml --detail full --include-schemas --inline-schemas -o inline-api.md
+```
+
+<Aside type="note" title="Schema and example flags require full detail">
+  `--include-schemas` and `--include-examples` take effect only with `--detail full`. Passing `--inline-schemas` without `--include-schemas` logs a warning and leaves output unchanged.
+</Aside>
+
+## Audit spec quality with the Spec Hygiene Report
+
+Every conversion appends a `Spec Hygiene Report` below a horizontal rule (outside `--max-tokens` budgets). The report audits the exact filtered endpoint set you rendered across seven checks:
+
+- Missing endpoint descriptions
+- Missing `operationId` values
+- Operations with no documented responses
+- Deprecated endpoints
+- Untagged operations (fell back to the default `API` service)
+- Duplicate `operationId` values
+- Parameters or request bodies missing descriptions
+
+Pass `--no-report` to omit the hygiene report when generating compact LLM context.
+
+## Next steps
+
+- See [Token budgets & selection](/vimanam/llm-context/) to measure schema amplification with `--costs`.
+- See [Contract diff & Git refs](/vimanam/diff/) to compare OpenAPI versions and detect moved operations or pagination changes.

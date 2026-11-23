@@ -1,0 +1,252 @@
+---
+// Interactive one-click copy installation switcher for Vimanam v2.2.0.
+interface InstallOption {
+  id: string;
+  label: string;
+  command: string;
+  note: string;
+}
+
+const options: InstallOption[] = [
+  {
+    id: 'homebrew',
+    label: 'Homebrew',
+    command: 'brew install noemaforge/tap/vimanam',
+    note: 'macOS and Linux prebuilt binary via the maintained tap.',
+  },
+  {
+    id: 'shell',
+    label: 'Shell',
+    command:
+      'curl --proto \'=https\' --tlsv1.2 -LsSf https://github.com/noemaforge/vimanam/releases/latest/download/vimanam-installer.sh | sh',
+    note: 'Downloads the checksum-verified release archive for Linux or macOS.',
+  },
+  {
+    id: 'powershell',
+    label: 'PowerShell',
+    command:
+      'powershell -ExecutionPolicy Bypass -c "irm https://github.com/noemaforge/vimanam/releases/latest/download/vimanam-installer.ps1 | iex"',
+    note: 'Installs the prebuilt Windows x86_64 binary.',
+  },
+  {
+    id: 'binstall',
+    label: 'cargo-binstall',
+    command: 'cargo binstall vimanam',
+    note: 'Fetches the prebuilt binary from GitHub Releases without compiling.',
+  },
+  {
+    id: 'cargo',
+    label: 'Cargo',
+    command: 'cargo install vimanam',
+    note: 'Builds from crates.io (requires Rust 1.96 or newer).',
+  },
+  {
+    id: 'action',
+    label: 'GitHub Action',
+    command:
+      '- uses: noemaforge/vimanam-action@4599a14c84d9d7bce1ec34ed9f12f3036f06b518 # v1\n  with:\n    version: v2.2.0\n    spec: openapi.yaml',
+    note: 'Runs checksum-verified binaries in CI with no Rust toolchain on the runner.',
+  },
+];
+
+const uid = `install-${Math.random().toString(36).slice(2, 8)}`;
+---
+
+<div class="vim-install not-content" data-install-switcher={uid}>
+  <div class="vim-install-bar" role="tablist" aria-label="Installation method">
+    {options.map((opt, idx) => (
+      <button
+        type="button"
+        role="tab"
+        class:list={['vim-install-tab', idx === 0 && 'is-active']}
+        aria-selected={idx === 0 ? 'true' : 'false'}
+        aria-controls={`${uid}-panel-${opt.id}`}
+        id={`${uid}-tab-${opt.id}`}
+        data-install-tab={opt.id}
+      >
+        {opt.label}
+      </button>
+    ))}
+  </div>
+
+  {options.map((opt, idx) => (
+    <div
+      role="tabpanel"
+      id={`${uid}-panel-${opt.id}`}
+      aria-labelledby={`${uid}-tab-${opt.id}`}
+      class:list={['vim-install-panel', idx !== 0 && 'is-hidden']}
+      data-install-panel={opt.id}
+    >
+      <div class="vim-install-cmd-row">
+        <pre class="vim-install-pre"><code>{opt.command}</code></pre>
+        <button
+          type="button"
+          class="vim-copy-btn"
+          data-copy-text={opt.command}
+          aria-label={`Copy ${opt.label} install command`}
+        >
+          Copy
+        </button>
+      </div>
+      <p class="vim-install-note">{opt.note}</p>
+    </div>
+  ))}
+</div>
+
+<style>
+  .vim-install {
+    margin: 1.25rem 0 1.75rem;
+    border: 1px solid var(--vim-border);
+    border-radius: 0.55rem;
+    background: var(--vim-surface);
+    overflow: hidden;
+    box-shadow: var(--vim-shadow-sm);
+  }
+
+  .vim-install-bar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.25rem;
+    padding: 0.45rem 0.55rem;
+    background: var(--vim-table-head);
+    border-bottom: 1px solid var(--vim-border);
+  }
+
+  .vim-install-tab {
+    appearance: none;
+    border: 1px solid transparent;
+    background: transparent;
+    color: var(--sl-color-gray-3);
+    font-family: var(--sl-font);
+    font-size: 0.8rem;
+    font-weight: 550;
+    padding: 0.34rem 0.68rem;
+    border-radius: 0.35rem;
+    cursor: pointer;
+    transition: background-color 120ms ease-out, color 120ms ease-out, border-color 120ms ease-out;
+  }
+
+  .vim-install-tab:hover {
+    color: var(--sl-color-white);
+  }
+
+  .vim-install-tab.is-active {
+    background: var(--vim-surface);
+    color: var(--sl-color-accent-high);
+    border-color: var(--vim-border-strong);
+  }
+
+  .vim-install-panel {
+    padding: 0.85rem 1rem 0.75rem;
+  }
+
+  .vim-install-panel.is-hidden {
+    display: none;
+  }
+
+  .vim-install-cmd-row {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 0.75rem;
+  }
+
+  .vim-install-pre {
+    margin: 0;
+    padding: 0;
+    background: transparent !important;
+    border: none !important;
+    overflow-x: auto;
+    font-family: var(--sl-font-mono);
+    font-size: 0.83rem;
+    line-height: 1.55;
+    color: var(--sl-color-white);
+    flex: 1;
+  }
+
+  .vim-install-pre code {
+    background: transparent !important;
+    border: none !important;
+    padding: 0 !important;
+    color: inherit !important;
+    font-size: inherit !important;
+  }
+
+  .vim-copy-btn {
+    appearance: none;
+    flex-shrink: 0;
+    border: 1px solid var(--vim-border-strong);
+    background: var(--vim-surface-elevated);
+    color: var(--sl-color-gray-1);
+    font-family: var(--sl-font-mono);
+    font-size: 0.74rem;
+    font-weight: 500;
+    padding: 0.3rem 0.62rem;
+    border-radius: 0.35rem;
+    cursor: pointer;
+    transition: border-color 130ms ease-out, color 130ms ease-out;
+  }
+
+  .vim-copy-btn:hover {
+    border-color: var(--sl-color-accent);
+    color: var(--sl-color-accent-high);
+  }
+
+  .vim-install-note {
+    margin: 0.55rem 0 0 !important;
+    font-size: 0.79rem;
+    line-height: 1.45 !important;
+    color: var(--sl-color-gray-3);
+  }
+</style>
+
+<script>
+  function initInstallSwitchers() {
+    document.querySelectorAll<HTMLElement>('[data-install-switcher]').forEach((root) => {
+      if (root.dataset.wired === '1') return;
+      root.dataset.wired = '1';
+
+      const tabs = Array.from(root.querySelectorAll<HTMLButtonElement>('[data-install-tab]'));
+      const panels = Array.from(root.querySelectorAll<HTMLElement>('[data-install-panel]'));
+
+      tabs.forEach((tab) => {
+        tab.addEventListener('click', () => {
+          const target = tab.dataset.installTab;
+          tabs.forEach((t) => {
+            const active = t.dataset.installTab === target;
+            t.classList.toggle('is-active', active);
+            t.setAttribute('aria-selected', active ? 'true' : 'false');
+          });
+          panels.forEach((p) => {
+            p.classList.toggle('is-hidden', p.dataset.installPanel !== target);
+          });
+        });
+      });
+
+      root.querySelectorAll<HTMLButtonElement>('[data-copy-text]').forEach((btn) => {
+        btn.addEventListener('click', async () => {
+          const text = btn.dataset.copyText ?? '';
+          try {
+            await navigator.clipboard.writeText(text);
+            btn.textContent = 'Copied';
+            setTimeout(() => {
+              btn.textContent = 'Copy';
+            }, 1500);
+          } catch {
+            btn.textContent = 'Failed';
+            setTimeout(() => {
+              btn.textContent = 'Copy';
+            }, 1500);
+          }
+        });
+      });
+    });
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initInstallSwitchers, { once: true });
+  } else {
+    initInstallSwitchers();
+  }
+  document.addEventListener('astro:page-load', initInstallSwitchers);
+</script>

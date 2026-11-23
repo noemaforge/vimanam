@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="Vimanam">
+  <rect x="0.75" y="0.75" width="30.5" height="30.5" rx="7.25" fill="#047857" stroke="#34d399" stroke-opacity="0.32" stroke-width="1.5"/>
+  <!-- Flight vector contrails -->
+  <path d="M6.8 25.2L10.6 21.4M9.4 26.2L12.1 23.5" stroke="#6ee7b7" stroke-opacity="0.65" stroke-width="1.35" stroke-linecap="round"/>
+  <!-- Lower delta wing -->
+  <path d="M25.4 6.6L15.1 16.9L17.9 25.6L25.4 6.6Z" fill="#a7f3d0"/>
+  <!-- Keel fold -->
+  <path d="M13.6 18.4L15.1 16.9L16.5 21.3L13.1 22.1L13.6 18.4Z" fill="#065f46"/>
+  <!-- Upper primary delta wing -->
+  <path d="M25.4 6.6L6.4 14.1L15.1 16.9L25.4 6.6Z" fill="#ffffff"/>
+</svg>

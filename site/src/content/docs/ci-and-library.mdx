@@ -1,0 +1,143 @@
+---
+title: "CI pipelines & Rust library"
+description: "Run Vimanam in GitHub Actions for breaking-change gates and doc freshness, or embed the core Rust crate without CLI dependencies."
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+You can integrate Vimanam into GitHub Actions with `noemaforge/vimanam-action` or call its Rust library directly from your own tooling with zero CLI dependencies.
+
+## Gate pull requests in GitHub Actions
+
+[`noemaforge/vimanam-action`](https://github.com/noemaforge/vimanam-action) downloads the matching prebuilt binary, verifies its SHA-256 checksum, and runs Vimanam without installing Rust or `protoc` on the runner.
+
+### Block breaking API changes on pull requests
+
+```yaml
+name: API compatibility gate
+
+on:
+  pull_request:
+    paths:
+      - 'api/openapi.yaml'
+
+jobs:
+  api-diff:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Check for breaking API changes
+        uses: noemaforge/vimanam-action@4599a14c84d9d7bce1ec34ed9f12f3036f06b518 # v1
+        with:
+          version: v2.2.0
+          args: >-
+            diff --from-ref origin/${{ github.base_ref }} --to-ref HEAD
+            --spec api/openapi.yaml --report --fail-on-breaking
+```
+
+Because `--fail-on-breaking` exits with status `3` only on breaking changes, non-breaking additions and review notices pass while breaking changes fail the check with a Markdown table in the job log.
+
+### Keep committed Markdown or Skill trees fresh
+
+```yaml
+- uses: noemaforge/vimanam-action@4599a14c84d9d7bce1ec34ed9f12f3036f06b518 # v1
+  with:
+    version: v2.2.0
+    spec: api/openapi.yaml
+    output: docs/api-map.md
+    detail: summary
+
+- name: Fail if generated API map drifted
+  run: git diff --exit-code -- docs/api-map.md
+```
+
+### Gate Protobuf wire compatibility without `protoc`
+
+```yaml
+- name: Check wire compatibility on .proto changes
+  run: |
+    vimanam diff \
+      --from-ref origin/${{ github.base_ref }} \
+      --to-ref HEAD \
+      --spec proto/service.proto \
+      -I proto \
+      --breaking wire \
+      --fail-on-breaking
+```
+
+## Embed Vimanam as a Rust library
+
+Disable default features in `Cargo.toml` to import the core parsers, Markdown/Skill renderers, Git-ref resolver, and neutral contract v2 differ without `clap`, shell completion generators, or `env_logger`:
+
+```toml
+[dependencies]
+vimanam = { version = "2.2", default-features = false }
+```
+
+Core library modules never write to stdout or stderr; diagnostics return as structured values so callers control output and logging.
+
+### Parse, adapt, and diff OpenAPI in Rust
+
+```rust
+use vimanam::{
+    contract::{json, openapi},
+    diff::EndpointMatching,
+    parse_openapi,
+};
+
+fn main() -> anyhow::Result<()> {
+    let old = parse_openapi("v1/openapi.yaml")?;
+    let new = parse_openapi("v2/openapi.yaml")?;
+
+    let report = json::openapi_with(
+        &old,
+        &new,
+        EndpointMatching::Moves,
+        None,
+        "old-sha",
+        "new-sha",
+    )?;
+
+    println!(
+        "breaking={}, non_breaking={}, review={}",
+        report.summary.breaking,
+        report.summary.non_breaking,
+        report.summary.review,
+    );
+    Ok(())
+}
+```
+
+### Compile `.proto` or parse GraphQL directly
+
+```rust
+use std::path::Path;
+use vimanam::contract::{graphql, protobuf};
+
+fn inspect_contracts() -> anyhow::Result<()> {
+    // Pure-Rust .proto compilation (no external protoc)
+    let proto_old = protobuf::Document::read(Path::new("old.proto"), &[])?;
+    let proto_new = protobuf::Document::read(Path::new("new.proto"), &[])?;
+    let proto_changes = protobuf::diff(&proto_old, &proto_new)?;
+    println!("protobuf facts: {}", proto_changes.len());
+
+    // GraphQL SDL or introspection
+    let gql_old = graphql::Document::from_path(Path::new("old.graphql"))?;
+    let gql_new = graphql::Document::from_path(Path::new("new.graphql"))?;
+    let gql_changes = graphql::diff(&gql_old, &gql_new)?;
+    println!("graphql facts: {}", gql_changes.len());
+    Ok(())
+}
+```
+
+<Aside type="note" title="Minimum supported Rust version">
+  Vimanam's MSRV is Rust `1.96` (edition 2024). CI verifies `cargo build --locked` on Rust `1.96` and runs the core library suite with `--no-default-features` on every pull request.
+</Aside>
+
+## Next steps
+
+- See [CLI reference](/vimanam/cli-reference/) for every command-line flag.
+- See [Benchmarks & v2.2 analysis](/vimanam/benchmarks/) for measured latency, memory, and token reduction numbers.

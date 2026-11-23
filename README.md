@@ -1,9 +1,12 @@
 # Vimanam
 
 [![CI](https://github.com/noemaforge/vimanam/actions/workflows/ci.yml/badge.svg)](https://github.com/noemaforge/vimanam/actions/workflows/ci.yml)
+[![Docs](https://img.shields.io/badge/docs-GitHub%20Pages-047857)](https://noemaforge.github.io/vimanam/)
 [![crates.io](https://img.shields.io/crates/v/vimanam.svg)](https://crates.io/crates/vimanam)
 [![License: Apache-2.0](https://img.shields.io/crates/l/vimanam.svg)](LICENSE)
 [![MSRV](https://img.shields.io/badge/MSRV-1.96-blue.svg)](Cargo.toml)
+
+Full documentation and benchmarks are published at [noemaforge.github.io/vimanam](https://noemaforge.github.io/vimanam/).
 
 Vimanam is a Rust CLI and library that turns OpenAPI/Swagger specs (JSON or YAML), Protocol Buffers/gRPC contracts and GraphQL schemas into focused Markdown documentation and compares API contracts.
 

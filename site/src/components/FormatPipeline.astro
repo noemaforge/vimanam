@@ -1,0 +1,372 @@
+---
+// Interactive three-format pipeline explorer: OpenAPI, Protobuf/gRPC, and GraphQL.
+interface FormatTab {
+  id: string;
+  label: string;
+  badge: string;
+  command: string;
+  inputTitle: string;
+  inputCode: string;
+  outputTitle: string;
+  outputCode: string;
+  highlight: string;
+}
+
+const tabs: FormatTab[] = [
+  {
+    id: 'openapi',
+    label: 'OpenAPI 2.0 / 3.x',
+    badge: 'JSON & pure-Rust YAML 1.2',
+    command: 'vimanam petstore.yaml --operation "POST /pets" --detail full --include-schemas',
+    inputTitle: 'petstore.yaml',
+    inputCode: `openapi: 3.0.3
+info:
+  title: Petstore API
+  version: 1.0.0
+paths:
+  /pets:
+    post:
+      operationId: createPet
+      tags: [Pets]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/NewPet'`,
+    outputTitle: 'Focused Markdown output',
+    outputCode: `# Petstore API
+API Version: 1.0.0
+
+## Pets {#pets}
+### createPet {#pets-post-pets}
+**Operation:** POST /pets
+
+#### Request Schema
+| Field | Type | Required | Description |
+|------|------|---------:|-------------|
+| \`body\` | [NewPet](#schema-newpet) | Yes | - |
+
+## Schema Definitions
+### NewPet {#schema-newpet}
+| Field | Type | Required | Description |
+| \`name\` | string | Yes | Pet display name |`,
+    highlight: 'Shared $ref schemas link once to Schema Definitions instead of repeating inline.',
+  },
+  {
+    id: 'protobuf',
+    label: 'Protobuf & gRPC',
+    badge: 'Pure-Rust protox (no protoc)',
+    command: 'vimanam health-v1.20.0.proto --operation "RPC grpc.health.v1.Health.Watch" --detail full --include-schemas',
+    inputTitle: 'health-v1.20.0.proto',
+    inputCode: `syntax = "proto3";
+package grpc.health.v1;
+
+service Health {
+  // Watches serving status for a service.
+  rpc Watch(HealthCheckRequest)
+    returns (stream HealthCheckResponse);
+}
+
+message HealthCheckResponse {
+  enum ServingStatus {
+    UNKNOWN = 0;
+    SERVING = 1;
+    // Used only by the Watch method.
+    SERVICE_UNKNOWN = 3;
+  }
+  ServingStatus status = 1;
+}`,
+    outputTitle: 'Native RPC Markdown with .proto comments',
+    outputCode: `### grpc.health.v1.Health.Watch
+**Operation:** RPC grpc.health.v1.Health.Watch
+**Description:** Watches serving status for a
+service. (server streaming)
+
+#### Result
+| Result | Type | Description |
+|--------|------|-------------|
+| result | json | HealthCheckResponse |
+
+#### Response Schema
+| Field | Type | Description |
+| \`status\` | [ServingStatus] | Field #1; JSON \`status\` |`,
+    highlight: 'Compiles .proto files in pure Rust with Google well-known types and source comments.',
+  },
+  {
+    id: 'graphql',
+    label: 'GraphQL SDL & Introspection',
+    badge: 'apollo-parser 0.8 + diff --context',
+    command: 'vimanam diff old.graphql new.graphql --context --max-tokens 1600',
+    inputTitle: 'schema.graphql',
+    inputCode: `type Query {
+  launches(first: Int, after: String): LaunchConnection
+}
+
+extend schema {
+  mutation: Mutation
+}
+
+type LaunchConnection {
+  edges: [LaunchEdge]
+  pageInfo: PageInfo!
+}
+
+type Mutation {
+  bookTrips(launchIds: [ID!]!): TripUpdateResponse!
+}`,
+    outputTitle: 'Focused diff context (or v2 JSON)',
+    outputCode: `# GraphQL Diff Context
+
+**Summary:** 1 breaking, 2 non-breaking, 1 review
+
+## Affected operations
+- **QUERY Query.launches** — pagination_changed (review)
+- **MUTATION Mutation.bookTrips** — operation_added (non_breaking)
+
+## Reachable types
+### LaunchConnection
+| Field | Type | Required | Description |
+| \`edges\` | [LaunchEdge] | No | - |
+| \`pageInfo\` | PageInfo! | Yes | - |`,
+    highlight: 'Supports multi-file SDL merges, extend schema, @oneOf, and Relay/nodes pagination detection.',
+  },
+];
+
+const uid = `pipe-${Math.random().toString(36).slice(2, 8)}`;
+---
+
+<section class="vim-pipe not-content" data-format-pipeline={uid} aria-label="Interactive format pipeline">
+  <div class="vim-pipe-head">
+    <div class="vim-pipe-tabs" role="tablist" aria-label="Contract format">
+      {tabs.map((tab, i) => (
+        <button
+          type="button"
+          role="tab"
+          class:list={['vim-pipe-tab', i === 0 && 'is-active']}
+          aria-selected={i === 0 ? 'true' : 'false'}
+          aria-controls={`${uid}-panel-${tab.id}`}
+          id={`${uid}-tab-${tab.id}`}
+          data-pipe-tab={tab.id}
+        >
+          {tab.label}
+        </button>
+      ))}
+    </div>
+    <span class="vim-pipe-badge" data-pipe-badge>{tabs[0].badge}</span>
+  </div>
+
+  {tabs.map((tab, i) => (
+    <div
+      role="tabpanel"
+      id={`${uid}-panel-${tab.id}`}
+      aria-labelledby={`${uid}-tab-${tab.id}`}
+      class:list={['vim-pipe-body', i !== 0 && 'is-hidden']}
+      data-pipe-panel={tab.id}
+      data-badge={tab.badge}
+    >
+      <div class="vim-pipe-cmd">
+        <span class="vim-pipe-prompt" aria-hidden="true">$</span>
+        <code>{tab.command}</code>
+      </div>
+      <div class="vim-pipe-grid">
+        <div class="vim-pipe-pane">
+          <div class="vim-pipe-pane-title">{tab.inputTitle}</div>
+          <pre><code>{tab.inputCode}</code></pre>
+        </div>
+        <div class="vim-pipe-pane">
+          <div class="vim-pipe-pane-title">{tab.outputTitle}</div>
+          <pre><code>{tab.outputCode}</code></pre>
+        </div>
+      </div>
+      <p class="vim-pipe-foot">{tab.highlight}</p>
+    </div>
+  ))}
+</section>
+
+<style>
+  .vim-pipe {
+    margin: 1.5rem 0 2.15rem;
+    border: 1px solid var(--vim-border);
+    border-radius: 0.6rem;
+    background: var(--vim-surface);
+    overflow: hidden;
+    box-shadow: var(--vim-shadow-sm);
+  }
+
+  .vim-pipe-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+    padding: 0.5rem 0.75rem;
+    background: var(--vim-table-head);
+    border-bottom: 1px solid var(--vim-border);
+  }
+
+  .vim-pipe-tabs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.3rem;
+  }
+
+  .vim-pipe-tab {
+    appearance: none;
+    border: 1px solid transparent;
+    background: transparent;
+    color: var(--sl-color-gray-3);
+    font-family: var(--sl-font);
+    font-size: 0.82rem;
+    font-weight: 600;
+    padding: 0.38rem 0.75rem;
+    border-radius: 0.38rem;
+    cursor: pointer;
+    transition: background-color 120ms ease-out, color 120ms ease-out, border-color 120ms ease-out;
+  }
+
+  .vim-pipe-tab:hover {
+    color: var(--sl-color-white);
+  }
+
+  .vim-pipe-tab.is-active {
+    background: var(--vim-surface);
+    color: var(--sl-color-accent-high);
+    border-color: var(--vim-border-strong);
+  }
+
+  .vim-pipe-badge {
+    font-family: var(--sl-font-mono);
+    font-size: 0.74rem;
+    color: var(--sl-color-gray-3);
+  }
+
+  .vim-pipe-body.is-hidden {
+    display: none;
+  }
+
+  .vim-pipe-cmd {
+    display: flex;
+    align-items: baseline;
+    gap: 0.5rem;
+    padding: 0.65rem 1rem;
+    border-bottom: 1px solid var(--sl-color-hairline-light);
+    background: var(--vim-surface-elevated);
+    font-family: var(--sl-font-mono);
+    font-size: 0.8rem;
+    overflow-x: auto;
+  }
+
+  .vim-pipe-prompt {
+    color: var(--sl-color-accent);
+    font-weight: 600;
+    user-select: none;
+  }
+
+  .vim-pipe-cmd code {
+    background: transparent !important;
+    border: none !important;
+    padding: 0 !important;
+    color: var(--sl-color-white) !important;
+    white-space: nowrap;
+  }
+
+  .vim-pipe-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .vim-pipe-pane {
+    min-width: 0;
+  }
+
+  .vim-pipe-pane + .vim-pipe-pane {
+    border-left: 1px solid var(--sl-color-hairline-light);
+  }
+
+  .vim-pipe-pane-title {
+    padding: 0.45rem 0.9rem;
+    font-family: var(--sl-font-mono);
+    font-size: 0.73rem;
+    color: var(--sl-color-gray-3);
+    border-bottom: 1px solid var(--sl-color-hairline-light);
+  }
+
+  .vim-pipe-pane pre {
+    margin: 0 !important;
+    padding: 0.85rem 0.95rem !important;
+    background: transparent !important;
+    border: none !important;
+    overflow-x: auto;
+    font-family: var(--sl-font-mono);
+    font-size: 0.77rem;
+    line-height: 1.52;
+    color: var(--sl-color-gray-1);
+  }
+
+  .vim-pipe-pane pre code {
+    background: transparent !important;
+    border: none !important;
+    padding: 0 !important;
+    color: inherit !important;
+  }
+
+  .vim-pipe-foot {
+    margin: 0 !important;
+    padding: 0.6rem 0.95rem;
+    font-size: 0.8rem;
+    line-height: 1.45 !important;
+    color: var(--sl-color-gray-2);
+    border-top: 1px solid var(--sl-color-hairline-light);
+    background: var(--vim-table-head);
+  }
+
+  @media (max-width: 54rem) {
+    .vim-pipe-grid {
+      grid-template-columns: 1fr;
+    }
+
+    .vim-pipe-pane + .vim-pipe-pane {
+      border-left: none;
+      border-top: 1px solid var(--sl-color-hairline-light);
+    }
+  }
+</style>
+
+<script>
+  function initFormatPipelines() {
+    document.querySelectorAll<HTMLElement>('[data-format-pipeline]').forEach((root) => {
+      if (root.dataset.wired === '1') return;
+      root.dataset.wired = '1';
+
+      const tabs = Array.from(root.querySelectorAll<HTMLButtonElement>('[data-pipe-tab]'));
+      const panels = Array.from(root.querySelectorAll<HTMLElement>('[data-pipe-panel]'));
+      const badge = root.querySelector<HTMLElement>('[data-pipe-badge]');
+
+      tabs.forEach((tab) => {
+        tab.addEventListener('click', () => {
+          const target = tab.dataset.pipeTab;
+          tabs.forEach((t) => {
+            const active = t.dataset.pipeTab === target;
+            t.classList.toggle('is-active', active);
+            t.setAttribute('aria-selected', active ? 'true' : 'false');
+          });
+          panels.forEach((p) => {
+            const match = p.dataset.pipePanel === target;
+            p.classList.toggle('is-hidden', !match);
+            if (match && badge && p.dataset.badge) {
+              badge.textContent = p.dataset.badge;
+            }
+          });
+        });
+      });
+    });
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initFormatPipelines, { once: true });
+  } else {
+    initFormatPipelines();
+  }
+  document.addEventListener('astro:page-load', initFormatPipelines);
+</script>

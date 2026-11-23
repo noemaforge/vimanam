@@ -1,0 +1,116 @@
+---
+title: "Token budgets & selection"
+description: "Size API slices with --stats and --costs, filter exact operations, read named schemas or JSON pointers, and cap traversal depth for LLMs."
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+Production OpenAPI and GraphQL specs often exceed an LLM's context window by an order of magnitude. Vimanam gives you deterministic sizing, surgical selection, and depth bounds so coding agents load only what a task requires.
+
+## Size a spec before rendering
+
+Run `--stats` to measure each service's endpoint count and approximate token size (`chars / 4`) without writing Markdown:
+
+```bash
+vimanam openapi.yaml --stats --detail standard
+```
+
+```text
+SERVICE       ENDPOINTS   ~TOKENS
+Chat                 12      1840
+Embeddings            2       310
+Fine-tuning          14      2190
+TOTAL                28      4120
+```
+
+Each service row measures a standalone render of that service, while `TOTAL` measures one whole-document render. Multi-tag endpoints count in each tagged service row and once in `TOTAL`.
+
+## Find token hotspots with `--costs`
+
+Use `--costs` to identify which endpoints and shared `$ref` schemas drive token volume:
+
+```bash
+vimanam openapi.yaml --costs --detail full --include-schemas
+```
+
+`--costs` reports three sections:
+
+- **Per-endpoint slice costs**: estimated tokens to render each operation with its reachable schemas.
+- **Per-schema definition and amplification**: compares reading a schema once versus expanding it inline across every reference site.
+- **Hotspots**: ranks the largest endpoint slices and highest-amplification schemas so you know where `--schema-depth` or `--schema-field` pays off most.
+
+<Aside type="note" title="Dry-run flag conflicts">
+  `--stats` and `--costs` are dry runs that print tables to stdout. Both conflict with `-o`, `--max-tokens`, `--split`, `--output-mode skill`, and `--schema` / `--schema-field`.
+</Aside>
+
+## Select exact operations
+
+Use `--operation` or `--operation-id` when a task touches specific endpoints:
+
+```bash
+# OpenAPI exact METHOD + path template (repeatable)
+vimanam openapi.yaml \
+  --operation "POST /chat/completions" \
+  --operation "GET /models/{model}" \
+  --detail full --include-schemas --flat --no-report
+
+# Match by case-sensitive operationId
+vimanam openapi.yaml --operation-id createChatCompletion --detail full --include-schemas
+
+# Protobuf RPC or GraphQL root field
+vimanam trace_service.proto -I . --operation "RPC opentelemetry.proto.collector.trace.v1.TraceService.Export" --detail full --include-schemas
+vimanam schema.graphql --operation "QUERY Query.repository" --detail full --include-schemas
+```
+
+Behavior rules for exact selectors:
+
+- `--operation` matches `METHOD` case-insensitively and the path template byte for byte (Swagger 2 `basePath` excluded).
+- Both flags repeat and combine as a union, then intersect with `--service-filter`, `--path-filter`, `--method-filter`, and `--exclude-deprecated`.
+- Any selector that matches nothing in the spec exits with status `1` and suggests the closest valid operation name.
+- Use `--flat` to render multi-tag operations once instead of repeating them under each service heading.
+
+## Read named schemas and subtrees directly
+
+When one schema is huge, query the type or a single JSON Pointer subtree directly:
+
+```bash
+# Read one named schema (complete metadata, even if unreferenced by an endpoint)
+vimanam openapi.yaml --schema CreateChatCompletionRequest --no-report
+
+# Prune unrelated siblings while keeping ancestor metadata
+vimanam openapi.yaml \
+  --schema-field 'CreateChatCompletionRequest#/properties/response_format' \
+  --schema-field 'CreateChatCompletionRequest#/properties/tools' \
+  --no-report
+```
+
+Pointers follow RFC 6901 escaping (`~1` for `/`, `~0` for `~`) and cross `$ref` boundaries safely, including recursive schemas. Standalone schema reads always include full metadata and suppress the endpoint hygiene report.
+
+## Bound schema traversal with `--schema-depth`
+
+Add `--schema-depth <0..=24>` to stop expanding deeply nested objects, arrays, compositions, or `$ref` links after `N` edges from each root:
+
+```bash
+vimanam openapi.yaml \
+  --operation "POST /v1/customers" \
+  --detail full --include-schemas --schema-depth 2 --no-report
+```
+
+Every truncated branch preserves its field type and requiredness and prints the exact `--schema` or `--schema-field` command needed to inspect deeper fields. Without `--schema` or `--schema-field`, `--schema-depth` requires `--detail full --include-schemas`.
+
+## Step detail down with `--max-tokens`
+
+For single-file overviews, `--max-tokens <N>` starts at your requested `--detail` level and steps down (`full` → `standard` → `basic` → `summary`) until the body fits:
+
+```bash
+vimanam openapi.yaml --service-filter Payments --detail full --max-tokens 6000 --no-report
+```
+
+- Pass `--no-report` when feeding output to a model so the Spec Hygiene Report is omitted.
+- Explicit `--schema` and `--schema-field` selections stay intact even when over budget and emit an overage notice on stderr and in Markdown.
+- Use `--output-mode skill` instead of `--max-tokens` when an agent should load full schemas selectively across files.
+
+## Next steps
+
+- See [Split trees & Skill mode](/vimanam/split-and-skills/) to generate multi-file agent directories with per-file token budgets.
+- See [CLI reference](/vimanam/cli-reference/) for every filter flag and conflict rule.

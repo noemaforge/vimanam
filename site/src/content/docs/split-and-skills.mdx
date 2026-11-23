@@ -1,0 +1,86 @@
+---
+title: "Split trees & Skill mode"
+description: "Generate linked multi-file Markdown documentation with --split or agent-navigable SKILL.md trees with --output-mode skill and manifest safety."
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+Single-file Markdown works well for small APIs, but large specs benefit from linked pages where readers and AI agents load one service, operation, or schema at a time. Vimanam provides two multi-file directory layouts: `--split` for general documentation and `--output-mode skill` for coding agents.
+
+## Generate an agent-navigable Skill tree
+
+Use `--output-mode skill` to write a directory structured around a compact `SKILL.md` router:
+
+```bash
+vimanam openapi.yaml \
+  --output-mode skill \
+  --detail full \
+  --include-schemas \
+  --include-examples \
+  --include-auth \
+  --overview-max-tokens 1600 \
+  -o ./api-skill
+```
+
+Skill mode emits the following directory structure:
+
+```text
+api-skill/
+├── SKILL.md            # YAML frontmatter + compact service map (<= 1,600 est. tokens)
+├── index.md            # Complete service index (linked when SKILL.md exceeds budget)
+├── api.md              # Global API title, version, servers, and auth schemes
+├── services/           # One hub per service with per-endpoint token estimates
+├── endpoints/          # One file per operation (shared across multi-tag services)
+└── schemas/            # One file per reachable named schema, linked externally
+```
+
+How agents navigate a Skill tree:
+
+1. Read `SKILL.md` first (YAML frontmatter includes `name`, `description`, and API `version`).
+2. Open the relevant service hub under `services/` to compare endpoint methods, operation IDs, descriptions, and approximate read costs (`chars / 4` of the final emitted file).
+3. Open only the endpoint file and linked schema pages required for the task.
+
+`--overview-max-tokens` limits only `SKILL.md` (default `1600`). Detail pages, directory hubs, and schema files always stay at your requested `--detail` level.
+
+## Generate linked documentation with `--split`
+
+Use `--split` when you want ordinary linked Markdown pages grouped by `service`, `tag`, or `endpoint`:
+
+```bash
+# One page per service plus shared schemas/
+vimanam openapi.yaml --split service --detail full --include-schemas -o ./api-docs
+
+# One page per operation with a 2,000-token index.md cap
+vimanam openapi.yaml \
+  --split endpoint \
+  --detail full \
+  --include-schemas \
+  --overview-max-tokens 2000 \
+  -o ./api-docs
+```
+
+When `index.md` exceeds `--overview-max-tokens`, Vimanam keeps `index.md` within budget and writes the complete navigation list to `index-all.md`.
+
+## Combine with filters and depth bounds
+
+Both `--split` and `--output-mode skill` work on OpenAPI, Protocol Buffers, and GraphQL inputs and work with your existing filters:
+
+- Filter operations with `--service-filter`, `--path-filter`, `--method-filter`, `--exclude-deprecated`, `--operation`, or `--operation-id`.
+- Cap deeply nested schema pages with `--schema-depth <N>` so shared schema files include explicit `--schema` retrieval commands for deeper branches.
+
+<Aside type="caution" title="Conflicting flags">
+  `--split` and `--output-mode skill` conflict with each other and with `--max-tokens`, `--stats`, `--costs`, `--inline-schemas`, `--schema`, and `--schema-field`. Both require `-o <DIR>`.
+</Aside>
+
+## Protect output directories with the hash manifest
+
+Vimanam tracks generated files in a hash manifest inside the output directory and runs preflight checks before writing:
+
+- **Symlink rejection**: refuses to write into or through symlinked output paths or managed subdirectories.
+- **Unmanaged collision protection**: refuses to overwrite files you added manually or generated pages you edited by hand.
+- **Scoped cleanup**: removes only unchanged, obsolete files owned by previous Vimanam runs — never performs a directory-wide wipe.
+
+## Next steps
+
+- See [Token budgets & selection](/vimanam/llm-context/) for single-file sizing with `--stats` and `--costs`.
+- See [CI pipelines & Rust library](/vimanam/ci-and-library/) to enforce doc freshness in CI with `git diff --exit-code`.

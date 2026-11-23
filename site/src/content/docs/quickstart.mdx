@@ -1,0 +1,105 @@
+---
+title: "Quickstart"
+description: "Install Vimanam and generate your first API map, focused schema slice, and breaking-change diff in under five minutes."
+---
+
+import { Aside, Steps } from '@astrojs/starlight/components';
+import InstallSwitcher from '../../components/InstallSwitcher.astro';
+
+This guide walks you through installing Vimanam, rendering documentation from an API contract, measuring token costs for an LLM, and comparing two contract versions.
+
+## Before you begin
+
+Verify that you have at least one contract file ready to inspect:
+
+- An OpenAPI 2.0, 3.0, or 3.1 file in `.json`, `.yaml`, or `.yml` format
+- A proto2 or proto3 `.proto` file (or binary `FileDescriptorSet` such as `.pb`)
+- A GraphQL `.graphql` or `.graphqls` file, SDL directory, or introspection `.json` file
+
+## Install Vimanam
+
+Choose your preferred installation method and run the command:
+
+<InstallSwitcher />
+
+Confirm that the binary is available on your `PATH`:
+
+```bash
+vimanam --version
+```
+
+## Convert a spec to Markdown
+
+<Steps>
+
+1. Inspect per-service endpoint counts and token estimates before generating output:
+
+   ```bash
+   vimanam openapi.yaml --stats --detail standard
+   ```
+
+2. Generate a compact map of every service and operation for quick navigation:
+
+   ```bash
+   vimanam openapi.yaml --detail summary -o api-map.md
+   ```
+
+3. Render one operation at full detail with linked schema definitions:
+
+   ```bash
+   vimanam openapi.yaml \
+     --operation "POST /pets" \
+     --detail full \
+     --include-schemas \
+     --no-report
+   ```
+
+</Steps>
+
+The same flags work on `.proto` files and GraphQL schemas without installing `protoc` or extra runtimes:
+
+```bash
+# Protocol Buffers / gRPC (pure Rust)
+vimanam health.proto --detail full --include-schemas --no-report
+
+# GraphQL SDL directory or single file
+vimanam schema/ --operation "QUERY Query.user" --detail full --include-schemas --no-report
+```
+
+## Generate an agent-navigable Skill tree
+
+When a coding agent needs to explore a large API on demand, write a Skill directory instead of one giant Markdown file:
+
+```bash
+vimanam openapi.yaml \
+  --output-mode skill \
+  --detail full \
+  --include-schemas \
+  -o ./api-skill
+```
+
+Point your agent to `api-skill/SKILL.md`. The root file fits inside a 1,600-token overview budget by default and lists per-file token estimates for every service hub.
+
+## Compare two contract versions
+
+Run `vimanam diff` to classify changes as breaking, non-breaking, or needing review:
+
+```bash
+vimanam diff old.yaml new.yaml --report --fail-on-breaking
+```
+
+To compare committed specs directly across Git refs without switching branches:
+
+```bash
+vimanam diff --from-ref v1.0.0 --to-ref HEAD --spec api/openapi.yaml --fail-on-breaking
+```
+
+<Aside type="tip" title="CI exit codes">
+  With `--fail-on-breaking`, Vimanam writes the complete report and exits with status `3` when breaking changes exist. Errors exit with `1`; clean or non-breaking diffs exit with `0`.
+</Aside>
+
+## Next steps
+
+- See [Token budgets & selection](/vimanam/llm-context/) to measure schema amplification with `--costs` and extract fields with `--schema-field`.
+- See [Contract diff & Git refs](/vimanam/diff/) to configure moved-operation pairing, JSON output, and Git rename tracking.
+- See [Benchmarks & v2.2 analysis](/vimanam/benchmarks/) to review performance on Stripe, OpenAI, GitHub GraphQL, and OpenTelemetry specs.

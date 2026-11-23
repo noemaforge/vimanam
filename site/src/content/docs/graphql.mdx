@@ -1,0 +1,88 @@
+---
+title: "GraphQL SDL & introspection"
+description: "Parse single or multi-file GraphQL SDL and introspection JSON, detect breaking schema changes and Relay pagination shifts, and generate focused diff context."
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+Vimanam reads GraphQL schemas from `.graphql`/`.graphqls` SDL files, recursive SDL directories, or introspection JSON results, mapping both sources to the exact same neutral contract surface.
+
+## Supported GraphQL inputs
+
+- **Single-file or multi-file SDL**: pass one `.graphql`/`.graphqls` file or a directory. Directory inputs merge every SDL file recursively in sorted path order, follow symlinks without looping, and apply `extend schema` and type extensions after all base definitions.
+- **Modern GraphQL syntax**: powered by `apollo-parser 0.8`, Vimanam supports `extend schema`, schema descriptions, repeatable directives, `@oneOf` input objects, and strict validation (rejecting braceless or empty `schema` blocks, conflicting root extensions, duplicate input-object keys, and executable query documents).
+- **Introspection JSON**: accepts `{"data": {"__schema": ...}}` or `{"__schema": ...}`. JSON files are detected as GraphQL only when a `"__schema"` object is present, leaving OpenAPI JSON detection untouched.
+
+Built-in scalars and `__` introspection types are excluded from both sources, default values print as canonical GraphQL literals, and `@deprecated` without a reason uses the specification default (`No longer supported`). Equivalent SDL and introspection files produce zero diff changes.
+
+<Aside type="tip" title="Capturing introspection for accurate diffs">
+  Capture introspection JSON with input-value deprecation enabled (`args(includeDeprecated: true)` and `inputFields(includeDeprecated: true)`). Otherwise servers omit deprecated arguments and input fields, which appear as removed when compared against SDL.
+</Aside>
+
+## Render documentation and select operations
+
+Root fields render with `QUERY`, `MUTATION`, or `SUBSCRIPTION` labels and schema-coordinate paths:
+
+```bash
+# Render a full GraphQL reference
+vimanam schema.graphql --detail full --include-schemas
+
+# Merge a directory of SDL files and select one query
+vimanam schema/ --operation 'QUERY Query.repository' --detail full --include-schemas --no-report
+
+# Read a single object, interface, input, union, or enum type
+vimanam introspection.json --schema Repository --no-report
+
+# Build a Skill tree for coding agents
+vimanam schema.graphql --output-mode skill --detail full --include-schemas -o context/
+```
+
+## Diff GraphQL schemas and generate focused context
+
+Compare two files, two SDL directories, or two Git refs:
+
+```bash
+# Markdown diff with breaking-change exit code 3
+vimanam diff old.graphql new.graphql --report --fail-on-breaking
+
+# Neutral contract v2 JSON output
+vimanam diff old.graphql new.graphql --format json
+
+# Focused Markdown context for only the root fields affected by the diff
+vimanam diff old.graphql new.graphql --context --max-tokens 2000
+
+# Git-ref diff on a committed schema file
+vimanam diff --from-ref v1.0.0 --to-ref HEAD --spec api/schema.graphql
+```
+
+The `--context` flag is specific to GraphQL Markdown diffs. It appends full-detail documentation for every root field in the new schema affected by a change — either directly or through any reachable argument or return type — and steps detail down to fit `--max-tokens`.
+
+## Directional compatibility rules
+
+| Change | Severity | Native kind |
+|---|---|---|
+| Type, root type, field, argument, input field, or enum value removed | Breaking | `TYPE_REMOVED`, `ROOT_TYPE_REMOVED`, `FIELD_REMOVED`, `ARG_REMOVED`, `INPUT_FIELD_REMOVED`, `ENUM_VALUE_REMOVED` |
+| Type kind changed | Breaking | `TYPE_KIND_CHANGED` |
+| Output field made nullable or type changed | Breaking | `FIELD_MADE_NULLABLE`, `FIELD_TYPE_CHANGED` |
+| Argument or input field made non-null without default, or type changed | Breaking | `ARG_MADE_NON_NULL`, `INPUT_FIELD_MADE_NON_NULL`, `*_TYPE_CHANGED` |
+| Required argument or input field added | Breaking | `ARG_ADDED_REQUIRED`, `INPUT_FIELD_ADDED_REQUIRED` |
+| Union member or implemented interface removed | Breaking | `UNION_MEMBER_REMOVED`, `INTERFACE_REMOVED` |
+| List field converted to Relay/nodes connection, or back | Breaking | `RELAY_CONNECTION_ADOPTED`, `RELAY_CONNECTION_REMOVED` |
+| Type, field, root type, interface, or optional input added | Non-breaking | `TYPE_ADDED`, `FIELD_ADDED`, `ROOT_TYPE_ADDED`, `INTERFACE_ADDED`, `*_ADDED_OPTIONAL` |
+| Output field made non-null; input made nullable or non-null with default | Non-breaking | `FIELD_MADE_NON_NULL`, `*_MADE_NULLABLE`, `*_MADE_NON_NULL_WITH_DEFAULT` |
+| Enum value added to an input-only enum; deprecation changed | Non-breaking | `ENUM_VALUE_ADDED`, `DEPRECATION_*` |
+| Enum value added to an output enum; union member added | Review | `ENUM_VALUE_ADDED_TO_OUTPUT`, `UNION_MEMBER_ADDED` |
+| Default value or Relay connection controls changed | Review | `ARG_DEFAULT_CHANGED`, `INPUT_FIELD_DEFAULT_CHANGED`, `RELAY_CONNECTION_CONTROLS_CHANGED` |
+
+## Relay and `nodes` pagination detection
+
+Vimanam recognizes a field as a paginated connection when its named return type has `pageInfo` plus either `edges` (with `node`) or a list `nodes` field, and the field accepts forward (`first`/`after`) or backward (`last`/`before`) cursor arguments. Details record `connection_fields` (`edges`, `nodes`, or `edges+nodes`) and `confidence` (`declared` for `edges` or complete `pageInfo` with `hasNextPage` and `endCursor`; `inferred` otherwise).
+
+## Limitations
+
+Federation directives, schema stitching, and executable client query documents are outside scope. `--contract 1` and `--breaking wire|source` are rejected before output creation.
+
+## Next steps
+
+- See [Contract diff & Git refs](/vimanam/diff/) for Git-ref diff workflows across all three formats.
+- See [Benchmarks & v2.2 analysis](/vimanam/benchmarks/) for measurements on the 1.2 MB GitHub GraphQL API and SpaceX Land schemas.

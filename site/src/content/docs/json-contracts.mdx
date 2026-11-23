@@ -1,0 +1,89 @@
+---
+title: "Neutral JSON contract v2"
+description: "Consume stable ve2_ entity IDs, vc2_ change IDs, format-native coordinates, and adapter-owned verdicts from vimanam diff --format json."
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+`vimanam diff --format json` defaults to neutral contract v2 (`--contract 2`), sharing one machine-readable JSON envelope across OpenAPI, Protocol Buffers, and GraphQL. Legacy OpenAPI consumers can pass `--contract 1` to keep the unchanged v1 schema and `vc1_` identifiers.
+
+## Envelope structure
+
+```json
+{
+  "schema_version": 2,
+  "generator": { "name": "vimanam", "version": "2.2.0" },
+  "old": {
+    "file_sha256": "<64 lowercase hex>",
+    "contract": { "format": "openapi", "title": "Widgets API", "version": "1.0.0", "entities": [] }
+  },
+  "new": {
+    "file_sha256": "<64 lowercase hex>",
+    "contract": { "format": "openapi", "title": "Widgets API", "version": "1.1.0", "entities": [] }
+  },
+  "summary": {
+    "operations_added": 0,
+    "operations_removed": 0,
+    "operations_changed": 1,
+    "breaking": 1,
+    "non_breaking": 2,
+    "review": 1
+  },
+  "changes": [
+    {
+      "id": "vc2_<64 lowercase hex>",
+      "subject": "ve2_<64 lowercase hex>",
+      "kind": "field_type_changed",
+      "severity": "breaking",
+      "impacts": ["wire", "source"],
+      "native": { "format": "protobuf", "full_name": "example.v1.Order.id", "number": 1 },
+      "native_kind": "FIELD_SAME_TYPE",
+      "details": {}
+    }
+  ]
+}
+```
+
+`deltas` is included only when you pass `--report`; otherwise the key is omitted. All map keys — including flattened OpenAPI `extensions` — serialize deterministically.
+
+## Stable entity and change identities
+
+- **Entity IDs (`ve2_`)**: `"ve2_" + SHA-256` of canonical JSON `{v: 2, format, kind, coordinate}` with keys sorted recursively. Descriptions, comments, generator versions, and declaration order never alter an entity ID.
+- **Change IDs (`vc2_`)**: `"vc2_" + SHA-256` of canonical JSON `{v: 2, subject, kind, details}`. Severity labels, impact dimensions, file paths, raw file hashes, and generator versions stay outside the hash so suppression lists keyed on `vc2_` IDs remain stable across policy updates.
+
+## Cross-format surface mapping
+
+| Neutral entity | OpenAPI | Protobuf / gRPC | GraphQL |
+|---|---|---|---|
+| `service` | Declared or inferred tag | Fully qualified service | `Query`, `Mutation`, `Subscription` root |
+| `operation` | `METHOD` + exact path | Fully qualified RPC | Root schema field (`Query.user`) |
+| `argument` | Parameter or synthetic body | Request message reference | Field argument (`Query.user(id:)`) |
+| `result` | Response status + first schema | Output message reference | Root return type |
+| `type` | Component or definition schema | Message, enum, nested type, file, package | Object, interface, input, enum, union, scalar |
+| `field` | Property or composition member | Message field or `oneof` member | Object, interface, or input field |
+| `value` | Canonical JSON enum member | Enum FQN + number + name | Enum value coordinate (`Role.ADMIN`) |
+
+## Pagination inference across formats
+
+Pagination changes emit a `pagination_changed` fact carrying structured evidence and confidence (`declared` > `corroborated` > `inferred`):
+
+- **OpenAPI** *(always `review`)*: combines query controls (`page`, `size`, `pageToken`, `cursor`, `limit`, `offset`) with a 2xx response containing an array property and a continuation field (top-level or one level deep, plus optional end-of-results flags such as `has_more` or `is_last`).
+- **Protobuf** *(always `review`)*: matches AIP-158 RPCs with `page_size` and `page_token` request fields and `next_page_token` plus repeated items in the response.
+- **GraphQL** *(`breaking` when switching between list and connection; `review` for control edits)*: matches Relay `edges { node }` or `nodes` connections with `pageInfo` and `first`/`after` or `last`/`before`.
+
+## Legacy OpenAPI v1 contract (`--contract 1`)
+
+Pass `--contract 1` when an existing OpenAPI script expects the v1 schema (`schema_version: 1`, `vc1_` IDs, and exact path matching without move pairing):
+
+```bash
+vimanam diff old.json new.json --format json --contract 1 --report
+```
+
+<Aside type="caution" title="Contract v1 is OpenAPI-only">
+  Protobuf and GraphQL inputs require contract v2 and exit with status `1` before creating any output file if `--contract 1` is passed.
+</Aside>
+
+## Next steps
+
+- See [CI pipelines & Rust library](/vimanam/ci-and-library/) to deserialize `JsonDiff` directly in Rust or wire CI gates.
+- See [CLI reference](/vimanam/cli-reference/) for every `diff` flag.

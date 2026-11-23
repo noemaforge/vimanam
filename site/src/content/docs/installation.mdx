@@ -1,0 +1,87 @@
+---
+title: "Installation & completions"
+description: "Install Vimanam from Homebrew, release installers, Cargo, or GitHub Actions, and configure shell completions and manual pages."
+---
+
+import { Aside, TabItem, Tabs } from '@astrojs/starlight/components';
+import InstallSwitcher from '../../components/InstallSwitcher.astro';
+
+Vimanam ships as a single static binary for macOS (Apple Silicon and Intel), Linux (`x86_64` and `aarch64`), and Windows (`x86_64`). No external `protoc` or C YAML libraries are required at runtime.
+
+## Install the CLI
+
+<InstallSwitcher />
+
+Every GitHub Release attaches compressed archives and SHA-256 checksums on the [Releases page](https://github.com/noemaforge/vimanam/releases).
+
+## Verify your installation
+
+Run `--version` to confirm the installed release:
+
+```bash
+vimanam --version
+# vimanam 2.2.0
+```
+
+## Enable shell completions
+
+Vimanam generates tab-completion scripts with file and directory path hints (`ValueHint`) for six shells: `bash`, `zsh`, `fish`, `elvish`, `nushell`, and `powershell`.
+
+<Tabs>
+  <TabItem label="Zsh">
+    ```bash
+    mkdir -p ~/.zsh/completions
+    vimanam completions zsh > ~/.zsh/completions/_vimanam
+    ```
+    Add `~/.zsh/completions` to `fpath` before calling `compinit` in `~/.zshrc`.
+  </TabItem>
+  <TabItem label="Bash">
+    ```bash
+    vimanam completions bash > ~/.local/share/bash-completion/completions/vimanam
+    ```
+  </TabItem>
+  <TabItem label="Fish">
+    ```fish
+    vimanam completions fish > ~/.config/fish/completions/vimanam.fish
+    ```
+  </TabItem>
+  <TabItem label="Nushell">
+    ```nu
+    vimanam completions nushell | save -f ($nu.default-config-dir | path join "completions/vimanam.nu")
+    ```
+    Source `completions/vimanam.nu` from your `config.nu`.
+  </TabItem>
+  <TabItem label="PowerShell">
+    ```powershell
+    vimanam completions powershell | Out-String | Invoke-Expression
+    ```
+  </TabItem>
+  <TabItem label="Elvish">
+    ```sh
+    vimanam completions elvish > ~/.config/elvish/lib/vimanam.elv
+    ```
+  </TabItem>
+</Tabs>
+
+## Generate manual pages
+
+Use `vimanam man` to generate roff manual pages for local viewing or OS packaging (`.deb`, `.rpm`, Homebrew):
+
+```bash
+# View the top-level vimanam(1) manual page directly
+vimanam man | man -l -
+
+# Write vimanam.1 and all subcommand pages (diff, completions, man) into a directory
+vimanam man --out-dir ./man/man1
+```
+
+The stdout page and `DIR/vimanam.1` are byte-identical.
+
+<Aside type="note" title="Core Rust library without CLI dependencies">
+  If you embed Vimanam in a Rust application, add `vimanam = { version = "2.2", default-features = false }` to `Cargo.toml`. That omits `clap`, `clap_complete`, `clap_complete_nushell`, `clap_mangen`, and `env_logger` from your dependency graph.
+</Aside>
+
+## Next steps
+
+- See [Quickstart](/vimanam/quickstart/) to run your first conversion and diff.
+- See [CI pipelines & Rust library](/vimanam/ci-and-library/) for GitHub Actions workflows and library usage.

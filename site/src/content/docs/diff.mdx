@@ -1,0 +1,97 @@
+---
+title: "Contract diff & Git refs"
+description: "Compare OpenAPI, Protocol Buffers, and GraphQL contract versions from files or Git commits with breaking-change exit codes and rename tracking."
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+`vimanam diff` compares two contract versions and classifies every change as breaking, non-breaking, or needing review. You can compare local files directly or read committed blobs straight from Git refs without modifying your worktree.
+
+## Compare two local files
+
+```bash
+# Markdown report with hygiene and token deltas, failing CI on breaking changes
+vimanam diff old.yaml new.yaml --report --fail-on-breaking
+
+# Machine-readable neutral contract v2 JSON
+vimanam diff old.yaml new.yaml --format json -o diff.json
+
+# Protobuf wire-only breaking gate (no protoc required)
+vimanam diff old.proto new.proto -I proto --breaking wire --fail-on-breaking
+
+# GraphQL schema diff with token-budgeted affected-operation context
+vimanam diff old.graphql new.graphql --context --max-tokens 2000
+```
+
+Vimanam validates both inputs before creating or truncating any `-o` output file.
+
+## Compare committed specs across Git refs
+
+Run `vimanam diff` inside a Git worktree to compare tags, branches, or commit expressions directly from committed blobs:
+
+```bash
+# Auto-discover when --to-ref has one tracked OpenAPI spec
+vimanam diff --from-ref v1.0.0 --to-ref HEAD --report --fail-on-breaking
+
+# Anchor a specific path at --to-ref and follow Git renames back to --from-ref
+vimanam diff --from-ref main --to-ref feature \
+  --spec api/openapi.yaml --format json -o diff.json
+
+# Protobuf Git-ref diff (resolved directly from Git blobs in memory)
+vimanam diff --from-ref v1.0.0 --to-ref v2.0.0 \
+  --spec proto/api.proto -I proto --breaking wire --fail-on-breaking
+
+# GraphQL Git-ref diff on a single committed SDL or introspection file
+vimanam diff --from-ref v1.0.0 --to-ref HEAD --spec schema.graphql --context
+```
+
+### Bypass rename discovery with `--from-spec` and `--to-spec`
+
+When a spec was both moved and heavily rewritten past Git's 50% rename threshold, supply both paths explicitly:
+
+```bash
+vimanam diff --from-ref v1.0.0 --to-ref HEAD \
+  --from-spec legacy/swagger.json \
+  --to-spec api/openapi.yaml \
+  --report
+```
+
+Key Git-ref guarantees:
+
+- Reads committed blobs only; uncommitted edits and untracked worktree files never affect the diff.
+- Automatic candidate discovery applies only to OpenAPI specs; Protobuf and GraphQL require `--spec` or paired `--from-spec`/`--to-spec`.
+- Historical `.proto` imports stay confined to repository-relative `-I` roots and reject symlinked `.proto` files.
+
+## OpenAPI moved-operation pairing
+
+In OpenAPI Markdown and contract v2 JSON output, Vimanam pairs removed and added operations of the same HTTP method that moved to a new path:
+
+1. Matches exact `(METHOD, path)` pairs first.
+2. Pairs remaining removed and added operations of the same method by unique `operationId` across the full old and new specs.
+3. Pairs remaining leftovers by path equality after normalizing whole `v<digits>` version segments (`/api/v1/items` ↔ `/api/v2/items`).
+
+A paired move emits one breaking `operation_moved` change (`Endpoint moved` in Markdown) followed by the operation's inner parameter, schema, and pagination changes. Ambiguous keys stay separate removals and additions. Pass `--exact-paths` to disable move pairing and restore exact matching.
+
+## Include hygiene and token deltas with `--report`
+
+Pass `--report` to append a `Deltas` section comparing both versions:
+
+- Spec hygiene check counts for old versus new specs (OpenAPI) or entity/type/operation counts (Protobuf and GraphQL)
+- Estimated full-documentation token sizes (`chars / 4`) and net token delta
+
+## Exit codes for CI gates
+
+| Exit code | Meaning |
+|---:|---|
+| `0` | Diff completed cleanly, or `--fail-on-breaking` was not set, or only non-breaking/review changes exist |
+| `1` | Input, parse, Git-ref, or flag validation error (no output file created) |
+| `3` | Breaking changes found when `--fail-on-breaking` is enabled (complete report is written before exiting) |
+
+<Aside type="note" title="Review changes never fail CI">
+  Changes classified as `review` — such as OpenAPI pagination changes, default-value changes, or GraphQL output enum additions — appear in the report and JSON output but never trigger exit code `3`.
+</Aside>
+
+## Next steps
+
+- See [Neutral JSON contract v2](/vimanam/json-contracts/) for the machine-readable JSON schema and `vc2_` change IDs.
+- See [CI pipelines & Rust library](/vimanam/ci-and-library/) for ready-to-use GitHub Actions workflows.
