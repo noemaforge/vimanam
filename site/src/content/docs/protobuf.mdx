@@ -1,0 +1,98 @@
+---
+title: "Protocol Buffers & gRPC"
+description: "Compile proto2 and proto3 files in pure Rust with no protoc, extract .proto source comments, and gate wire vs source breaking changes."
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+Vimanam reads proto2 and proto3 `.proto` source files and prebuilt binary `FileDescriptorSet` files (`.pb`, `.bin`, `.binpb`, `.fds`, `.desc`, `.descriptor`, `.protoset`). Both source compilation and descriptor decoding run in pure Rust with no external `protoc` or `buf` binary required.
+
+## Compile `.proto` files or read descriptor sets
+
+Pass one or more `-I` / `--proto-path` import roots when your `.proto` file imports sibling or shared packages. Google well-known types (`google/protobuf/*.proto`) are bundled automatically by `protox`:
+
+```bash
+# Render full gRPC docs directly from .proto source (no protoc needed)
+vimanam proto/api.proto -I proto --detail full --include-schemas
+
+# Select a single RPC by method or fully qualified operation ID
+vimanam proto/api.proto -I proto \
+  --operation 'RPC example.v1.Service.List' \
+  --detail full --include-schemas --no-report
+
+# Read a single message or enum schema directly
+vimanam api.pb --schema example.v1.ListRequest --no-report
+
+# Build an agent Skill tree from a binary descriptor set
+vimanam api.pb --output-mode skill --detail full --include-schemas -o context/
+```
+
+If you already produce descriptor sets in CI (for example with `protoc --include_imports --include_source_info` or `buf build -o api.pb`), Vimanam decodes them directly and preserves unknown/custom options.
+
+<Aside type="caution" title="Protobuf Editions policy">
+  The underlying reflection engine supports `proto2` and `proto3` only. Protobuf Editions (`edition = "2023"`) and unknown syntax values fail explicitly before any output file is created so resolved edition features are never silently dropped.
+</Aside>
+
+## Display `.proto` source comments in Markdown
+
+When `source_code_info` is present (always generated for `.proto` inputs and retained from descriptors built with `--include_source_info`), Vimanam displays leading and trailing `.proto` comments across:
+
+- gRPC services and RPC methods (including streaming modes)
+- Messages and nested message types
+- Scalar fields, repeated fields, singular message fields, singular enum fields, and `map<K, V>` fields (paired with `Field #N`, JSON name, `oneof`, and presence metadata)
+- Enums and individual enum values
+
+Neutral contract v2 identities (`ve2_`) and diff facts (`vc2_`) ignore comments, source locations, and declaration order. Adding or editing `.proto` comments never triggers a false diff.
+
+## Compare versions and scope wire vs source gates
+
+Use `vimanam diff` to compare `.proto` files, binary descriptors, or committed Git snapshots:
+
+```bash
+# Fail CI only on wire-breaking changes (exit 3)
+vimanam diff old.proto new.proto -I proto --fail-on-breaking --breaking wire
+
+# Fail CI on source or JSON compatibility breaks
+vimanam diff old.pb new.pb --format json --fail-on-breaking --breaking source
+
+# Compare committed .proto files across Git refs in memory (no worktree leaks)
+vimanam diff --from-ref v1.0.0 --to-ref v2.0.0 \
+  --spec proto/api.proto -I proto --breaking wire --fail-on-breaking
+```
+
+`--breaking <wire|source|all>` scopes only the exit-code gate (`all` is the default). The rendered report and JSON output always include every detected fact.
+
+### Native compatibility rules
+
+| Evidence | Impact dimensions | Native rule |
+|---|---|---|
+| Field type changed | Breaking wire, source, JSON | `FIELD_SAME_TYPE` |
+| Required proto2 field removed | Breaking wire and source (even if reserved) | `FIELD_REQUIRED_NO_DELETE` |
+| Field removed without reserving number | Breaking wire; removal also breaks source | `FIELD_NO_DELETE_UNLESS_NUMBER_RESERVED`, `FIELD_NO_DELETE` |
+| Proto2 group changed to embedded message | Breaking wire (wire types 3/4) | `FIELD_SAME_GROUP_ENCODING` |
+| Enum value removed without reserving number | Breaking wire; removal also breaks source | `ENUM_VALUE_NO_DELETE_UNLESS_NUMBER_RESERVED`, `ENUM_VALUE_NO_DELETE` |
+| Enum label reassigned to another used number | Breaking wire | `ENUM_VALUE_NUMBER_REUSED` |
+| Previously reserved number or name reused | Breaking wire (number) or source/JSON (name) | `RESERVED_IDENTITY_REUSED` |
+| Field `oneof` membership changed | Breaking wire and source | `FIELD_SAME_ONEOF` |
+| Field renamed at the same number and type | Breaking source and JSON only | `FIELD_SAME_NAME` |
+| JSON name changed | Breaking source and JSON | `FIELD_SAME_JSON_NAME` |
+| Message, enum, service, or RPC removed/renamed | Breaking source | `MESSAGE_NO_DELETE`, `ENUM_NO_DELETE`, `SERVICE_NO_DELETE`, `RPC_NO_DELETE` |
+| File package changed | Breaking source | `FILE_SAME_PACKAGE` |
+| RPC client or server streaming changed | Breaking source | `RPC_SAME_CLIENT_STREAMING`, `RPC_SAME_SERVER_STREAMING` |
+| Optional field, type, enum alias, or RPC added | Non-breaking | `PROTOBUF_SURFACE_CHANGED` |
+| Effective default, deprecation, or custom option changed | Review | `DefaultChanged`, `DEPRECATED_CHANGED`, `PROTOBUF_SURFACE_CHANGED` |
+
+### Identity and AIP-158 pagination
+
+- **Field identity**: uses containing message FQN plus field number, so a same-number rename remains a surviving wire entity and reports a source/JSON break rather than a false wire break.
+- **Enum value identity**: includes both number and name to preserve distinct `allow_alias` labels.
+- **AIP-158 pagination**: RPCs with `page_size` and `page_token` request fields and `next_page_token` plus repeated items in the response emit review-only `pagination_changed` facts when the shape changes.
+
+## Resolve Git-ref `.proto` imports in memory
+
+When diffing `.proto` sources with `--from-ref` and `--to-ref`, pass `--spec` (or paired `--from-spec` and `--to-spec`). Vimanam checks every committed `.proto` entry in the commit tree to reject symlinked `.proto` files, confines all `-I` roots to the repository, and lazily resolves only imported `.proto` blobs directly from Git memory via a custom `protox` `FileResolver`. Local worktree edits never leak into historical comparisons.
+
+## Next steps
+
+- See [Neutral JSON contract v2](/vimanam/json-contracts/) for `ve2_`/`vc2_` schema details.
+- See [Benchmarks & v2.2 analysis](/vimanam/benchmarks/) for OpenTelemetry Proto and gRPC Health performance measurements.

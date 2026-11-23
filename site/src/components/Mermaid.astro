@@ -1,0 +1,180 @@
+---
+// Renders Mermaid v12 diagrams client-side harmonized with Starlight light/dark themes.
+interface Props {
+  code: string;
+  caption?: string;
+}
+
+const { code, caption } = Astro.props;
+const id = `mermaid-${Math.random().toString(36).slice(2, 8)}`;
+---
+
+<figure class="vim-mermaid not-content" data-mermaid-shell={id} data-source={code}>
+  {caption && <figcaption class="vim-mermaid-caption">{caption}</figcaption>}
+  <div class="vim-mermaid-stage">
+    <pre class="vim-mermaid-fallback" id={id}>{code}</pre>
+  </div>
+</figure>
+
+<style>
+  .vim-mermaid {
+    margin: 1.5rem 0;
+    border: 1px solid var(--vim-border);
+    border-radius: 0.55rem;
+    background: var(--vim-surface);
+    overflow: hidden;
+    box-shadow: var(--vim-shadow-sm);
+  }
+
+  .vim-mermaid-caption {
+    padding: 0.52rem 0.9rem;
+    font-family: var(--sl-font-mono);
+    font-size: 0.74rem;
+    color: var(--sl-color-gray-3);
+    background: var(--vim-table-head);
+    border-bottom: 1px solid var(--vim-border);
+  }
+
+  .vim-mermaid-stage {
+    padding: 1.2rem 1rem;
+    overflow-x: auto;
+    display: flex;
+    justify-content: center;
+  }
+
+  .vim-mermaid-fallback {
+    margin: 0;
+    font-size: 0.78rem;
+    color: var(--sl-color-gray-3);
+    background: transparent;
+    border: none;
+    white-space: pre-wrap;
+  }
+
+  .vim-mermaid :global(.mermaid-rendered) {
+    width: 100%;
+    display: flex;
+    justify-content: center;
+  }
+
+  .vim-mermaid :global(svg) {
+    max-width: 100%;
+    height: auto;
+    font-family: var(--sl-font) !important;
+  }
+</style>
+
+<script>
+  import mermaid from 'mermaid';
+
+  let renderSeq = 0;
+  let busy = false;
+  let pending = false;
+
+  function themeVars(isLight: boolean) {
+    if (isLight) {
+      return {
+        fontFamily: "'Schibsted Grotesk', -apple-system, BlinkMacSystemFont, sans-serif",
+        fontSize: '13px',
+        background: '#ffffff',
+        primaryColor: '#e6f6ef',
+        primaryTextColor: '#0c1713',
+        primaryBorderColor: '#047857',
+        secondaryColor: '#eef4f1',
+        secondaryTextColor: '#0c1713',
+        secondaryBorderColor: '#879b92',
+        tertiaryColor: '#f7faf8',
+        tertiaryTextColor: '#1d2c26',
+        tertiaryBorderColor: '#b6c8bf',
+        clusterBkg: '#f1f6f3',
+        clusterBorder: '#b6c8bf',
+        lineColor: '#3b4f47',
+        edgeLabelBackground: '#ffffff',
+        textColor: '#0c1713',
+        nodeTextColor: '#0c1713',
+      };
+    }
+    return {
+      fontFamily: "'Schibsted Grotesk', -apple-system, BlinkMacSystemFont, sans-serif",
+      fontSize: '13px',
+      background: '#0f1714',
+      primaryColor: '#0d2b22',
+      primaryTextColor: '#edf5f1',
+      primaryBorderColor: '#10b981',
+      secondaryColor: '#14201c',
+      secondaryTextColor: '#edf5f1',
+      secondaryBorderColor: '#355246',
+      tertiaryColor: '#111a17',
+      tertiaryTextColor: '#d2e0d9',
+      tertiaryBorderColor: '#2d463c',
+      clusterBkg: '#0b1210',
+      clusterBorder: '#243a31',
+      lineColor: '#6ee7b7',
+      edgeLabelBackground: '#0f1714',
+      textColor: '#edf5f1',
+      nodeTextColor: '#edf5f1',
+    };
+  }
+
+  async function renderAll() {
+    if (busy) {
+      pending = true;
+      return;
+    }
+    busy = true;
+    pending = false;
+
+    const isLight = document.documentElement.dataset.theme === 'light';
+    mermaid.initialize({
+      startOnLoad: false,
+      theme: 'base',
+      securityLevel: 'strict',
+      themeVariables: themeVars(isLight),
+      flowchart: {
+        useMaxWidth: true,
+        htmlLabels: true,
+        curve: 'basis',
+        padding: 18,
+        nodeSpacing: 32,
+        rankSpacing: 48,
+      },
+    });
+
+    const shells = Array.from(document.querySelectorAll<HTMLElement>('[data-mermaid-shell]'));
+    for (const shell of shells) {
+      const source = shell.dataset.source ?? '';
+      const stage = shell.querySelector<HTMLElement>('.vim-mermaid-stage');
+      if (!stage || !source) continue;
+      const svgId = `${shell.dataset.mermaidShell ?? 'mermaid'}-svg-${++renderSeq}`;
+      try {
+        const { svg } = await mermaid.render(svgId, source);
+        stage.innerHTML = `<div class="mermaid-rendered">${svg}</div>`;
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        stage.innerHTML = `<pre class="vim-mermaid-fallback">Diagram failed to render: ${msg}</pre>`;
+      }
+    }
+
+    busy = false;
+    if (pending) {
+      void renderAll();
+    }
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', () => void renderAll(), { once: true });
+  } else {
+    void renderAll();
+  }
+  document.addEventListener('astro:page-load', () => void renderAll());
+
+  const observer = new MutationObserver((mutations) => {
+    for (const m of mutations) {
+      if (m.attributeName === 'data-theme') {
+        void renderAll();
+        break;
+      }
+    }
+  });
+  observer.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+</script>

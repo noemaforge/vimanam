@@ -45,6 +45,14 @@ swagger*.json
 !scripts/compare-fixtures/**
 !scripts/README.md
 !docs/**/*.md
+!site/**/*.md
+!site/**/*.mdx
+
+# Astro / Starlight documentation site build outputs
+site/node_modules/
+site/dist/
+site/.astro/
+site/package-lock.json
 
 # Temporary files
 __pycache__/

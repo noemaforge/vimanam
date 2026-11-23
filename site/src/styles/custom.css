@@ -1,0 +1,621 @@
+/* ==========================================================================
+   Vimanam Documentation Theme — Aviation Blueprint & Precision Editorial
+   Palette: Crisp mineral paper (light) / Instrument slate-pine (dark)
+   Accent: Aviation veridian green (#047857 light, #10b981 dark)
+   Type: Schibsted Grotesk + JetBrains Mono
+   ========================================================================== */
+
+:root {
+  /* Typography */
+  --sl-font: 'Schibsted Grotesk', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --sl-font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+
+  /* Reading rhythm */
+  --sl-content-width: 54rem;
+  --sl-line-height: 1.7;
+  --sl-line-height-headings: 1.18;
+
+  /* Dark mode palette (Starlight default root) */
+  --sl-color-accent-low: #0a2920;
+  --sl-color-accent: #10b981;
+  --sl-color-accent-high: #6ee7b7;
+
+  --sl-color-white: #edf5f1;
+  --sl-color-gray-1: #d2e0d9;
+  --sl-color-gray-2: #a0b5ab;
+  --sl-color-gray-3: #72887e;
+  --sl-color-gray-4: #41554c;
+  --sl-color-gray-5: #1d2a25;
+  --sl-color-gray-6: #111a17;
+  --sl-color-black: #090e0c;
+
+  --sl-color-bg: #090e0c;
+  --sl-color-bg-nav: rgba(9, 14, 12, 0.88);
+  --sl-color-bg-sidebar: #0d1411;
+  --sl-color-bg-inline-code: #13201b;
+  --sl-color-hairline: #1d2b25;
+  --sl-color-hairline-light: #16221d;
+  --sl-color-hairline-shade: #060908;
+
+  /* Semantic tokens */
+  --vim-surface: #0f1714;
+  --vim-surface-elevated: #14201c;
+  --vim-border: #1f3029;
+  --vim-border-strong: #2d463c;
+  --vim-grid-line: rgba(52, 211, 153, 0.065);
+  --vim-table-head: #121d19;
+  --vim-table-hover: rgba(16, 185, 129, 0.055);
+  --vim-inline-code-border: #22362e;
+  --vim-inline-code-text: #c8f0df;
+  --vim-bar-base: #334a40;
+  --vim-bar-accent: #10b981;
+  --vim-bar-track: #16231e;
+  --vim-warn: #f59e0b;
+  --vim-warn-bg: rgba(245, 158, 11, 0.1);
+  --vim-danger: #f87171;
+  --vim-danger-bg: rgba(248, 113, 113, 0.1);
+  --vim-success: #34d399;
+  --vim-success-bg: rgba(16, 185, 129, 0.12);
+  --vim-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.35);
+  --vim-shadow-md: 0 10px 28px -14px rgba(0, 0, 0, 0.6);
+}
+
+:root[data-theme='light'] {
+  --sl-color-accent-low: #e6f6ef;
+  --sl-color-accent: #047857;
+  --sl-color-accent-high: #065f46;
+
+  --sl-color-white: #0c1713;
+  --sl-color-gray-1: #1d2c26;
+  --sl-color-gray-2: #3b4f47;
+  --sl-color-gray-3: #576c63;
+  --sl-color-gray-4: #879b92;
+  --sl-color-gray-5: #d6e1dc;
+  --sl-color-gray-6: #edf3f0;
+  --sl-color-black: #f7faf8;
+
+  --sl-color-bg: #f7faf8;
+  --sl-color-bg-nav: rgba(247, 250, 248, 0.92);
+  --sl-color-bg-sidebar: #eef3f0;
+  --sl-color-bg-inline-code: #e8f0ec;
+  --sl-color-hairline: #d6e1dc;
+  --sl-color-hairline-light: #e2eae6;
+  --sl-color-hairline-shade: #c8d6cf;
+
+  /* Semantic tokens */
+  --vim-surface: #ffffff;
+  --vim-surface-elevated: #f1f6f3;
+  --vim-border: #d3dfd9;
+  --vim-border-strong: #b6c8bf;
+  --vim-grid-line: rgba(4, 120, 87, 0.065);
+  --vim-table-head: #eef4f1;
+  --vim-table-hover: rgba(4, 120, 87, 0.04);
+  --vim-inline-code-border: #ccdbd4;
+  --vim-inline-code-text: #0d2b20;
+  --vim-bar-base: #9db2a8;
+  --vim-bar-accent: #047857;
+  --vim-bar-track: #e8f0ec;
+  --vim-warn: #b45309;
+  --vim-warn-bg: rgba(180, 83, 9, 0.08);
+  --vim-danger: #b91c1c;
+  --vim-danger-bg: rgba(185, 28, 28, 0.08);
+  --vim-success: #047857;
+  --vim-success-bg: rgba(4, 120, 87, 0.1);
+  --vim-shadow-sm: 0 1px 2px rgba(12, 23, 19, 0.05);
+  --vim-shadow-md: 0 10px 26px -14px rgba(12, 23, 19, 0.12);
+}
+
+/* ==========================================================================
+   Global Typography & Accessibility
+   ========================================================================== */
+
+body {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+:focus-visible {
+  outline: 2px solid var(--sl-color-accent);
+  outline-offset: 2px;
+}
+
+.sl-markdown-content h1,
+.sl-markdown-content h2,
+.sl-markdown-content h3,
+.sl-markdown-content h4 {
+  text-wrap: balance;
+  font-weight: 650;
+}
+
+.sl-markdown-content h1 {
+  letter-spacing: -0.03em;
+}
+
+.sl-markdown-content h2 {
+  letter-spacing: -0.022em;
+  margin-top: 2.5rem;
+  padding-bottom: 0.45rem;
+  border-bottom: 1px solid var(--sl-color-hairline-light);
+}
+
+.sl-markdown-content h3 {
+  letter-spacing: -0.015em;
+  margin-top: 1.85rem;
+}
+
+.sl-markdown-content p,
+.sl-markdown-content li {
+  line-height: 1.7;
+}
+
+.sl-markdown-content a:not([class]) {
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.2em;
+  text-decoration-color: color-mix(in srgb, var(--sl-color-text-accent) 45%, transparent);
+  transition: color 140ms ease-out, text-decoration-color 140ms ease-out;
+}
+
+.sl-markdown-content a:not([class]):hover {
+  text-decoration-color: currentColor;
+}
+
+.sl-markdown-content :not(pre) > code {
+  font-size: 0.85em;
+  padding: 0.12em 0.36em;
+  border-radius: 0.3rem;
+  border: 1px solid var(--vim-inline-code-border);
+  background-color: var(--sl-color-bg-inline-code);
+  color: var(--vim-inline-code-text);
+  font-weight: 450;
+}
+
+/* ==========================================================================
+   Navigation & Sidebar Chrome
+   ========================================================================== */
+
+header.header {
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--sl-color-hairline);
+}
+
+.site-title {
+  gap: 0.55rem;
+  font-weight: 700;
+  letter-spacing: -0.025em;
+}
+
+.site-title img {
+  height: 1.7rem;
+  width: 1.7rem;
+  border-radius: 0.4rem;
+}
+
+.sidebar-pane {
+  border-inline-end: 1px solid var(--sl-color-hairline);
+}
+
+.sidebar-content .top-level > li > details > summary .large,
+.sidebar-content .group-label .large {
+  font-size: 0.72rem;
+  font-weight: 650;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--sl-color-gray-3);
+}
+
+.sidebar-content a {
+  border-radius: 0.38rem;
+  font-size: 0.89rem;
+  transition: background-color 140ms ease-out, color 140ms ease-out;
+}
+
+.sidebar-content a[aria-current='page'],
+.sidebar-content a[aria-current='page']:hover {
+  background-color: var(--sl-color-accent-low);
+  color: var(--sl-color-accent-high);
+  font-weight: 600;
+}
+
+/* ==========================================================================
+   Hero — Architectural Aviation Grid
+   ========================================================================== */
+
+.hero {
+  position: relative;
+  padding-block: clamp(2.1rem, 4.4vw, 3.35rem) clamp(1.7rem, 3.2vw, 2.35rem);
+  border-bottom: 1px solid var(--sl-color-hairline);
+  margin-bottom: 0.75rem;
+}
+
+.hero::before {
+  content: '';
+  position: absolute;
+  inset: -1.5rem -1rem 0 -1rem;
+  background-image:
+    linear-gradient(to right, var(--vim-grid-line) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--vim-grid-line) 1px, transparent 1px);
+  background-size: 32px 32px;
+  mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 0.95) 0%, rgba(0, 0, 0, 0) 100%);
+  -webkit-mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 0.95) 0%, rgba(0, 0, 0, 0) 100%);
+  pointer-events: none;
+  z-index: 0;
+}
+
+.hero > * {
+  position: relative;
+  z-index: 1;
+}
+
+.hero h1 {
+  font-size: clamp(2.4rem, 4.8vw, 3.45rem);
+  font-weight: 750;
+  letter-spacing: -0.035em;
+  line-height: 1.06;
+  color: var(--sl-color-white);
+}
+
+.hero .tagline {
+  font-size: clamp(1.04rem, 1.45vw, 1.18rem);
+  line-height: 1.56;
+  color: var(--sl-color-gray-2);
+  max-width: 45rem;
+}
+
+.hero .actions {
+  gap: 0.75rem;
+  margin-top: 1.35rem;
+}
+
+.sl-link-button {
+  border-radius: 0.45rem;
+  font-weight: 550;
+  font-size: 0.92rem;
+  padding: 0.62rem 1.1rem;
+  transition: background-color 150ms ease-out, border-color 150ms ease-out,
+    color 150ms ease-out, transform 150ms ease-out;
+}
+
+.sl-link-button.primary {
+  background: var(--sl-color-accent);
+  border-color: var(--sl-color-accent);
+  color: #ffffff;
+}
+
+:root:not([data-theme='light']) .sl-link-button.primary {
+  background: #059669;
+  border-color: #059669;
+  color: #ffffff;
+}
+
+.sl-link-button.primary:hover {
+  background: #047857;
+  border-color: #047857;
+  transform: translateY(-1px);
+}
+
+:root[data-theme='light'] .sl-link-button.primary:hover {
+  background: #065f46;
+  border-color: #065f46;
+}
+
+.sl-link-button.secondary {
+  background: var(--vim-surface);
+  border: 1px solid var(--vim-border-strong);
+  color: var(--sl-color-white);
+}
+
+.sl-link-button.secondary:hover {
+  border-color: var(--sl-color-accent);
+  color: var(--sl-color-accent-high);
+  transform: translateY(-1px);
+}
+
+/* ==========================================================================
+   Landing Structural Bands (No Uniform Card Walls)
+   ========================================================================== */
+
+.vim-meta-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem 1.1rem;
+  padding: 0.5rem 0 1.2rem;
+  font-size: 0.84rem;
+  color: var(--sl-color-gray-3);
+}
+
+.vim-version-pill {
+  font-family: var(--sl-font-mono);
+  font-size: 0.77rem;
+  font-weight: 600;
+  padding: 0.16rem 0.52rem;
+  border-radius: 0.32rem;
+  background: var(--sl-color-accent-low);
+  color: var(--sl-color-accent-high);
+  border: 1px solid color-mix(in srgb, var(--sl-color-accent) 30%, transparent);
+}
+
+.vim-metric-strip {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  border-top: 1px solid var(--vim-border);
+  border-bottom: 1px solid var(--vim-border);
+  margin: 1.25rem 0 1.85rem;
+}
+
+.vim-metric-cell {
+  padding: 1rem 1.1rem 1rem 0;
+  margin: 0;
+}
+
+.vim-metric-cell + .vim-metric-cell {
+  padding-left: 1.15rem;
+  border-left: 1px solid var(--sl-color-hairline-light);
+}
+
+.vim-metric-value {
+  display: block;
+  font-family: var(--sl-font-mono);
+  font-size: 1.38rem;
+  font-weight: 650;
+  letter-spacing: -0.03em;
+  font-variant-numeric: tabular-nums;
+  color: var(--sl-color-white);
+  line-height: 1.2;
+}
+
+.vim-metric-value.is-accent {
+  color: var(--sl-color-accent-high);
+}
+
+.vim-metric-label {
+  display: block;
+  margin-top: 0.3rem;
+  font-size: 0.8rem;
+  line-height: 1.42;
+  color: var(--sl-color-gray-3);
+}
+
+.vim-pillars {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1.5rem 1.85rem;
+  margin: 1.65rem 0 2.15rem;
+  padding-top: 1.35rem;
+  border-top: 1px solid var(--vim-border);
+}
+
+.vim-pillar {
+  margin: 0;
+}
+
+.vim-pillar h3 {
+  margin: 0 0 0.45rem;
+  font-size: 1rem;
+  font-weight: 650;
+  letter-spacing: -0.015em;
+  color: var(--sl-color-white);
+}
+
+.vim-pillar p {
+  margin: 0;
+  font-size: 0.91rem;
+  line-height: 1.62;
+  color: var(--sl-color-gray-2);
+}
+
+.vim-matrix {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  border-top: 1px solid var(--vim-border);
+  border-bottom: 1px solid var(--vim-border);
+  margin: 1.4rem 0 2.1rem;
+}
+
+.vim-matrix-cell {
+  padding: 1.1rem 1.25rem 1.1rem 0;
+  border-bottom: 1px solid var(--sl-color-hairline-light);
+  margin: 0;
+}
+
+.vim-matrix-cell:nth-child(even) {
+  padding-left: 1.35rem;
+  padding-right: 0;
+  border-left: 1px solid var(--sl-color-hairline-light);
+}
+
+.vim-matrix-cell:nth-last-child(-n + 2) {
+  border-bottom: none;
+}
+
+.vim-matrix-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin: 0 0 0.35rem;
+  font-size: 0.96rem;
+  font-weight: 650;
+  color: var(--sl-color-white);
+}
+
+.vim-matrix-tag {
+  font-family: var(--sl-font-mono);
+  font-size: 0.72rem;
+  font-weight: 500;
+  color: var(--sl-color-gray-3);
+  white-space: nowrap;
+}
+
+.vim-matrix-cell p {
+  margin: 0;
+  font-size: 0.88rem;
+  line-height: 1.58;
+  color: var(--sl-color-gray-2);
+}
+
+@media (max-width: 58rem) {
+  .vim-metric-strip {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .vim-metric-cell:nth-child(odd) {
+    padding-left: 0;
+    border-left: none;
+  }
+
+  .vim-metric-cell:nth-child(-n + 2) {
+    border-bottom: 1px solid var(--sl-color-hairline-light);
+  }
+
+  .vim-pillars,
+  .vim-matrix {
+    grid-template-columns: 1fr;
+  }
+
+  .vim-matrix-cell,
+  .vim-matrix-cell:nth-child(even) {
+    padding: 0.95rem 0;
+    border-left: none;
+    border-bottom: 1px solid var(--sl-color-hairline-light);
+  }
+
+  .vim-matrix-cell:last-child {
+    border-bottom: none;
+  }
+}
+
+/* ==========================================================================
+   Tables — Tabular Data Precision
+   ========================================================================== */
+
+.sl-markdown-content table {
+  display: block;
+  width: 100%;
+  overflow-x: auto;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 0.87rem;
+  line-height: 1.54;
+  font-variant-numeric: tabular-nums;
+  border: 1px solid var(--vim-border);
+  border-radius: 0.5rem;
+  background: var(--vim-surface);
+  margin-block: 1.35rem;
+}
+
+.sl-markdown-content thead {
+  background: var(--vim-table-head);
+}
+
+.sl-markdown-content th {
+  font-size: 0.76rem;
+  font-weight: 650;
+  letter-spacing: 0.03em;
+  color: var(--sl-color-gray-1);
+  padding: 0.65rem 0.85rem;
+  border: none;
+  border-bottom: 1px solid var(--vim-border);
+  text-align: left;
+  white-space: nowrap;
+}
+
+.sl-markdown-content td {
+  padding: 0.6rem 0.85rem;
+  border: none;
+  border-bottom: 1px solid var(--sl-color-hairline-light);
+  vertical-align: top;
+}
+
+.sl-markdown-content tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.sl-markdown-content tbody tr {
+  transition: background-color 110ms ease-out;
+}
+
+.sl-markdown-content tbody tr:hover td {
+  background: var(--vim-table-hover);
+}
+
+/* ==========================================================================
+   Asides, LinkCards, Code Frames & Pagination
+   ========================================================================== */
+
+.starlight-aside {
+  border-radius: 0.5rem;
+  border: 1px solid var(--sl-color-asides-border);
+  border-inline-start-width: 1px;
+  padding: 0.95rem 1.1rem;
+  font-size: 0.92rem;
+}
+
+.starlight-aside--note {
+  --sl-color-asides-border: color-mix(in srgb, #2563eb 32%, var(--vim-border));
+  background: color-mix(in srgb, #2563eb 6%, var(--vim-surface));
+}
+
+.starlight-aside--caution {
+  --sl-color-asides-border: color-mix(in srgb, #d97706 40%, var(--vim-border));
+  background: color-mix(in srgb, #d97706 7%, var(--vim-surface));
+}
+
+.starlight-aside--tip {
+  --sl-color-asides-border: color-mix(in srgb, var(--sl-color-accent) 40%, var(--vim-border));
+  background: color-mix(in srgb, var(--sl-color-accent) 7%, var(--vim-surface));
+}
+
+.starlight-aside__title {
+  font-size: 0.84rem;
+  font-weight: 650;
+  letter-spacing: 0.015em;
+}
+
+.sl-link-card {
+  background: var(--vim-surface);
+  border: 1px solid var(--vim-border);
+  border-radius: 0.5rem;
+  padding: 1rem 1.15rem;
+  box-shadow: var(--vim-shadow-sm);
+  transition: border-color 150ms ease-out, box-shadow 150ms ease-out, transform 150ms ease-out;
+}
+
+.sl-link-card:hover {
+  border-color: var(--sl-color-accent);
+  box-shadow: var(--vim-shadow-md);
+  transform: translateY(-1px);
+}
+
+.sl-link-card .title {
+  font-weight: 650;
+  letter-spacing: -0.012em;
+}
+
+.sl-link-card .description {
+  font-size: 0.87rem;
+  line-height: 1.5;
+}
+
+.expressive-code {
+  margin-block: 1.2rem;
+}
+
+.expressive-code .frame {
+  border-radius: 0.5rem;
+  box-shadow: var(--vim-shadow-sm);
+}
+
+.pagination-links a {
+  border-radius: 0.5rem;
+  border-color: var(--vim-border);
+  background: var(--vim-surface);
+  transition: border-color 150ms ease-out, transform 150ms ease-out;
+}
+
+.pagination-links a:hover {
+  border-color: var(--sl-color-accent);
+  transform: translateY(-1px);
+}

@@ -1,0 +1,255 @@
+---
+// Theme-reactive horizontal bar chart for standalone or v2.1.0 vs v2.2.0 benchmarks.
+export interface BenchmarkItem {
+  label: string;
+  primary: number;
+  baseline?: number;
+  note?: string;
+}
+
+interface Props {
+  title: string;
+  unit: string;
+  xAxisLabel: string;
+  primaryLabel: string;
+  baselineLabel?: string;
+  caption: string;
+  items: BenchmarkItem[];
+  lowerIsBetter?: boolean;
+}
+
+const {
+  title,
+  unit,
+  xAxisLabel,
+  primaryLabel,
+  baselineLabel,
+  caption,
+  items,
+  lowerIsBetter = true,
+} = Astro.props;
+
+const maxValue = Math.max(
+  ...items.flatMap((it) => (it.baseline !== undefined ? [it.primary, it.baseline] : [it.primary])),
+  1,
+);
+
+function pct(val: number): string {
+  return `${Math.max(2, Math.round((val / maxValue) * 1000) / 10)}%`;
+}
+
+function ratioLabel(item: BenchmarkItem): string | null {
+  if (item.baseline === undefined || item.primary <= 0 || item.baseline <= 0) return null;
+  if (lowerIsBetter) {
+    const r = item.baseline / item.primary;
+    return `${r.toFixed(2)}x`;
+  }
+  const r = item.primary / item.baseline;
+  return `${r.toFixed(2)}x`;
+}
+---
+
+<figure class="vim-chart not-content">
+  <div class="vim-chart-head">
+    <div class="vim-chart-title">{title}</div>
+    <div class="vim-chart-legend">
+      <span class="vim-legend-item">
+        <span class="vim-swatch is-primary" aria-hidden="true"></span>
+        {primaryLabel}
+      </span>
+      {baselineLabel && (
+        <span class="vim-legend-item">
+          <span class="vim-swatch is-baseline" aria-hidden="true"></span>
+          {baselineLabel}
+        </span>
+      )}
+    </div>
+  </div>
+
+  <div class="vim-chart-rows">
+    {items.map((item) => {
+      const ratio = ratioLabel(item);
+      return (
+        <div class="vim-chart-row">
+          <div class="vim-chart-row-meta">
+            <span class="vim-chart-label">{item.label}</span>
+            <span class="vim-chart-nums">
+              <span class="vim-num-primary">{item.primary} {unit}</span>
+              {item.baseline !== undefined && (
+                <span class="vim-num-baseline">vs {item.baseline} {unit}</span>
+              )}
+              {ratio && <span class="vim-ratio-chip">{ratio}</span>}
+              {item.note && <span class="vim-row-note">{item.note}</span>}
+            </span>
+          </div>
+          <div class="vim-chart-bars">
+            <div class="vim-bar-track">
+              <div class="vim-bar is-primary" style={`width: ${pct(item.primary)}`}></div>
+            </div>
+            {item.baseline !== undefined && (
+              <div class="vim-bar-track">
+                <div class="vim-bar is-baseline" style={`width: ${pct(item.baseline)}`}></div>
+              </div>
+            )}
+          </div>
+        </div>
+      );
+    })}
+  </div>
+
+  <figcaption class="vim-chart-foot">
+    <span>Scale: {xAxisLabel} ({unit})</span>
+    <span>{caption}</span>
+  </figcaption>
+</figure>
+
+<style>
+  .vim-chart {
+    margin: 1.4rem 0 1.85rem;
+    border: 1px solid var(--vim-border);
+    border-radius: 0.55rem;
+    background: var(--vim-surface);
+    overflow: hidden;
+  }
+
+  .vim-chart-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem 1rem;
+    padding: 0.7rem 1rem;
+    background: var(--vim-table-head);
+    border-bottom: 1px solid var(--vim-border);
+  }
+
+  .vim-chart-title {
+    font-size: 0.88rem;
+    font-weight: 650;
+    color: var(--sl-color-white);
+  }
+
+  .vim-chart-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.85rem;
+    font-size: 0.76rem;
+    color: var(--sl-color-gray-2);
+  }
+
+  .vim-legend-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.38rem;
+  }
+
+  .vim-swatch {
+    width: 0.65rem;
+    height: 0.65rem;
+    border-radius: 0.18rem;
+    display: inline-block;
+  }
+
+  .vim-swatch.is-primary {
+    background: var(--vim-bar-accent);
+  }
+
+  .vim-swatch.is-baseline {
+    background: var(--vim-bar-base);
+  }
+
+  .vim-chart-rows {
+    padding: 0.85rem 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.85rem;
+  }
+
+  .vim-chart-row {
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+  }
+
+  .vim-chart-row-meta {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 0.35rem 0.75rem;
+  }
+
+  .vim-chart-label {
+    font-size: 0.84rem;
+    font-weight: 550;
+    color: var(--sl-color-gray-1);
+  }
+
+  .vim-chart-nums {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 0.5rem;
+    font-family: var(--sl-font-mono);
+    font-size: 0.78rem;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .vim-num-primary {
+    color: var(--sl-color-accent-high);
+    font-weight: 600;
+  }
+
+  .vim-num-baseline,
+  .vim-row-note {
+    color: var(--sl-color-gray-3);
+  }
+
+  .vim-ratio-chip {
+    padding: 0.08rem 0.38rem;
+    border-radius: 0.28rem;
+    background: var(--vim-success-bg);
+    color: var(--vim-success);
+    font-size: 0.72rem;
+    font-weight: 600;
+  }
+
+  .vim-chart-bars {
+    display: flex;
+    flex-direction: column;
+    gap: 0.24rem;
+  }
+
+  .vim-bar-track {
+    width: 100%;
+    height: 0.52rem;
+    border-radius: 0.25rem;
+    background: var(--vim-bar-track);
+    overflow: hidden;
+  }
+
+  .vim-bar {
+    height: 100%;
+    border-radius: 0.25rem;
+  }
+
+  .vim-bar.is-primary {
+    background: var(--vim-bar-accent);
+  }
+
+  .vim-bar.is-baseline {
+    background: var(--vim-bar-base);
+  }
+
+  .vim-chart-foot {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    gap: 0.4rem 1rem;
+    padding: 0.55rem 1rem;
+    font-family: var(--sl-font-mono);
+    font-size: 0.72rem;
+    color: var(--sl-color-gray-3);
+    border-top: 1px solid var(--sl-color-hairline-light);
+    background: var(--vim-table-head);
+  }
+</style>

@@ -1,0 +1,121 @@
+---
+// Crisp unified before/after output diff panel for documentation comparisons.
+export interface DiffLine {
+  kind: 'ctx' | 'del' | 'add';
+  text: string;
+}
+
+interface Props {
+  title: string;
+  lines: DiffLine[];
+}
+
+const { title, lines } = Astro.props;
+const additions = lines.filter((l) => l.kind === 'add').length;
+const deletions = lines.filter((l) => l.kind === 'del').length;
+---
+
+<figure class="vim-diff not-content">
+  <figcaption class="vim-diff-head">
+    <span class="vim-diff-title">{title}</span>
+    <span class="vim-diff-stats">
+      <span class="is-add">+{additions}</span>
+      <span class="is-del">-{deletions}</span>
+    </span>
+  </figcaption>
+  <div class="vim-diff-body" role="region" aria-label={title}>
+    {lines.map((line) => (
+      <div class:list={['vim-diff-line', `is-${line.kind}`]}>
+        <span class="vim-diff-sigil" aria-hidden="true">
+          {line.kind === 'add' ? '+' : line.kind === 'del' ? '-' : ' '}
+        </span>
+        <span class="vim-diff-text">{line.text}</span>
+      </div>
+    ))}
+  </div>
+</figure>
+
+<style>
+  .vim-diff {
+    margin: 1.35rem 0 1.75rem;
+    border: 1px solid var(--vim-border);
+    border-radius: 0.55rem;
+    background: var(--vim-surface);
+    overflow: hidden;
+  }
+
+  .vim-diff-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    padding: 0.55rem 0.9rem;
+    background: var(--vim-table-head);
+    border-bottom: 1px solid var(--vim-border);
+    font-family: var(--sl-font-mono);
+    font-size: 0.76rem;
+  }
+
+  .vim-diff-title {
+    color: var(--sl-color-gray-1);
+    font-weight: 550;
+  }
+
+  .vim-diff-stats {
+    display: inline-flex;
+    gap: 0.5rem;
+    font-variant-numeric: tabular-nums;
+    font-weight: 600;
+  }
+
+  .vim-diff-stats .is-add {
+    color: var(--vim-success);
+  }
+
+  .vim-diff-stats .is-del {
+    color: var(--vim-danger);
+  }
+
+  .vim-diff-body {
+    overflow-x: auto;
+    padding: 0.45rem 0;
+    font-family: var(--sl-font-mono);
+    font-size: 0.77rem;
+    line-height: 1.55;
+  }
+
+  .vim-diff-line {
+    display: flex;
+    padding: 0.06rem 0.9rem;
+    white-space: pre;
+  }
+
+  .vim-diff-line.is-add {
+    background: var(--vim-success-bg);
+    color: var(--sl-color-white);
+  }
+
+  .vim-diff-line.is-del {
+    background: var(--vim-danger-bg);
+    color: var(--sl-color-gray-2);
+  }
+
+  .vim-diff-line.is-ctx {
+    color: var(--sl-color-gray-3);
+  }
+
+  .vim-diff-sigil {
+    width: 1.25rem;
+    flex-shrink: 0;
+    user-select: none;
+    font-weight: 600;
+  }
+
+  .vim-diff-line.is-add .vim-diff-sigil {
+    color: var(--vim-success);
+  }
+
+  .vim-diff-line.is-del .vim-diff-sigil {
+    color: var(--vim-danger);
+  }
+</style>

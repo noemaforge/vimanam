@@ -1,0 +1,110 @@
+---
+title: "CLI reference"
+description: "Complete reference for vimanam conversion flags, diff options, completions, manpage generation, flag conflicts, and exit codes."
+---
+
+This reference covers every top-level command, subcommand, flag, and exit code in Vimanam `2.2.0`.
+
+## Usage overview
+
+```text
+vimanam [OPTIONS] <FILE>
+vimanam diff [OPTIONS] [OLD] [NEW]
+vimanam completions <SHELL>
+vimanam man [--out-dir <DIR>]
+```
+
+Conversion flags cannot be combined with subcommands (`diff`, `completions`, `man`).
+
+## Conversion flags (`vimanam [OPTIONS] <FILE>`)
+
+`<FILE>` accepts an OpenAPI `.json`/`.yaml`/`.yml` file, a `.proto` file or binary `FileDescriptorSet`, or a GraphQL `.graphql`/`.graphqls` file, SDL directory, or introspection `.json` file.
+
+### Output and layout
+
+| Flag | Default | Description |
+|---|---|---|
+| `-o, --output <PATH>` | stdout | Output file path, or directory for `--split` and `--output-mode skill` |
+| `--split <service\|tag\|endpoint>` | — | Write linked Markdown pages into `-o <DIR>` with hash-manifest protection |
+| `--output-mode <skill>` | — | Write an agent-navigable `SKILL.md` tree into `-o <DIR>` |
+| `--overview-max-tokens <N>` | `1600` (skill) | Token budget (`chars / 4`) for `index.md` (`--split`) or `SKILL.md` (`skill`) only |
+| `--group-by <service\|method\|path>` | `service` | Group operations by service, method, or path |
+| `--method` | `false` | Shorthand for `--group-by method` |
+| `--flat` | `false` | Emit one flat operation list (precedence: `--flat` > `--method` > `--group-by`) |
+| `--sort <alpha\|path-length\|none>` | `alpha` | Operation sort order (`none` preserves input declaration order) |
+| `--toc` / `--no-toc` | `--toc` | Show or hide the table of contents (when both appear, the last flag wins) |
+
+### Filtering and exact selection
+
+| Flag | Description |
+|---|---|
+| `--service-filter <NAME[,...]>` | Include only matching services (comma-separated) |
+| `--path-filter <PATTERN>` | Include only paths containing `<PATTERN>` |
+| `--method-filter <METHOD[,...]>` | Include only matching methods (comma-separated) |
+| `--operation <METHOD PATH>` | Render exact operation (repeatable; e.g. `"GET /users"`, `"RPC pkg.Svc.Call"`, `"QUERY Query.user"`) |
+| `--operation-id <ID>` | Render exact case-sensitive `operationId` or RPC/GraphQL coordinate (repeatable) |
+| `--exclude-deprecated` | Hide deprecated operations |
+| `--required-only` | Show only required parameters |
+
+### Detail, schemas, and budgets
+
+| Flag | Default | Description |
+|---|---|---|
+| `--detail <summary\|basic\|standard\|full>` | `summary` | Amount of endpoint detail rendered |
+| `--include-schemas` | `false` | Render request and response schema tables (effective only at `--detail full`) |
+| `--inline-schemas` | `false` | Expand `$ref` schemas inline instead of linking to `Schema Definitions` |
+| `--schema-depth <0..=24>` | unbounded | Cap schema traversal edges from each root (`0` keeps roots only) |
+| `--schema <NAME>` | — | Read named schema directly with full metadata (repeatable) |
+| `--schema-field <NAME#POINTER>` | — | Read schema subtree and ancestor metadata via RFC 6901 pointer (repeatable) |
+| `--include-examples` | `false` | Include request/response examples (effective only at `--detail full`) |
+| `--include-auth` | `false` | Include servers and security schemes |
+| `--max-tokens <N>` | — | Fit single-file output to approximate token budget (`chars / 4`), stepping detail down |
+| `--no-report` | `false` | Omit the trailing Spec Hygiene Report |
+| `-I, --proto-path <DIR>` | — | Protobuf import search root (repeatable) |
+
+### Dry-run sizing
+
+| Flag | Description |
+|---|---|
+| `--stats` | Print per-service endpoint counts and estimated tokens (`chars / 4`) plus `TOTAL` |
+| `--costs` | Print per-endpoint slice costs, per-schema amplification, and top hotspots |
+
+## Subcommand: `vimanam diff`
+
+| Flag | Default | Description |
+|---|---|---|
+| `[OLD] [NEW]` | — | Two spec files (or GraphQL SDL directories) to compare |
+| `--from-ref <REF>` | — | Read older spec from a Git ref (requires `--to-ref`; conflicts with `OLD`/`NEW`) |
+| `--to-ref <REF>` | — | Read newer spec from a Git ref (requires `--from-ref`) |
+| `--spec <PATH>` | auto (OpenAPI) | Repository-relative path at `--to-ref`; follows renames back to `--from-ref` |
+| `--from-spec <PATH>` | — | Literal repository-relative path at `--from-ref` (requires `--to-spec`; bypasses rename discovery) |
+| `--to-spec <PATH>` | — | Literal repository-relative path at `--to-ref` (requires `--from-spec`) |
+| `-I, --proto-path <DIR>` | — | Protobuf import root (repeatable; must stay repository-relative with Git refs) |
+| `--format <markdown\|json>` | `markdown` | Output Markdown diff report or JSON contract envelope |
+| `--contract <1\|2>` | `2` | JSON contract version (`1` is OpenAPI-only) |
+| `--breaking <all\|wire\|source>` | `all` | Protobuf-only scope for `--fail-on-breaking` |
+| `--exact-paths` | `false` | OpenAPI-only: disable moved-operation pairing |
+| `--context` | `false` | GraphQL Markdown-only: append focused docs for affected new-schema root fields |
+| `--max-tokens <N>` | — | Token budget for GraphQL `--context` output |
+| `--report` | `false` | Append hygiene/count and token deltas |
+| `--fail-on-breaking` | `false` | Exit with status `3` after writing the full report if breaking changes exist |
+| `-o, --output <FILE>` | stdout | Write diff report to `<FILE>` |
+
+## Subcommands: `completions` and `man`
+
+```bash
+# Print shell completions to stdout (bash, elvish, fish, nushell, powershell, zsh)
+vimanam completions <SHELL>
+
+# Print vimanam(1) roff manual page to stdout, or write all subcommand pages to DIR
+vimanam man
+vimanam man --out-dir <DIR>
+```
+
+## Exit codes
+
+| Code | Meaning |
+|---:|---|
+| `0` | Success (or `diff --fail-on-breaking` with no breaking changes) |
+| `1` | CLI error, invalid spec, missing selector/file, manifest collision, or unsupported syntax |
+| `3` | `diff --fail-on-breaking` detected one or more breaking changes (full output written) |
