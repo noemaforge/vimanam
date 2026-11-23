@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.2.0] - 2026-11-24
+
 ### Added
 
 - Pure-Rust `.proto` source compilation via `protox` (#126): `.proto` files,
@@ -579,7 +581,8 @@ already on `main`; only the version bump was missing.
 - Initial release: OpenAPI 2.0 (Swagger) JSON to Markdown with grouping,
   filtering, sorting, and detail levels
 
-[Unreleased]: https://github.com/noemaforge/vimanam/compare/v2.1.0...HEAD
+[Unreleased]: https://github.com/noemaforge/vimanam/compare/v2.2.0...HEAD
+[2.2.0]: https://github.com/noemaforge/vimanam/compare/v2.1.0...v2.2.0
 [2.1.0]: https://github.com/noemaforge/vimanam/compare/v2.0.0...v2.1.0
 [2.0.0]: https://github.com/noemaforge/vimanam/compare/v1.7.0...v2.0.0
 [1.7.0]: https://github.com/noemaforge/vimanam/compare/v1.6.0...v1.7.0
