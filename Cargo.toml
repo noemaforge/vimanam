@@ -73,7 +73,6 @@ graphql-parser = "0.4"
 # Testing
 assert_cmd = "2.2"
 predicates = "3.1"
-tempfile = "3.27"
 
 # The profile that 'dist' will build with
 [profile.dist]
