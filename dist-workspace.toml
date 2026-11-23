@@ -35,6 +35,10 @@ hosting = "github"
 # Whether to install an updater program
 install-updater = false
 
+[dist.github-custom-runners]
+# GitHub retired macos-14; build Apple Silicon on macos-15.
+aarch64-apple-darwin = "macos-15"
+
 [dist.github-action-commits]
 "actions/checkout" = "3d3c42e5aac5ba805825da76410c181273ba90b1"
 "actions/upload-artifact" = "cf430e030ddbb5b0abf93d22962f4752f3646cd9"
