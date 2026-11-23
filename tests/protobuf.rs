@@ -661,3 +661,113 @@ fn malformed_descriptor_fields_and_duplicate_symbols_return_errors() {
             .is_err()
     );
 }
+#[test]
+fn source_comments_appear_in_documentation_only() {
+    let commented = source(
+        r#"
+// Manages widget records.
+service WidgetService {
+  // Fetch a single widget by ID.
+  // Returns NOT_FOUND when absent.
+  rpc GetWidget(GetWidgetRequest) returns (Widget);
+}
+
+// Request payload for GetWidget.
+message GetWidgetRequest {
+  // Unique widget identifier.
+  string id = 1;
+  // Optional filter tags.
+  repeated string tags = 2;
+}
+
+// Lifecycle status of a widget.
+enum Status {
+  STATUS_UNSPECIFIED = 0; // Default unset status.
+  // Active and serving traffic.
+  STATUS_ACTIVE = 1;
+}
+
+// A stored widget.
+message Widget {
+  Status status = 1;
+}
+"#,
+    );
+    let plain = source(
+        r#"
+service WidgetService {
+  rpc GetWidget(GetWidgetRequest) returns (Widget);
+}
+message GetWidgetRequest {
+  string id = 1;
+  repeated string tags = 2;
+}
+enum Status {
+  STATUS_UNSPECIFIED = 0;
+  STATUS_ACTIVE = 1;
+}
+message Widget {
+  Status status = 1;
+}
+"#,
+    );
+
+    // Comments never change neutral entities or diff facts.
+    assert_eq!(protobuf::adapt(&commented), protobuf::adapt(&plain));
+    assert!(protobuf::diff(&commented, &plain).unwrap().is_empty());
+
+    let api_doc = protobuf::documentation(&commented);
+    let service = api_doc
+        .services
+        .iter()
+        .find(|s| s.name == "demo.WidgetService")
+        .unwrap();
+    assert!(
+        service
+            .description
+            .as_deref()
+            .unwrap()
+            .contains("Manages widget records.")
+    );
+    let rpc = api_doc
+        .endpoints
+        .iter()
+        .find(|e| e.path == "demo.WidgetService.GetWidget")
+        .unwrap();
+    let rpc_desc = rpc.description.as_deref().unwrap();
+    assert!(rpc_desc.contains("Fetch a single widget by ID.\nReturns NOT_FOUND when absent."));
+    assert!(rpc_desc.contains("unary; input `demo.GetWidgetRequest`"));
+
+    let req = api_doc.schemas.get("demo.GetWidgetRequest").unwrap();
+    assert!(
+        req.description
+            .as_deref()
+            .unwrap()
+            .contains("Request payload for GetWidget.")
+    );
+    let props = req.properties.as_ref().unwrap();
+    let id_desc = props.get("id").unwrap().description.as_deref().unwrap();
+    assert!(id_desc.contains("Unique widget identifier."));
+    assert!(id_desc.contains("Field #1"));
+    let tags_desc = props.get("tags").unwrap().description.as_deref().unwrap();
+    assert!(tags_desc.contains("Optional filter tags."));
+    assert!(tags_desc.contains("Field #2"));
+
+    let status = api_doc.schemas.get("demo.Status").unwrap();
+    let status_desc = status.description.as_deref().unwrap();
+    assert!(status_desc.contains("Lifecycle status of a widget."));
+    assert!(status_desc.contains("`STATUS_UNSPECIFIED` = 0 (Default unset status.)"));
+    assert!(status_desc.contains("`STATUS_ACTIVE` = 1 (Active and serving traffic.)"));
+
+    // Descriptors without source_code_info fall back cleanly to default notes.
+    let plain_doc = protobuf::documentation(&plain);
+    assert_eq!(
+        plain_doc
+            .schemas
+            .get("demo.Widget")
+            .unwrap()
+            .description
+            .as_deref(),
+        Some("Protocol Buffers message")
+    );
+}

@@ -232,6 +232,8 @@ fn protobuf_native_markdown_budget_and_skill() {
         .clone();
     let text = String::from_utf8(out).unwrap();
     assert!(text.contains("server streaming"));
+    assert!(text.contains("Performs a watch for the serving status"));
+    assert!(text.contains("Used only by the Watch method."));
     assert!(text.contains("Field #1"));
     assert!(text.contains("#### Result"));
     assert!(!text.contains("| 200 |"));

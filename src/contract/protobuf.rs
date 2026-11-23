@@ -782,11 +782,89 @@ fn file_symbols(doc: &Document, filename: &str) -> std::collections::BTreeSet<St
     symbols
 }
 
+/// Clean a protoc `source_code_info` comment string, stripping the single
+/// leading space protoc leaves after `//` while preserving paragraph breaks.
+fn clean_comment(raw: &str) -> Option<String> {
+    let lines: Vec<&str> = raw
+        .lines()
+        .map(|line| line.strip_prefix(' ').unwrap_or(line).trim_end())
+        .collect();
+    let start = lines.iter().position(|line| !line.is_empty())?;
+    let end = lines.iter().rposition(|line| !line.is_empty())?;
+    Some(lines[start..=end].join("\n"))
+}
+
+/// Flatten a multiline comment into a single line for table cells and inline lists.
+fn inline_comment(comment: &str) -> String {
+    comment.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn annotate_block(comment: Option<&str>, note: String) -> Option<String> {
+    Some(match comment {
+        Some(text) if !text.is_empty() => format!("{text}\n\n{note}"),
+        _ => note,
+    })
+}
+
+fn annotate_inline(comment: Option<&str>, note: String) -> Option<String> {
+    Some(match comment.map(inline_comment) {
+        Some(text) if !text.is_empty() => format!("{text} ({note})"),
+        _ => note,
+    })
+}
+
+/// Source comments indexed by `(file_name, source_code_info path)`.
+/// Used only by [`documentation`]; neutral contract identity and diff facts
+/// deliberately ignore comments.
+struct SourceComments {
+    by_file: HashMap<String, HashMap<Vec<i32>, String>>,
+}
+
+impl SourceComments {
+    fn from_pool(pool: &DescriptorPool) -> Self {
+        let mut by_file = HashMap::new();
+        for file in pool.files() {
+            let Some(info) = &file.file_descriptor_proto().source_code_info else {
+                continue;
+            };
+            let mut entries: HashMap<Vec<i32>, String> = HashMap::new();
+            for loc in &info.location {
+                if loc.path.is_empty() {
+                    continue;
+                }
+                let leading = loc.leading_comments.as_deref().and_then(clean_comment);
+                let trailing = loc.trailing_comments.as_deref().and_then(clean_comment);
+                let combined = match (leading, trailing) {
+                    (Some(l), Some(t)) => Some(format!("{l}\n\n{t}")),
+                    (Some(l), None) => Some(l),
+                    (None, Some(t)) => Some(t),
+                    (None, None) => None,
+                };
+                if let Some(comment) = combined {
+                    entries.entry(loc.path.clone()).or_insert(comment);
+                }
+            }
+            if !entries.is_empty() {
+                by_file.insert(file.name().to_owned(), entries);
+            }
+        }
+        Self { by_file }
+    }
+
+    fn get(&self, file_name: &str, path: &[i32]) -> Option<&str> {
+        self.by_file
+            .get(file_name)
+            .and_then(|entries| entries.get(path))
+            .map(String::as_str)
+    }
+}
+
 /// Convert native descriptors to the renderer IR. RPC is a native operation
 /// label, not an HTTP method; `result` is not an HTTP status code.
 pub fn documentation(doc: &Document) -> crate::ApiDocumentation {
     use crate::{Endpoint, Parameter, Response, Schema, Service};
     use indexmap::IndexMap;
+    let comments = SourceComments::from_pool(&doc.pool);
     let reference = |name: &str| Schema {
         reference: Some(format!("#/components/schemas/{name}")),
         ..Default::default()
@@ -808,7 +886,14 @@ pub fn documentation(doc: &Document) -> crate::ApiDocumentation {
                         ..Default::default()
                     },
                 };
-                schema.description = Some(format!(
+                if f.is_list() {
+                    schema = Schema {
+                        schema_type: Some("array".into()),
+                        items: Some(Box::new(schema)),
+                        ..Default::default()
+                    };
+                }
+                let field_note = format!(
                     "Field #{}; JSON name `{}`{}{}{}",
                     f.number(),
                     f.json_name(),
@@ -830,14 +915,9 @@ pub fn documentation(doc: &Document) -> crate::ApiDocumentation {
                     } else {
                         ""
                     }
-                ));
-                if f.is_list() {
-                    schema = Schema {
-                        schema_type: Some("array".into()),
-                        items: Some(Box::new(schema)),
-                        ..Default::default()
-                    };
-                }
+                );
+                schema.description =
+                    annotate_inline(comments.get(f.parent_file().name(), f.path()), field_note);
                 (f.name().to_owned(), schema)
             })
             .collect();
@@ -846,7 +926,10 @@ pub fn documentation(doc: &Document) -> crate::ApiDocumentation {
             Schema {
                 schema_type: Some("object".into()),
                 title: Some(m.full_name().into()),
-                description: Some("Protocol Buffers message".into()),
+                description: annotate_block(
+                    comments.get(m.parent_file().name(), m.path()),
+                    "Protocol Buffers message".into(),
+                ),
                 properties: Some(properties),
                 required: Some(
                     m.fields()
@@ -863,18 +946,25 @@ pub fn documentation(doc: &Document) -> crate::ApiDocumentation {
     for en in enums {
         let mut values = en.values().collect::<Vec<_>>();
         values.sort_by_key(|v| (v.number(), v.name().to_owned()));
+        let enum_file = en.parent_file().name().to_owned();
+        let values_summary = values
+            .iter()
+            .map(
+                |v| match comments.get(&enum_file, v.path()).map(inline_comment) {
+                    Some(text) if !text.is_empty() => {
+                        format!("`{}` = {} ({text})", v.name(), v.number())
+                    }
+                    _ => format!("`{}` = {}", v.name(), v.number()),
+                },
+            )
+            .collect::<Vec<_>>()
+            .join(", ");
         schemas.insert(
             en.full_name().into(),
             Schema {
                 schema_type: Some("enum".into()),
                 title: Some(en.full_name().into()),
-                description: Some(
-                    values
-                        .iter()
-                        .map(|v| format!("`{}` = {}", v.name(), v.number()))
-                        .collect::<Vec<_>>()
-                        .join(", "),
-                ),
+                description: annotate_block(comments.get(&enum_file, en.path()), values_summary),
                 enum_values: Some(values.iter().map(|v| json!(v.name())).collect()),
                 ..Default::default()
             },
@@ -883,9 +973,13 @@ pub fn documentation(doc: &Document) -> crate::ApiDocumentation {
     let mut services = vec![];
     let mut endpoints = vec![];
     for s in doc.pool.services() {
+        let service_file = s.parent_file().name().to_owned();
         services.push(Service {
             name: s.full_name().into(),
-            description: Some("gRPC service".into()),
+            description: annotate_block(
+                comments.get(&service_file, s.path()),
+                "gRPC service".into(),
+            ),
         });
         for rpc in s.methods() {
             let streaming = match (rpc.is_client_streaming(), rpc.is_server_streaming()) {
@@ -905,16 +999,17 @@ pub fn documentation(doc: &Document) -> crate::ApiDocumentation {
                     extensions: HashMap::new(),
                 },
             );
+            let rpc_note = format!(
+                "{streaming}; input `{}` → result `{}`",
+                rpc.input().full_name(),
+                rpc.output().full_name()
+            );
             endpoints.push(Endpoint {
                 path: rpc.full_name().into(),
                 method: "RPC".into(),
                 services: vec![s.full_name().into()],
                 summary: Some(rpc.name().into()),
-                description: Some(format!(
-                    "{streaming}; input `{}` → result `{}`",
-                    rpc.input().full_name(),
-                    rpc.output().full_name()
-                )),
+                description: annotate_block(comments.get(&service_file, rpc.path()), rpc_note),
                 operation_id: Some(rpc.full_name().into()),
                 parameters: vec![Parameter {
                     reference: None,

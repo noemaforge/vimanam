@@ -30,7 +30,11 @@ vimanam diff --from-ref v1 --to-ref v2 --spec proto/api.proto -I proto --breakin
 
 Operation IDs are fully qualified RPC names. Markdown uses native `RPC`, input
 message and `result` labels; messages show field numbers, JSON names, oneofs,
-requiredness and presence. Enum descriptions retain value numbers. The existing
+requiredness and presence. Enum descriptions retain value numbers. When
+`source_code_info` is present (always included for `.proto` inputs, and for
+descriptors built with `--include_source_info`), leading and trailing `.proto`
+comments are surfaced on services, RPCs, messages, fields, enums and enum
+values without altering neutral entity IDs or diff facts. The existing
 selection, schema-depth, budget and protected split/Skill-tree machinery applies.
 Use `--operation-id example.v1.Service.List` as an alternative to `--operation`.
 Schemas use their fully qualified names, including nested types.
