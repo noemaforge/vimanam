@@ -204,14 +204,10 @@ fn run_diff<W: Write>(
 
     // The complete document is written and flushed before the exit code is
     // decided, so exit 3 never truncates the report.
-    if args.fail_on_breaking
+    Ok(args.fail_on_breaking
         && neutral
             .as_ref()
-            .map_or_else(|| spec_diff.has_breaking(), |d| d.has_breaking())
-    {
-        return Ok(true);
-    }
-    Ok(false)
+            .map_or_else(|| spec_diff.has_breaking(), |d| d.has_breaking()))
 }
 
 /// GraphQL SDL/introspection diff through the neutral v2 model. Every
