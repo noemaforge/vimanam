@@ -25,9 +25,10 @@ Besides producing documentation for humans, Vimanam is built for **feeding API s
 
 ## Protobuf and gRPC
 
-Read proto2/proto3 source with **protoc on PATH**, or read a complete binary
-`FileDescriptorSet` without external tools. Editions currently return an explicit
-unsupported-syntax error. See [protobuf inputs, rules and Git imports](docs/protobuf.md).
+Read proto2/proto3 `.proto` source directly (compiled in pure Rust with no
+external `protoc` required), or read a complete binary `FileDescriptorSet`.
+Editions currently return an explicit unsupported-syntax error. See
+[protobuf inputs, rules and Git imports](docs/protobuf.md).
 
 ```sh
 vimanam api.proto -I proto --detail full --include-schemas

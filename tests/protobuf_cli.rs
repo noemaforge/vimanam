@@ -492,4 +492,93 @@ fn unsupported_editions_source_leaves_output_untouched() {
         .failure()
         .stderr(predicates::str::contains("Editions are not yet supported"));
     assert!(!out.exists());
+
+    // Imported Editions file with leading comments is also rejected cleanly.
+    let imported = file(
+        &t,
+        "dep.proto",
+        "// leading comment\n/* block */\nedition = \"2023\";\nmessage Dep { string id = 1; }\n",
+    );
+    let _ = imported;
+    let main = file(
+        &t,
+        "main.proto",
+        "syntax = \"proto3\"; import \"dep.proto\"; message Main { Dep d = 1; }",
+    );
+    binary()
+        .arg(&main)
+        .arg("-o")
+        .arg(&out)
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains("Editions are not yet supported"));
+    assert!(!out.exists());
+}
+
+#[test]
+fn proto_source_compiles_without_protoc_on_path() {
+    let t = tempfile::tempdir().unwrap();
+    let a = file(
+        &t,
+        "old.proto",
+        r#"syntax = "proto3";
+package demo.v1;
+import "google/protobuf/timestamp.proto";
+// Sample message.
+message Event {
+  string id = 1;
+  google.protobuf.Timestamp created_at = 2;
+}
+service Events {
+  // Fetch an event.
+  rpc Get(Event) returns (Event);
+}
+"#,
+    );
+    let b = file(
+        &t,
+        "new.proto",
+        r#"syntax = "proto3";
+package demo.v1;
+import "google/protobuf/timestamp.proto";
+message Event {
+  string id = 1;
+  google.protobuf.Timestamp created_at = 2;
+  string label = 3;
+}
+service Events {
+  rpc Get(Event) returns (Event);
+}
+"#,
+    );
+    // Single-file Markdown rendering with empty PATH (no protoc binary available).
+    let rendered = binary()
+        .env("PATH", "")
+        .arg(&a)
+        .args(["--detail", "full", "--include-schemas", "--no-report"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let markdown = String::from_utf8(rendered).unwrap();
+    assert!(markdown.contains("Fetch an event."));
+    assert!(markdown.contains("Sample message."));
+
+    // Source-to-source diff with empty PATH (no protoc binary available).
+    let diff_out = binary()
+        .env("PATH", "")
+        .arg("diff")
+        .arg(&a)
+        .arg(&b)
+        .args(["--format", "json"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let json: Value = serde_json::from_slice(&diff_out).unwrap();
+    assert_eq!(json["schema_version"], 2);
+    assert_eq!(json["summary"]["breaking"], 0);
+    assert!(json["summary"]["non_breaking"].as_u64().unwrap() >= 1);
 }

@@ -1,11 +1,13 @@
 //! Select inputs before the shared diff pipeline can create an output file.
 
 use std::{
+    collections::HashSet,
     fs,
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
 };
 
 use anyhow::{Context, Result, bail};
+use protox::file::{ChainFileResolver, File as ProtoxFile, FileResolver, GoogleFileResolver};
 
 use super::{config::DiffArgs, file_extension, parse_openapi_bytes};
 use crate::{
@@ -99,7 +101,9 @@ impl Input {
     }
 
     pub fn protobuf(&self, includes: &[PathBuf]) -> Result<crate::contract::protobuf::Document> {
-        use crate::contract::protobuf::Document;
+        use crate::contract::protobuf::{
+            Document, compile_with_resolver, parse_proto_source, proto_virtual_name,
+        };
         if !self
             .path
             .extension()
@@ -110,19 +114,18 @@ impl Input {
         let Some((root, commit)) = &self.snapshot else {
             return crate::contract::protobuf::compile_bytes(&self.path, &self.bytes, includes);
         };
+        let mut roots = Vec::with_capacity(includes.len() + 2);
         for include in includes {
             anyhow::ensure!(
                 !include.is_absolute()
                     && !include.components().any(|c| matches!(
                         c,
-                        std::path::Component::ParentDir
-                            | std::path::Component::RootDir
-                            | std::path::Component::Prefix(_)
+                        Component::ParentDir | Component::RootDir | Component::Prefix(_)
                     )),
                 "Git protobuf import roots must stay inside the committed repository"
             );
+            roots.push(normalize_relative_path(include)?);
         }
-        let temp = tempfile::tempdir()?;
         let repo = Repository::discover(root)?;
         let listing = std::process::Command::new("git")
             .current_dir(root)
@@ -132,6 +135,7 @@ impl Input {
             listing.status.success(),
             "Failed to enumerate committed protobuf imports"
         );
+        let mut committed_protos = HashSet::new();
         for record in listing.stdout.split(|b| *b == 0).filter(|r| !r.is_empty()) {
             let tab = record
                 .iter()
@@ -155,16 +159,49 @@ impl Input {
                 "Historical protobuf imports must be regular committed files: {:?}",
                 path
             );
-            let target = temp.path().join(&path);
-            std::fs::create_dir_all(target.parent().unwrap())?;
-            std::fs::write(target, repo.materialize(commit, &path)?.bytes)?;
+            committed_protos.insert(normalize_relative_path(&path)?);
         }
-        let mut roots = includes
+        let entry_path = normalize_relative_path(&self.path)?;
+        roots.push(PathBuf::new());
+        if let Some(parent) = entry_path.parent()
+            && !parent.as_os_str().is_empty()
+            && !roots.iter().any(|r| r == parent)
+        {
+            roots.push(parent.to_path_buf());
+        }
+        let entry_virtual = roots
             .iter()
-            .map(|p| temp.path().join(p))
-            .collect::<Vec<_>>();
-        roots.push(temp.path().to_path_buf());
-        Document::read(&temp.path().join(&self.path), &roots)
+            .filter_map(|root_prefix| {
+                if root_prefix.as_os_str().is_empty() {
+                    Some(entry_path.clone())
+                } else {
+                    entry_path
+                        .strip_prefix(root_prefix)
+                        .ok()
+                        .filter(|relative| !relative.as_os_str().is_empty())
+                        .map(Path::to_path_buf)
+                }
+            })
+            .next()
+            .unwrap_or_else(|| entry_path.clone());
+        let entry_name = proto_virtual_name(&entry_virtual)
+            .with_context(|| format!("Invalid protobuf path in Git snapshot: {:?}", self.path))?;
+        let entry_source = std::str::from_utf8(&self.bytes)
+            .with_context(|| format!("Protobuf source is not valid UTF-8: {:?}", self.path))?
+            .to_owned();
+
+        let mut resolver = ChainFileResolver::new();
+        resolver.add(GitFileResolver {
+            repo,
+            commit: commit.clone(),
+            roots,
+            committed_protos,
+            entry_name: entry_name.clone(),
+            entry_source,
+            parse_source: parse_proto_source,
+        });
+        resolver.add(GoogleFileResolver::new());
+        compile_with_resolver(resolver, Path::new(&entry_name))
     }
 
     pub fn parse(&self) -> Result<ApiDocumentation> {
@@ -223,5 +260,61 @@ fn unique_candidate(repo: &Repository, reference: &str) -> Result<PathBuf> {
                 .collect::<Vec<_>>()
                 .join("\n")
         ),
+    }
+}
+
+fn normalize_relative_path(path: &Path) -> Result<PathBuf> {
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::Normal(part) => normalized.push(part),
+            Component::CurDir => {}
+            Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
+                bail!("Path must be relative and stay inside the repository: {path:?}");
+            }
+        }
+    }
+    Ok(normalized)
+}
+
+struct GitFileResolver {
+    repo: Repository,
+    commit: String,
+    roots: Vec<PathBuf>,
+    committed_protos: HashSet<PathBuf>,
+    entry_name: String,
+    entry_source: String,
+    parse_source: fn(&str, &str) -> Result<ProtoxFile, protox::Error>,
+}
+
+impl FileResolver for GitFileResolver {
+    fn open_file(&self, name: &str) -> Result<ProtoxFile, protox::Error> {
+        if name == self.entry_name {
+            return (self.parse_source)(name, &self.entry_source);
+        }
+        let Ok(rel) = normalize_relative_path(Path::new(name)) else {
+            return Err(protox::Error::file_not_found(name));
+        };
+        if rel.as_os_str().is_empty() {
+            return Err(protox::Error::file_not_found(name));
+        }
+        for root in &self.roots {
+            let candidate = if root.as_os_str().is_empty() {
+                rel.clone()
+            } else {
+                root.join(&rel)
+            };
+            if self.committed_protos.contains(&candidate) {
+                let materialized = self
+                    .repo
+                    .materialize(&self.commit, &candidate)
+                    .map_err(|err| protox::Error::new(err.to_string()))?;
+                let source = std::str::from_utf8(&materialized.bytes).map_err(|_| {
+                    protox::Error::new(format!("Protobuf source is not valid UTF-8: {name:?}"))
+                })?;
+                return (self.parse_source)(name, source);
+            }
+        }
+        Err(protox::Error::file_not_found(name))
     }
 }

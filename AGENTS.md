@@ -78,23 +78,27 @@ input/output direction, pagination evidence and future GraphQL/protobuf mappings
 
 ## Protobuf adapter
 
-`src/contract/protobuf.rs` compiles `.proto` with explicitly required protoc and
-Rust-decodes complete binary FileDescriptorSets. Proto2/proto3 only: reject
-Editions/unknown syntax before prost-reflect, which cannot safely decode their
-features. Preserve original descriptor bytes and custom options. Neutral field
-IDs use message FQN+number; enum label IDs add names to preserve aliases. Safe
-same-number renames break source/JSON only; reserved-identity reuse and type
-changes supply wire evidence. Enum reserved bounds use wide integers.
+`src/contract/protobuf.rs` compiles `.proto` sources in pure Rust with `protox`
+(including Google well-known imports and `source_code_info`, no external
+`protoc` required) and Rust-decodes complete binary FileDescriptorSets.
+Proto2/proto3 only: reject Editions/unknown syntax before prost-reflect, which
+cannot safely decode their features. Preserve original descriptor bytes and
+custom options. Neutral field IDs use message FQN+number; enum label IDs add
+names to preserve aliases. Safe same-number renames break source/JSON only;
+reserved-identity reuse and type changes supply wire evidence. Enum reserved
+bounds use wide integers.
 
 `--breaking` scopes protobuf failure gates only; `--contract 1` rejects protobuf
-before output creation. `cli::diff_inputs` materializes committed regular proto
-files in temp snapshots, using only ref-relative confined import roots. Do not
-read imports from current worktree during Git comparisons or extend OpenAPI
-candidate discovery implicitly. Renderer IR uses native RPC/result labels;
-existing budgets/schema selectors/Skill manifest protection apply. Tests in
-`tests/protobuf.rs` and `tests/protobuf_cli.rs` require protoc for source coverage;
-CI installs a pinned checksum-verified official compiler without system changes.
-See `docs/protobuf.md` and fixture provenance for limitations and native rules.
+before output creation. `cli::diff_inputs` resolves committed regular proto
+files directly from Git blobs in memory via a custom `protox` `FileResolver`,
+using only ref-relative confined import roots. Do not read imports from current
+worktree during Git comparisons or extend OpenAPI candidate discovery
+implicitly. Renderer IR uses native RPC/result labels; existing budgets/schema
+selectors/Skill manifest protection apply. Tests in `tests/protobuf.rs` and
+`tests/protobuf_cli.rs` cover pure-Rust source compilation, descriptor parity
+(CI installs a pinned checksum-verified `protoc` solely for the `protoc`
+descriptor parity test), and Git-ref resolution. See `docs/protobuf.md` and
+fixture provenance for limitations and native rules.
 
 ## GraphQL adapter
 

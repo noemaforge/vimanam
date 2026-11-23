@@ -20,7 +20,7 @@ pub struct Cli {
     #[arg(value_name = "FILE", required = true, value_hint = ValueHint::AnyPath)]
     pub input: Option<PathBuf>,
 
-    /// Protobuf import root (repeatable); source compilation requires protoc
+    /// Protobuf import root (repeatable)
     #[arg(short = 'I', long = "proto-path", value_name = "DIR", value_hint = ValueHint::DirPath)]
     pub proto_paths: Vec<PathBuf>,
 

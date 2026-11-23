@@ -1,13 +1,19 @@
-//! Protocol Buffers and gRPC adapter. Source compilation requires `protoc` on
-//! PATH; descriptor decoding and comparison do not require external tools.
+//! Protocol Buffers and gRPC adapter. Both `.proto` source compilation and
+//! descriptor decoding run in pure Rust without requiring external `protoc`.
 use super::*;
 use anyhow::{Context, Result};
 use prost::Message;
 use prost_reflect::{DescriptorPool, DynamicMessage, Kind};
+use protox::{
+    Compiler,
+    file::{
+        ChainFileResolver, File as ProtoxFile, FileResolver, GoogleFileResolver,
+        IncludeFileResolver,
+    },
+};
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
-    process::Command,
 };
 
 fn default_value(value: prost_reflect::Value) -> Value {
@@ -108,57 +114,208 @@ pub fn is_input(path: &Path) -> bool {
         .any(|v| e.eq_ignore_ascii_case(v))
     })
 }
-/// Compile source using the installed official compiler; no code generation occurs.
+/// Compile `.proto` source in pure Rust using `protox`; no external `protoc` or
+/// code generation is required.
 pub fn compile(path: &Path, includes: &[PathBuf]) -> Result<Document> {
     let path = path
         .canonicalize()
         .with_context(|| format!("Missing protobuf source: {path:?}"))?;
-    let temp = tempfile::tempdir()?;
-    let output = temp.path().join("descriptor.pb");
-    let mut command = Command::new("protoc");
-    command
-        .arg("--include_imports")
-        .arg("--include_source_info")
-        .arg(format!("--descriptor_set_out={}", output.display()));
+    let mut resolver = ChainFileResolver::new();
     // User roots precede the input directory, matching protoc import semantics.
     for root in includes {
-        command.arg("-I").arg(
+        let canonical = root
+            .canonicalize()
+            .with_context(|| format!("Invalid protobuf import root: {root:?}"))?;
+        resolver.add(EditionCheckingIncludeResolver::new(canonical));
+    }
+    let parent = path
+        .parent()
+        .context("Missing protobuf input directory")?
+        .to_path_buf();
+    resolver.add(EditionCheckingIncludeResolver::new(parent));
+    resolver.add(GoogleFileResolver::new());
+    compile_with_resolver(resolver, &path)
+}
+
+#[cfg(feature = "cli")]
+pub(crate) fn compile_bytes(path: &Path, bytes: &[u8], includes: &[PathBuf]) -> Result<Document> {
+    let canonical_path = path
+        .canonicalize()
+        .with_context(|| format!("Missing protobuf source: {path:?}"))?;
+    let mut canonical_roots = Vec::with_capacity(includes.len());
+    for root in includes {
+        canonical_roots.push(
             root.canonicalize()
                 .with_context(|| format!("Invalid protobuf import root: {root:?}"))?,
         );
     }
-    command.arg("-I").arg(path.parent().unwrap()).arg(&path);
-    let result = command.output().context("Compiling .proto requires protoc on PATH; alternatively supply a FileDescriptorSet built with --include_imports")?;
-    anyhow::ensure!(
-        result.status.success(),
-        "protoc failed: {}",
-        String::from_utf8_lossy(&result.stderr)
-    );
-    Document::decode(&std::fs::read(output)?)
-}
-#[cfg(feature = "cli")]
-pub(crate) fn compile_bytes(path: &Path, bytes: &[u8], includes: &[PathBuf]) -> Result<Document> {
-    let temp = tempfile::tempdir()?;
-    let canonical_path = path.canonicalize()?;
-    let virtual_path = includes
+    let virtual_path = canonical_roots
         .iter()
         .filter_map(|root| {
-            root.canonicalize()
+            canonical_path
+                .strip_prefix(root)
                 .ok()
-                .and_then(|root| canonical_path.strip_prefix(root).ok())
                 .filter(|relative| !relative.as_os_str().is_empty())
                 .map(Path::to_path_buf)
         })
         .next()
-        .or_else(|| path.file_name().map(PathBuf::from))
+        .or_else(|| canonical_path.file_name().map(PathBuf::from))
         .context("Missing protobuf input filename")?;
-    let saved = temp.path().join(virtual_path);
-    std::fs::create_dir_all(saved.parent().context("Missing protobuf input directory")?)?;
-    std::fs::write(&saved, bytes)?;
-    let mut roots = vec![temp.path().to_path_buf()];
-    roots.extend_from_slice(includes);
-    roots.push(path.canonicalize()?.parent().unwrap().to_path_buf());
-    compile(&saved, &roots)
+    let virtual_name = proto_virtual_name(&virtual_path)
+        .with_context(|| format!("Invalid protobuf virtual path: {virtual_path:?}"))?;
+    let source = std::str::from_utf8(bytes)
+        .with_context(|| format!("Protobuf source is not valid UTF-8: {path:?}"))?
+        .to_owned();
+
+    let mut resolver = ChainFileResolver::new();
+    resolver.add(MemoryFileResolver {
+        name: virtual_name.clone(),
+        source,
+    });
+    for root in canonical_roots {
+        resolver.add(EditionCheckingIncludeResolver::new(root));
+    }
+    let parent = canonical_path
+        .parent()
+        .context("Missing protobuf input directory")?
+        .to_path_buf();
+    resolver.add(EditionCheckingIncludeResolver::new(parent));
+    resolver.add(GoogleFileResolver::new());
+    compile_with_resolver(resolver, Path::new(&virtual_name))
+}
+
+pub(crate) fn compile_with_resolver<R>(resolver: R, entry: &Path) -> Result<Document>
+where
+    R: FileResolver + 'static,
+{
+    let mut compiler = Compiler::with_file_resolver(resolver);
+    compiler
+        .include_imports(true)
+        .include_source_info(true)
+        .open_file(entry)
+        .with_context(|| format!("Failed to compile protobuf source: {}", entry.display()))?;
+    Document::decode(&compiler.encode_file_descriptor_set())
+}
+
+#[cfg(feature = "cli")]
+pub(crate) fn parse_proto_source(name: &str, source: &str) -> Result<ProtoxFile, protox::Error> {
+    if has_edition_header(source) {
+        return Err(unsupported_edition_error(name));
+    }
+    ProtoxFile::from_source(name, source)
+}
+
+#[cfg(feature = "cli")]
+pub(crate) fn proto_virtual_name(path: &Path) -> Option<String> {
+    let mut name = String::new();
+    for component in path.components() {
+        match component {
+            std::path::Component::Normal(part) => {
+                let part = part.to_str()?;
+                if !name.is_empty() {
+                    name.push('/');
+                }
+                name.push_str(part);
+            }
+            std::path::Component::CurDir => {}
+            _ => return None,
+        }
+    }
+    (!name.is_empty()).then_some(name)
+}
+
+fn unsupported_edition_error(name: &str) -> protox::Error {
+    protox::Error::new(format!(
+        "Unsupported protobuf syntax \"editions\" in {name:?}: the descriptor adapter supports proto2/proto3; Editions are not yet supported"
+    ))
+}
+
+/// Detect a leading Protobuf Editions header (`edition = "...";`) after
+/// skipping BOM, whitespace, and `//` or `/* ... */` comments.
+fn has_edition_header(source: &str) -> bool {
+    let rest = skip_proto_trivia(source.strip_prefix('\u{feff}').unwrap_or(source));
+    let Some(after_keyword) = rest.strip_prefix("edition") else {
+        return false;
+    };
+    if after_keyword
+        .chars()
+        .next()
+        .is_some_and(|c| c.is_ascii_alphanumeric() || c == '_')
+    {
+        return false;
+    }
+    skip_proto_trivia(after_keyword).starts_with('=')
+}
+
+fn skip_proto_trivia(mut input: &str) -> &str {
+    loop {
+        input = input.trim_start();
+        if let Some(after) = input.strip_prefix("//") {
+            input = match after.find('\n') {
+                Some(idx) => &after[idx + 1..],
+                None => "",
+            };
+        } else if let Some(after) = input.strip_prefix("/*") {
+            input = match after.find("*/") {
+                Some(idx) => &after[idx + 2..],
+                None => "",
+            };
+        } else {
+            return input;
+        }
+    }
+}
+
+struct EditionCheckingIncludeResolver {
+    include: PathBuf,
+    inner: IncludeFileResolver,
+}
+
+impl EditionCheckingIncludeResolver {
+    fn new(include: PathBuf) -> Self {
+        Self {
+            inner: IncludeFileResolver::new(include.clone()),
+            include,
+        }
+    }
+}
+
+impl FileResolver for EditionCheckingIncludeResolver {
+    fn resolve_path(&self, path: &Path) -> Option<String> {
+        self.inner.resolve_path(path)
+    }
+
+    fn open_file(&self, name: &str) -> Result<ProtoxFile, protox::Error> {
+        match self.inner.open_file(name) {
+            Ok(file) => Ok(file),
+            Err(err) if err.is_file_not_found() => Err(err),
+            Err(err) => {
+                if let Ok(source) = std::fs::read_to_string(self.include.join(name))
+                    && has_edition_header(&source)
+                {
+                    return Err(unsupported_edition_error(name));
+                }
+                Err(err)
+            }
+        }
+    }
+}
+
+#[cfg(feature = "cli")]
+struct MemoryFileResolver {
+    name: String,
+    source: String,
+}
+
+#[cfg(feature = "cli")]
+impl FileResolver for MemoryFileResolver {
+    fn open_file(&self, name: &str) -> Result<ProtoxFile, protox::Error> {
+        if name == self.name {
+            parse_proto_source(name, &self.source)
+        } else {
+            Err(protox::Error::file_not_found(name))
+        }
+    }
 }
 fn id(kind: EntityKind, name: &str) -> String {
     entity_id(Format::Protobuf, kind, name)
