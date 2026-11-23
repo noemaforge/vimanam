@@ -823,7 +823,7 @@ fn unknown_operation_tag_keeps_its_own_service() {
 }
 
 // Shell completions (#41): `vimanam completions <SHELL>` prints a completion
-// script for every shell clap_complete supports, without needing a spec file.
+// script for every supported shell, without needing a spec file.
 #[test]
 fn completions_are_generated_for_each_supported_shell() {
     // Each shell is paired with a marker unique to its script format, so the
@@ -832,6 +832,7 @@ fn completions_are_generated_for_each_supported_shell() {
         ("bash", "complete -F _vimanam"),
         ("zsh", "#compdef vimanam"),
         ("fish", "complete -c vimanam"),
+        ("nushell", "export extern vimanam"),
         ("powershell", "Register-ArgumentCompleter"),
         ("elvish", "edit:completion:arg-completer[vimanam]"),
     ];
@@ -844,22 +845,59 @@ fn completions_are_generated_for_each_supported_shell() {
             .stderr(predicate::str::is_empty());
     }
 
-    // The script must actually cover the CLI's options.
+    // The script must actually cover the CLI's options and path value hints.
     vimanam()
         .args(["completions", "bash"])
         .assert()
         .success()
         .stdout(predicate::str::contains("--group-by"));
+    vimanam()
+        .args(["completions", "zsh"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(":DIR:_files -/"));
 }
 
 #[test]
 fn completions_rejects_unsupported_shell() {
     vimanam()
-        .args(["completions", "nushell"])
+        .args(["completions", "tcsh"])
         .assert()
         .failure()
         .code(2)
-        .stderr(predicate::str::contains("invalid value 'nushell'"));
+        .stderr(predicate::str::contains("invalid value 'tcsh'"));
+}
+
+#[test]
+fn man_generates_stdout_and_subcommand_pages() {
+    vimanam()
+        .arg("man")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(".TH vimanam 1"))
+        .stdout(predicate::str::contains("diff"))
+        .stderr(predicate::str::is_empty());
+
+    let dir = tempfile::tempdir().unwrap();
+    let out_dir = dir.path().join("man1");
+    vimanam()
+        .args(["man", "--out-dir"])
+        .arg(&out_dir)
+        .assert()
+        .success()
+        .stdout(predicate::str::is_empty())
+        .stderr(predicate::str::is_empty());
+
+    for file in [
+        "vimanam.1",
+        "vimanam-diff.1",
+        "vimanam-completions.1",
+        "vimanam-man.1",
+    ] {
+        let content = std::fs::read_to_string(out_dir.join(file))
+            .unwrap_or_else(|e| panic!("missing {file}: {e}"));
+        assert!(content.contains(".TH "), "{file} should be roff output");
+    }
 }
 
 #[test]

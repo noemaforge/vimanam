@@ -32,13 +32,22 @@ required-features = ["cli"]
 
 [features]
 default = ["cli"]
-cli = ["dep:clap", "dep:clap_complete", "dep:env_logger"]
+cli = [
+    "dep:clap",
+    "dep:clap_complete",
+    "dep:clap_complete_nushell",
+    "dep:clap_mangen",
+    "dep:env_logger",
+]
 
 [dependencies]
 # Command line argument parsing
-clap = { version = "4.6", features = ["derive"], optional = true }
+clap = { version = "4.6", features = ["derive", "wrap_help"], optional = true }
 # Shell completion generation for the `completions` subcommand
 clap_complete = { version = "4.6", optional = true }
+clap_complete_nushell = { version = "4.6", optional = true }
+# Manual page generation for the `man` subcommand
+clap_mangen = { version = "0.3", optional = true }
 
 # JSON parsing
 serde = { version = "1.0", features = ["derive"] }

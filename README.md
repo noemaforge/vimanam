@@ -231,10 +231,10 @@ cargo fmt && cargo clippy
 
 Integration tests live in `tests/cli/`, `tests/split.rs` and `tests/library.rs` and run against `tests/fixtures/`. Use `cargo test --no-default-features` to exercise the core library without the CLI. `scripts/compare-baseline.sh` compares a fresh build with a released binary across the CLI matrix — stdout, stderr, exit code, and written files — so a refactor can be checked for byte-for-byte output parity. Setup and the case list are in [`scripts/README.md`](scripts/README.md).
 
-### Shell completions
+### Shell completions and manual pages
 
 `vimanam completions <SHELL>` prints a completion script for `bash`, `zsh`, `fish`,
-`powershell`, or `elvish`. Install it once and re-run after upgrading Vimanam:
+`nushell`, `powershell`, or `elvish`. Install it once and re-run after upgrading Vimanam:
 
 ```bash
 # Bash (relies on the bash-completion v2 package, which stock macOS bash 3.2
@@ -252,6 +252,11 @@ mkdir -p ~/.config/fish/completions
 vimanam completions fish > ~/.config/fish/completions/vimanam.fish
 ```
 
+```nu
+# Nushell: save and source from your config.nu
+vimanam completions nushell | save -f ~/.config/nushell/completions/vimanam.nu
+```
+
 ```elvish
 # Elvish: add this line to ~/.config/elvish/rc.elv
 eval (vimanam completions elvish | slurp)
@@ -261,6 +266,9 @@ eval (vimanam completions elvish | slurp)
 # PowerShell: add this line to $PROFILE
 vimanam completions powershell | Out-String | Invoke-Expression
 ```
+
+`vimanam man` prints the roff `vimanam(1)` manual page to stdout, or writes pages for
+`vimanam` and every subcommand to a directory with `vimanam man --out-dir DIR`.
 
 ## Usage
 

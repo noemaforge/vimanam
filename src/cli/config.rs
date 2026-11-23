@@ -1,5 +1,5 @@
-use clap::{ArgGroup, Args, Parser, Subcommand, ValueEnum};
-use clap_complete::Shell;
+use clap::{ArgGroup, Args, Command, Parser, Subcommand, ValueEnum, ValueHint};
+use std::io::Write;
 use std::path::PathBuf;
 
 use crate::models::{DetailLevel, DocConfig, GroupBy, OperationRef, OperationSelector, SortMethod};
@@ -17,18 +17,18 @@ use crate::models::{DetailLevel, DocConfig, GroupBy, OperationRef, OperationSele
 pub struct Cli {
     /// OpenAPI JSON/YAML, protobuf .proto or FileDescriptorSet, GraphQL SDL
     /// (.graphql/.graphqls file or directory) or introspection JSON
-    #[arg(value_name = "FILE", required = true)]
+    #[arg(value_name = "FILE", required = true, value_hint = ValueHint::AnyPath)]
     pub input: Option<PathBuf>,
 
     /// Protobuf import root (repeatable); source compilation requires protoc
-    #[arg(short = 'I', long = "proto-path", value_name = "DIR")]
+    #[arg(short = 'I', long = "proto-path", value_name = "DIR", value_hint = ValueHint::DirPath)]
     pub proto_paths: Vec<PathBuf>,
 
     #[command(subcommand)]
     pub command: Option<Commands>,
 
     /// Output file path, or directory for split/skill output
-    #[arg(short, long, value_name = "FILE")]
+    #[arg(short, long, value_name = "FILE", value_hint = ValueHint::AnyPath)]
     pub output: Option<PathBuf>,
 
     /// Write linked Markdown pages to the directory given by --output
@@ -168,6 +168,40 @@ pub struct Cli {
     pub costs: bool,
 }
 
+#[derive(Copy, Clone, PartialEq, Eq, ValueEnum, Debug)]
+pub enum CompletionShell {
+    Bash,
+    Elvish,
+    Fish,
+    Nushell,
+    Powershell,
+    Zsh,
+}
+
+impl CompletionShell {
+    /// Writes shell completion definitions for `bin_name` into `writer`.
+    pub fn generate(self, cmd: &mut Command, bin_name: &str, writer: &mut dyn Write) {
+        match self {
+            Self::Bash => {
+                clap_complete::generate(clap_complete::Shell::Bash, cmd, bin_name, writer)
+            }
+            Self::Elvish => {
+                clap_complete::generate(clap_complete::Shell::Elvish, cmd, bin_name, writer)
+            }
+            Self::Fish => {
+                clap_complete::generate(clap_complete::Shell::Fish, cmd, bin_name, writer)
+            }
+            Self::Nushell => {
+                clap_complete::generate(clap_complete_nushell::Nushell, cmd, bin_name, writer)
+            }
+            Self::Powershell => {
+                clap_complete::generate(clap_complete::Shell::PowerShell, cmd, bin_name, writer)
+            }
+            Self::Zsh => clap_complete::generate(clap_complete::Shell::Zsh, cmd, bin_name, writer),
+        }
+    }
+}
+
 #[derive(Subcommand, Debug)]
 pub enum Commands {
     /// Generate shell completions and print them to stdout
@@ -176,7 +210,15 @@ pub enum Commands {
     Completions {
         /// Shell to generate completions for
         #[arg(value_enum)]
-        shell: Shell,
+        shell: CompletionShell,
+    },
+    /// Generate roff manual pages (stdout for vimanam(1), or --out-dir for all subcommands)
+    ///
+    /// Example: `vimanam man --out-dir ./man`
+    Man {
+        /// Write man pages for vimanam and every subcommand into DIR instead of stdout
+        #[arg(short = 'o', long = "out-dir", value_name = "DIR", value_hint = ValueHint::DirPath)]
+        out_dir: Option<PathBuf>,
     },
     /// Compare two versions of a spec and report what changed, classified as
     /// breaking, non-breaking or needing review
@@ -201,7 +243,7 @@ pub enum Commands {
 #[derive(Args, Debug)]
 pub struct DiffArgs {
     /// Protobuf import root; Git-ref roots must be repository-relative
-    #[arg(short = 'I', long = "proto-path", value_name = "DIR")]
+    #[arg(short = 'I', long = "proto-path", value_name = "DIR", value_hint = ValueHint::DirPath)]
     pub proto_paths: Vec<PathBuf>,
 
     /// Compatibility dimensions for protobuf --fail-on-breaking (OpenAPI unchanged)
@@ -211,6 +253,7 @@ pub struct DiffArgs {
     /// The older spec (OpenAPI JSON/YAML, protobuf, or GraphQL SDL file/directory or introspection JSON)
     #[arg(
         value_name = "OLD",
+        value_hint = ValueHint::AnyPath,
         required_unless_present = "from_ref",
         requires = "new",
         conflicts_with = "from_ref"
@@ -220,6 +263,7 @@ pub struct DiffArgs {
     /// The newer spec (same format as OLD)
     #[arg(
         value_name = "NEW",
+        value_hint = ValueHint::AnyPath,
         required_unless_present = "to_ref",
         requires = "old",
         conflicts_with = "to_ref"
@@ -236,15 +280,15 @@ pub struct DiffArgs {
 
     /// Repository-relative spec path at --to-ref; follow its renames to --from-ref.
     /// Omit only when --to-ref has exactly one tracked OpenAPI candidate
-    #[arg(long, value_name = "PATH", requires = "to_ref", conflicts_with_all = ["from_spec", "to_spec", "old", "new"])]
+    #[arg(long, value_name = "PATH", value_hint = ValueHint::FilePath, requires = "to_ref", conflicts_with_all = ["from_spec", "to_spec", "old", "new"])]
     pub spec: Option<PathBuf>,
 
     /// Literal repository-relative path at --from-ref; bypass rename discovery
-    #[arg(long, value_name = "PATH", requires_all = ["from_ref", "to_spec"], conflicts_with_all = ["spec", "old", "new"])]
+    #[arg(long, value_name = "PATH", value_hint = ValueHint::FilePath, requires_all = ["from_ref", "to_spec"], conflicts_with_all = ["spec", "old", "new"])]
     pub from_spec: Option<PathBuf>,
 
     /// Literal repository-relative path at --to-ref (requires --from-spec)
-    #[arg(long, value_name = "PATH", requires_all = ["to_ref", "from_spec"], conflicts_with_all = ["spec", "old", "new"])]
+    #[arg(long, value_name = "PATH", value_hint = ValueHint::FilePath, requires_all = ["to_ref", "from_spec"], conflicts_with_all = ["spec", "old", "new"])]
     pub to_spec: Option<PathBuf>,
 
     /// Append a Deltas section: spec hygiene counts for both specs and the
@@ -278,7 +322,7 @@ pub struct DiffArgs {
     pub fail_on_breaking: bool,
 
     /// Write the diff to FILE instead of stdout
-    #[arg(short, long, value_name = "FILE")]
+    #[arg(short, long, value_name = "FILE", value_hint = ValueHint::FilePath)]
     pub output: Option<PathBuf>,
 
     /// GraphQL Markdown only: append focused context for the affected root

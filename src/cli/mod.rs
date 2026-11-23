@@ -316,13 +316,31 @@ pub fn run<W: Write>(cli: &Cli, output: &mut W, notice: &mut dyn FnMut(&str)) ->
     match &cli.command {
         Some(Commands::Completions { shell }) => {
             let mut completions = Vec::new();
-            clap_complete::generate(*shell, &mut Cli::command(), "vimanam", &mut completions);
+            shell.generate(&mut Cli::command(), "vimanam", &mut completions);
             output
                 .write_all(&completions)
                 .context("Failed to write shell completions")?;
             output
                 .flush()
                 .context("Failed to write shell completions")?;
+            return Ok(false);
+        }
+        Some(Commands::Man { out_dir }) => {
+            if let Some(dir) = out_dir {
+                std::fs::create_dir_all(dir)
+                    .with_context(|| format!("Failed to create man page directory: {dir:?}"))?;
+                clap_mangen::generate_to(Cli::command(), dir)
+                    .with_context(|| format!("Failed to write man pages to {dir:?}"))?;
+            } else {
+                let mut page = Vec::new();
+                clap_mangen::Man::new(Cli::command())
+                    .render(&mut page)
+                    .context("Failed to render manual page")?;
+                output
+                    .write_all(&page)
+                    .context("Failed to write manual page")?;
+                output.flush().context("Failed to write manual page")?;
+            }
             return Ok(false);
         }
         Some(Commands::Diff(args)) => return run_diff(args, output, notice),
@@ -493,9 +511,30 @@ mod tests {
         let Some(Commands::Completions { shell }) = &cli.command else {
             unreachable!("the parsed command is completions");
         };
-        clap_complete::generate(*shell, &mut Cli::command(), "vimanam", &mut expected);
+        shell.generate(&mut Cli::command(), "vimanam", &mut expected);
         let mut actual = Vec::new();
         assert!(!run(&cli, &mut actual, &mut |_| {}).unwrap());
         assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn man_returns_write_and_flush_errors() {
+        let cli = Cli::try_parse_from(["vimanam", "man"]).unwrap();
+        let mut writer = FailingWriter {
+            bytes: Vec::new(),
+            fail_write: true,
+            fail_flush: false,
+        };
+        let error = run(&cli, &mut writer, &mut |_| {}).unwrap_err();
+        assert_eq!(error.to_string(), "Failed to write manual page");
+
+        let mut writer = FailingWriter {
+            bytes: Vec::new(),
+            fail_write: false,
+            fail_flush: true,
+        };
+        let error = run(&cli, &mut writer, &mut |_| {}).unwrap_err();
+        assert_eq!(error.to_string(), "Failed to write manual page");
+        assert!(!writer.bytes.is_empty());
     }
 }
