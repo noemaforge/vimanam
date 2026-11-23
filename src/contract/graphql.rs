@@ -475,15 +475,351 @@ impl Document {
     }
 }
 
-fn format_parse_error(text: &str, err: &apollo_parser::Error) -> String {
-    let offset = err.index().min(text.len());
+fn line_col(text: &str, offset: usize) -> (usize, usize) {
+    let mut offset = offset.min(text.len());
+    while offset > 0 && !text.is_char_boundary(offset) {
+        offset -= 1;
+    }
     let prefix = &text[..offset];
     let line = prefix.bytes().filter(|&b| b == b'\n').count() + 1;
     let col = prefix
         .rsplit('\n')
         .next()
         .map_or(1, |s| s.chars().count() + 1);
+    (line, col)
+}
+
+fn format_parse_error(text: &str, err: &apollo_parser::Error) -> String {
+    let (line, col) = line_col(text, err.index());
     format!("line {line}, column {col}: {}", err.message())
+}
+
+fn node_line_col(
+    node: &apollo_parser::SyntaxNode,
+    source: &str,
+    base_offset: usize,
+) -> (usize, usize) {
+    let offset = usize::from(node.text_range().start()).saturating_sub(base_offset);
+    line_col(source, offset)
+}
+
+/// Validate CST nodes for grammar holes where `apollo-parser` 0.8 omits an
+/// error branch (such as missing `:` in `ObjectField`/`Argument`, missing
+/// named type in `RootOperationTypeDefinition`, unclosed `ListValue` at EOF,
+/// braceless `SchemaDefinition`, and empty braces on `SchemaExtension`), and
+/// enforce GraphQL Spec §5.6.3 / §5.4.2 uniqueness on input-object fields and
+/// argument lists.
+fn validate_cst_syntax(
+    root: &apollo_parser::SyntaxNode,
+    source: &str,
+    base_offset: usize,
+    context: &str,
+) -> Result<()> {
+    use apollo_parser::SyntaxKind;
+
+    for node in root.descendants() {
+        match node.kind() {
+            SyntaxKind::OBJECT_FIELD => {
+                if let Some(field) = cst::ObjectField::cast(node)
+                    && (field.name().is_none()
+                        || field.colon_token().is_none()
+                        || field.value().is_none())
+                {
+                    let (line, col) = node_line_col(field.syntax(), source, base_offset);
+                    bail!(
+                        "{context}: line {line}, column {col}: invalid input object field (expected `name: value`)"
+                    );
+                }
+            }
+            SyntaxKind::OBJECT_VALUE => {
+                if let Some(obj) = cst::ObjectValue::cast(node) {
+                    if obj.l_curly_token().is_none() || obj.r_curly_token().is_none() {
+                        let (line, col) = node_line_col(obj.syntax(), source, base_offset);
+                        bail!(
+                            "{context}: line {line}, column {col}: unclosed input object literal"
+                        );
+                    }
+                    let mut seen = BTreeSet::new();
+                    for field in obj.object_fields() {
+                        let Some(name) = field.name() else {
+                            let (line, col) = node_line_col(field.syntax(), source, base_offset);
+                            bail!(
+                                "{context}: line {line}, column {col}: invalid input object field (expected `name: value`)"
+                            );
+                        };
+                        if field.colon_token().is_none() || field.value().is_none() {
+                            let (line, col) = node_line_col(field.syntax(), source, base_offset);
+                            bail!(
+                                "{context}: line {line}, column {col}: invalid input object field {:?} (expected `name: value`)",
+                                name.text().as_ref()
+                            );
+                        }
+                        let key = name.text().to_string();
+                        if !seen.insert(key.clone()) {
+                            let (line, col) = node_line_col(field.syntax(), source, base_offset);
+                            bail!(
+                                "{context}: line {line}, column {col}: duplicate field {key:?} in GraphQL input object literal"
+                            );
+                        }
+                    }
+                }
+            }
+            SyntaxKind::ARGUMENT => {
+                if let Some(arg) = cst::Argument::cast(node)
+                    && (arg.name().is_none()
+                        || arg.colon_token().is_none()
+                        || arg.value().is_none())
+                {
+                    let (line, col) = node_line_col(arg.syntax(), source, base_offset);
+                    bail!(
+                        "{context}: line {line}, column {col}: invalid argument (expected `name: value`)"
+                    );
+                }
+            }
+            SyntaxKind::ARGUMENTS => {
+                if let Some(args) = cst::Arguments::cast(node) {
+                    if args.l_paren_token().is_none()
+                        || args.r_paren_token().is_none()
+                        || args.arguments().next().is_none()
+                    {
+                        let (line, col) = node_line_col(args.syntax(), source, base_offset);
+                        bail!("{context}: line {line}, column {col}: invalid argument list");
+                    }
+                    let mut seen = BTreeSet::new();
+                    for arg in args.arguments() {
+                        let Some(name) = arg.name() else {
+                            let (line, col) = node_line_col(arg.syntax(), source, base_offset);
+                            bail!(
+                                "{context}: line {line}, column {col}: invalid argument (expected `name: value`)"
+                            );
+                        };
+                        if arg.colon_token().is_none() || arg.value().is_none() {
+                            let (line, col) = node_line_col(arg.syntax(), source, base_offset);
+                            bail!(
+                                "{context}: line {line}, column {col}: invalid argument {:?} (expected `name: value`)",
+                                name.text().as_ref()
+                            );
+                        }
+                        let key = name.text().to_string();
+                        if !seen.insert(key.clone()) {
+                            let (line, col) = node_line_col(arg.syntax(), source, base_offset);
+                            bail!(
+                                "{context}: line {line}, column {col}: duplicate argument {key:?}"
+                            );
+                        }
+                    }
+                }
+            }
+            SyntaxKind::LIST_VALUE => {
+                if let Some(list) = cst::ListValue::cast(node)
+                    && (list.l_brack_token().is_none() || list.r_brack_token().is_none())
+                {
+                    let (line, col) = node_line_col(list.syntax(), source, base_offset);
+                    bail!("{context}: line {line}, column {col}: unclosed list literal");
+                }
+            }
+            SyntaxKind::DEFAULT_VALUE => {
+                if let Some(def) = cst::DefaultValue::cast(node)
+                    && (def.eq_token().is_none() || def.value().is_none())
+                {
+                    let (line, col) = node_line_col(def.syntax(), source, base_offset);
+                    bail!("{context}: line {line}, column {col}: missing default value after `=`");
+                }
+            }
+            SyntaxKind::DIRECTIVE => {
+                if let Some(dir) = cst::Directive::cast(node)
+                    && (dir.at_token().is_none() || dir.name().is_none())
+                {
+                    let (line, col) = node_line_col(dir.syntax(), source, base_offset);
+                    bail!("{context}: line {line}, column {col}: invalid directive (missing name)");
+                }
+            }
+            SyntaxKind::DIRECTIVE_DEFINITION => {
+                if let Some(def) = cst::DirectiveDefinition::cast(node)
+                    && (def.at_token().is_none()
+                        || def.name().is_none()
+                        || def.on_token().is_none()
+                        || def
+                            .directive_locations()
+                            .is_none_or(|locs| locs.directive_locations().next().is_none()))
+                {
+                    let (line, col) = node_line_col(def.syntax(), source, base_offset);
+                    bail!("{context}: line {line}, column {col}: invalid directive definition");
+                }
+            }
+            SyntaxKind::SCHEMA_DEFINITION => {
+                if let Some(schema) = cst::SchemaDefinition::cast(node)
+                    && (schema.l_curly_token().is_none()
+                        || schema.r_curly_token().is_none()
+                        || schema.root_operation_type_definitions().next().is_none())
+                {
+                    let (line, col) = node_line_col(schema.syntax(), source, base_offset);
+                    bail!(
+                        "{context}: line {line}, column {col}: expected '{{' with at least one root operation type in schema definition"
+                    );
+                }
+            }
+            SyntaxKind::SCHEMA_EXTENSION => {
+                if let Some(ext) = cst::SchemaExtension::cast(node) {
+                    let has_braces = ext.l_curly_token().is_some();
+                    let has_roots = ext.root_operation_type_definitions().next().is_some();
+                    let has_directives = ext
+                        .directives()
+                        .is_some_and(|d| d.directives().next().is_some());
+                    if has_braces {
+                        if ext.r_curly_token().is_none() || !has_roots {
+                            let (line, col) = node_line_col(ext.syntax(), source, base_offset);
+                            bail!(
+                                "{context}: line {line}, column {col}: expected at least one root operation type inside '{{ ... }}' in schema extension"
+                            );
+                        }
+                    } else if !has_directives {
+                        let (line, col) = node_line_col(ext.syntax(), source, base_offset);
+                        bail!(
+                            "{context}: line {line}, column {col}: expected directives or '{{ ... }}' in schema extension"
+                        );
+                    }
+                }
+            }
+            SyntaxKind::ROOT_OPERATION_TYPE_DEFINITION => {
+                if let Some(root_op) = cst::RootOperationTypeDefinition::cast(node) {
+                    let has_op = root_op.operation_type().is_some_and(|op| {
+                        op.query_token().is_some()
+                            || op.mutation_token().is_some()
+                            || op.subscription_token().is_some()
+                    });
+                    let has_type = root_op.named_type().and_then(|t| t.name()).is_some();
+                    if !has_op || root_op.colon_token().is_none() || !has_type {
+                        let (line, col) = node_line_col(root_op.syntax(), source, base_offset);
+                        bail!(
+                            "{context}: line {line}, column {col}: invalid root operation type definition (expected `query|mutation|subscription: TypeName`)"
+                        );
+                    }
+                }
+            }
+            SyntaxKind::FIELD_DEFINITION => {
+                if let Some(field) = cst::FieldDefinition::cast(node)
+                    && (field.name().is_none()
+                        || field.colon_token().is_none()
+                        || field.ty().is_none())
+                {
+                    let (line, col) = node_line_col(field.syntax(), source, base_offset);
+                    bail!(
+                        "{context}: line {line}, column {col}: invalid field definition (expected `name: Type`)"
+                    );
+                }
+            }
+            SyntaxKind::INPUT_VALUE_DEFINITION => {
+                if let Some(input) = cst::InputValueDefinition::cast(node)
+                    && (input.name().is_none()
+                        || input.colon_token().is_none()
+                        || input.ty().is_none())
+                {
+                    let (line, col) = node_line_col(input.syntax(), source, base_offset);
+                    bail!(
+                        "{context}: line {line}, column {col}: invalid input value definition (expected `name: Type`)"
+                    );
+                }
+            }
+            SyntaxKind::LIST_TYPE => {
+                if let Some(list_ty) = cst::ListType::cast(node)
+                    && (list_ty.l_brack_token().is_none()
+                        || list_ty.ty().is_none()
+                        || list_ty.r_brack_token().is_none())
+                {
+                    let (line, col) = node_line_col(list_ty.syntax(), source, base_offset);
+                    bail!("{context}: line {line}, column {col}: invalid list type");
+                }
+            }
+            SyntaxKind::NON_NULL_TYPE => {
+                if let Some(nn) = cst::NonNullType::cast(node)
+                    && (nn.excl_token().is_none()
+                        || (nn.named_type().is_none() && nn.list_type().is_none()))
+                {
+                    let (line, col) = node_line_col(nn.syntax(), source, base_offset);
+                    bail!("{context}: line {line}, column {col}: invalid non-null type");
+                }
+            }
+            SyntaxKind::NAMED_TYPE => {
+                if let Some(nt) = cst::NamedType::cast(node)
+                    && nt.name().is_none()
+                {
+                    let (line, col) = node_line_col(nt.syntax(), source, base_offset);
+                    bail!("{context}: line {line}, column {col}: missing type name");
+                }
+            }
+            SyntaxKind::IMPLEMENTS_INTERFACES => {
+                if let Some(imp) = cst::ImplementsInterfaces::cast(node)
+                    && (imp.implements_token().is_none() || imp.named_types().next().is_none())
+                {
+                    let (line, col) = node_line_col(imp.syntax(), source, base_offset);
+                    bail!(
+                        "{context}: line {line}, column {col}: expected at least one interface name after `implements`"
+                    );
+                }
+            }
+            SyntaxKind::UNION_MEMBER_TYPES => {
+                if let Some(members) = cst::UnionMemberTypes::cast(node)
+                    && (members.eq_token().is_none() || members.named_types().next().is_none())
+                {
+                    let (line, col) = node_line_col(members.syntax(), source, base_offset);
+                    bail!(
+                        "{context}: line {line}, column {col}: expected at least one union member type after `=`"
+                    );
+                }
+            }
+            SyntaxKind::ENUM_VALUE_DEFINITION => {
+                if let Some(ev) = cst::EnumValueDefinition::cast(node)
+                    && ev.enum_value().and_then(|v| v.name()).is_none()
+                {
+                    let (line, col) = node_line_col(ev.syntax(), source, base_offset);
+                    bail!("{context}: line {line}, column {col}: missing enum value name");
+                }
+            }
+            SyntaxKind::ARGUMENTS_DEFINITION => {
+                if let Some(args) = cst::ArgumentsDefinition::cast(node)
+                    && (args.l_paren_token().is_none()
+                        || args.r_paren_token().is_none()
+                        || args.input_value_definitions().next().is_none())
+                {
+                    let (line, col) = node_line_col(args.syntax(), source, base_offset);
+                    bail!("{context}: line {line}, column {col}: invalid arguments definition");
+                }
+            }
+            SyntaxKind::FIELDS_DEFINITION => {
+                if let Some(fields) = cst::FieldsDefinition::cast(node)
+                    && (fields.l_curly_token().is_none()
+                        || fields.r_curly_token().is_none()
+                        || fields.field_definitions().next().is_none())
+                {
+                    let (line, col) = node_line_col(fields.syntax(), source, base_offset);
+                    bail!("{context}: line {line}, column {col}: invalid fields definition");
+                }
+            }
+            SyntaxKind::INPUT_FIELDS_DEFINITION => {
+                if let Some(fields) = cst::InputFieldsDefinition::cast(node)
+                    && (fields.l_curly_token().is_none()
+                        || fields.r_curly_token().is_none()
+                        || fields.input_value_definitions().next().is_none())
+                {
+                    let (line, col) = node_line_col(fields.syntax(), source, base_offset);
+                    bail!("{context}: line {line}, column {col}: invalid input fields definition");
+                }
+            }
+            SyntaxKind::ENUM_VALUES_DEFINITION => {
+                if let Some(vals) = cst::EnumValuesDefinition::cast(node)
+                    && (vals.l_curly_token().is_none()
+                        || vals.r_curly_token().is_none()
+                        || vals.enum_value_definitions().next().is_none())
+                {
+                    let (line, col) = node_line_col(vals.syntax(), source, base_offset);
+                    bail!("{context}: line {line}, column {col}: invalid enum values definition");
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(())
 }
 
 fn parse_sdl_document(label: &str, text: &str) -> Result<cst::Document> {
@@ -494,7 +830,14 @@ fn parse_sdl_document(label: &str, text: &str) -> Result<cst::Document> {
             format_parse_error(text, err)
         );
     }
-    Ok(tree.document())
+    let doc = tree.document();
+    validate_cst_syntax(
+        doc.syntax(),
+        text,
+        0,
+        &format!("Invalid GraphQL SDL in {label}"),
+    )?;
+    Ok(doc)
 }
 
 fn insert_root_operation(
@@ -718,12 +1061,23 @@ pub fn canonical_literal(literal: &str) -> Result<String> {
         .default_value()
         .and_then(|d| d.value())
         .with_context(|| format!("Invalid GraphQL default value {literal:?}"))?;
-    Ok(print_value(&value))
+    validate_cst_syntax(
+        value.syntax(),
+        literal,
+        prefix.len(),
+        &format!("Invalid GraphQL default value {literal:?}"),
+    )?;
+    print_value(&value)
 }
 
-fn print_value(v: &cst::Value) -> String {
-    match v {
-        cst::Value::Variable(n) => format!("${}", n.text()),
+fn print_value(v: &cst::Value) -> Result<String> {
+    Ok(match v {
+        cst::Value::Variable(n) => {
+            let name = n
+                .name()
+                .context("Invalid GraphQL variable literal: missing name")?;
+            format!("${}", name.text())
+        }
         cst::Value::IntValue(n) => {
             let token = n
                 .int_token()
@@ -747,23 +1101,43 @@ fn print_value(v: &cst::Value) -> String {
             .map(|v| v.to_string())
             .unwrap_or_else(|_| b.syntax().text().to_string().trim().to_owned()),
         cst::Value::NullValue(_) => "null".into(),
-        cst::Value::EnumValue(e) => e.text().to_string(),
-        cst::Value::ListValue(list) => format!(
-            "[{}]",
-            list.values()
+        cst::Value::EnumValue(e) => e
+            .name()
+            .context("Invalid GraphQL enum literal: missing name")?
+            .text()
+            .to_string(),
+        cst::Value::ListValue(list) => {
+            if list.l_brack_token().is_none() || list.r_brack_token().is_none() {
+                bail!("Invalid GraphQL list literal: missing bracket");
+            }
+            let items = list
+                .values()
                 .map(|item| print_value(&item))
-                .collect::<Vec<_>>()
-                .join(", ")
-        ),
+                .collect::<Result<Vec<_>>>()?;
+            format!("[{}]", items.join(", "))
+        }
         cst::Value::ObjectValue(obj) => {
-            let sorted: BTreeMap<String, String> = obj
-                .object_fields()
-                .filter_map(|field| {
-                    let key = field.name()?.text().to_string();
-                    let val = print_value(&field.value()?);
-                    Some((key, val))
-                })
-                .collect();
+            if obj.l_curly_token().is_none() || obj.r_curly_token().is_none() {
+                bail!("Invalid GraphQL input object literal: missing brace");
+            }
+            let mut sorted = BTreeMap::new();
+            for field in obj.object_fields() {
+                let key = field
+                    .name()
+                    .context("Invalid GraphQL input object field: missing field name")?
+                    .text()
+                    .to_string();
+                if field.colon_token().is_none() {
+                    bail!("Invalid GraphQL input object field {key:?}: missing ':'");
+                }
+                let value = field.value().with_context(|| {
+                    format!("Invalid GraphQL input object field {key:?}: missing value")
+                })?;
+                let val = print_value(&value)?;
+                if sorted.insert(key.clone(), val).is_some() {
+                    bail!("Duplicate field {key:?} in GraphQL input object literal");
+                }
+            }
             format!(
                 "{{{}}}",
                 sorted
@@ -773,7 +1147,7 @@ fn print_value(v: &cst::Value) -> String {
                     .join(", ")
             )
         }
-    }
+    })
 }
 
 fn name_text(name: Option<cst::Name>, context: &str) -> Result<String> {
@@ -854,14 +1228,18 @@ fn sdl_union_members(members: Option<cst::UnionMemberTypes>) -> Vec<String> {
 }
 
 fn sdl_input(v: &cst::InputValueDefinition) -> Result<InputValueDef> {
+    let default = match v.default_value() {
+        Some(def) => {
+            let val = def.value().context("Missing GraphQL input default value")?;
+            Some(print_value(&val)?)
+        }
+        None => None,
+    };
     Ok(InputValueDef {
         name: name_text(v.name(), "input value")?,
         description: sdl_description(v.description()),
         ty: sdl_typeref(&v.ty().context("Missing GraphQL input value type")?)?,
-        default: v
-            .default_value()
-            .and_then(|d| d.value())
-            .map(|val| print_value(&val)),
+        default,
         deprecation: sdl_deprecation(v.directives()),
     })
 }

@@ -838,3 +838,126 @@ message Widget {
         );
     }
 }
+
+#[cfg(unix)]
+#[test]
+fn symlinked_proto_under_include_root_preserves_virtual_path_and_shadow_checks() {
+    use std::os::unix::fs::symlink;
+
+    let temp = tempfile::tempdir().unwrap();
+    let shared = temp.path().join("shared");
+    let proto = temp.path().join("proto");
+    fs::create_dir_all(&shared).unwrap();
+    fs::create_dir_all(proto.join("v1")).unwrap();
+
+    // 1. Direct symlink under -I: proto/api.proto -> ../shared/api.proto
+    fs::write(
+        shared.join("api.proto"),
+        "syntax = \"proto3\"; package demo; message Ping { string id = 1; }\n",
+    )
+    .unwrap();
+    symlink(shared.join("api.proto"), proto.join("api.proto")).unwrap();
+
+    let direct = Document::read(&proto.join("api.proto"), std::slice::from_ref(&proto)).unwrap();
+    assert!(
+        direct.pool.files().any(|f| f.name() == "api.proto"),
+        "expected virtual name api.proto, got {:?}",
+        direct
+            .pool
+            .files()
+            .map(|f| f.name().to_owned())
+            .collect::<Vec<_>>()
+    );
+
+    // 2. Subdirectory symlink under -I importing a sibling symlinked dependency.
+    let store = temp.path().join("store");
+    fs::create_dir_all(&store).unwrap();
+    fs::write(
+        store.join("dep.proto"),
+        "syntax = \"proto3\"; package demo.v1; message Dep { int32 count = 1; }\n",
+    )
+    .unwrap();
+    fs::write(
+        store.join("service.proto"),
+        "syntax = \"proto3\"; package demo.v1; import \"v1/dep.proto\"; message Resp { Dep dep = 1; }\n",
+    )
+    .unwrap();
+    symlink(store.join("dep.proto"), proto.join("v1/dep.proto")).unwrap();
+    symlink(store.join("service.proto"), proto.join("v1/service.proto")).unwrap();
+
+    let nested = Document::read(
+        &proto.join("v1/service.proto"),
+        std::slice::from_ref(&proto),
+    )
+    .unwrap();
+    let names: Vec<String> = nested.pool.files().map(|f| f.name().to_owned()).collect();
+    assert!(
+        names.iter().any(|n| n == "v1/service.proto"),
+        "got {names:?}"
+    );
+    assert!(names.iter().any(|n| n == "v1/dep.proto"), "got {names:?}");
+
+    // Canonicalized -I root with uncanonicalized path through a symlinked subdir also works.
+    let real_v2 = temp.path().join("real_v2");
+    fs::create_dir_all(&real_v2).unwrap();
+    symlink(store.join("dep.proto"), real_v2.join("dep.proto")).unwrap();
+    fs::write(
+        store.join("v2_service.proto"),
+        "syntax = \"proto3\"; package demo.v2; import \"v2/dep.proto\"; message Resp { demo.v1.Dep dep = 1; }\n",
+    )
+    .unwrap();
+    symlink(
+        store.join("v2_service.proto"),
+        real_v2.join("v2_service.proto"),
+    )
+    .unwrap();
+    symlink(&real_v2, proto.join("v2")).unwrap();
+
+    let canon_proto = proto.canonicalize().unwrap();
+    let symlinked_dir_doc =
+        Document::read(&proto.join("v2/v2_service.proto"), &[canon_proto]).unwrap();
+    let v2_names: Vec<String> = symlinked_dir_doc
+        .pool
+        .files()
+        .map(|f| f.name().to_owned())
+        .collect();
+    assert!(
+        v2_names.iter().any(|n| n == "v2/v2_service.proto"),
+        "got {v2_names:?}"
+    );
+    assert!(
+        v2_names.iter().any(|n| n == "v2/dep.proto"),
+        "got {v2_names:?}"
+    );
+
+    // 3. Real shadow with a symlinked entry in a later -I root still fails.
+    let v1 = temp.path().join("shadow_v1");
+    let v2 = temp.path().join("shadow_v2");
+    let other = temp.path().join("other");
+    fs::create_dir_all(&v1).unwrap();
+    fs::create_dir_all(&v2).unwrap();
+    fs::create_dir_all(&other).unwrap();
+    fs::write(
+        v1.join("api.proto"),
+        "syntax = \"proto3\"; package demo; message M { string a = 1; }\n",
+    )
+    .unwrap();
+    fs::write(
+        other.join("api.proto"),
+        "syntax = \"proto3\"; package demo; message M { string b = 1; }\n",
+    )
+    .unwrap();
+    symlink(other.join("api.proto"), v2.join("api.proto")).unwrap();
+
+    let err = Document::read(&v2.join("api.proto"), &[v1.clone(), v2.clone()])
+        .unwrap_err()
+        .to_string();
+    assert!(
+        err.contains("shadowed"),
+        "expected shadow error, got: {err}"
+    );
+
+    // Reversing -I order so v2 precedes v1 resolves cleanly.
+    let ok = Document::read(&v2.join("api.proto"), &[v2, v1]).unwrap();
+    assert!(ok.pool.files().any(|f| f.name() == "api.proto"));
+}

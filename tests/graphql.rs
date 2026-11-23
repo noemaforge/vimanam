@@ -1166,3 +1166,95 @@ fn canonical_literal_rejects_injections_and_allows_trailing_comments() {
         "{a: 1, b: 2}"
     );
 }
+
+#[test]
+fn canonical_literal_rejects_malformed_and_duplicate_object_fields() {
+    for invalid in [
+        "{ a }",
+        "{ a b }",
+        "{ broken, b: 1 }",
+        "{ a: 1, b }",
+        "[{ a }]",
+        "{ a: 1, a: 2 }",
+        "{ a: [{ b: 1, b: 2 }] }",
+    ] {
+        assert!(
+            graphql::canonical_literal(invalid).is_err(),
+            "expected error for {invalid:?}"
+        );
+    }
+    assert_eq!(
+        graphql::canonical_literal("{ a: { a: 1 } }").unwrap(),
+        "{a: {a: 1}}"
+    );
+    assert_eq!(graphql::canonical_literal("{}").unwrap(), "{}");
+    assert_eq!(graphql::canonical_literal("[]").unwrap(), "[]");
+}
+
+#[test]
+fn sdl_rejects_malformed_arguments_object_fields_duplicates_and_incomplete_roots() {
+    for (label, text, expected_line) in [
+        (
+            "broken_default_obj.graphql",
+            "input In { broken: Int ok: Int }\ntype Query { f(x: In = { broken, ok: 1 }): Int }",
+            "line 2",
+        ),
+        (
+            "missing_colon_deprecated.graphql",
+            "type Query {\n  f: Int @deprecated(reason)\n}",
+            "line 2",
+        ),
+        (
+            "missing_colon_directive_arg.graphql",
+            "type Query @foo(bar) { f: Int }",
+            "line 1",
+        ),
+        (
+            "duplicate_default_obj_key.graphql",
+            "input In { a: Int }\ntype Query { f(x: In = { a: 1, a: 2 }): Int }",
+            "line 2",
+        ),
+        (
+            "duplicate_directive_obj_key.graphql",
+            "type Query {\n  f: Int @foo(arg: { a: 1, a: 2 })\n}",
+            "line 2",
+        ),
+        (
+            "duplicate_directive_arg.graphql",
+            "type Query { f: Int @foo(a: 1, a: 2) }",
+            "line 1",
+        ),
+        (
+            "missing_root_type.graphql",
+            "schema {\n  query:\n}\ntype Query { f: Int }",
+            "line 2",
+        ),
+        (
+            "missing_ext_root_type.graphql",
+            "type Query { f: Int }\nextend schema { mutation: }",
+            "line 2",
+        ),
+        (
+            "directive_def_broken_default.graphql",
+            "input In { broken: Int ok: Int }\ndirective @foo(x: In = { broken, ok: 1 }) on FIELD_DEFINITION\ntype Query { f: Int }",
+            "line 2",
+        ),
+    ] {
+        let err = Document::from_sdl(&[(label.into(), text.into())])
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains(label) && err.contains(expected_line),
+            "{label}: {err}"
+        );
+    }
+
+    // Valid nested input objects reusing the same key name at different levels remain accepted.
+    let ok = sdl(
+        "input Inner { a: Int }\ninput Outer { a: Inner }\ntype Query { f(x: Outer = { a: { a: 1 } }): Int }",
+    );
+    assert_eq!(
+        ok.types["Query"].fields[0].args[0].default.as_deref(),
+        Some("{a: {a: 1}}")
+    );
+}

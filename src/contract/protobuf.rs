@@ -114,101 +114,250 @@ pub fn is_input(path: &Path) -> bool {
         .any(|v| e.eq_ignore_ascii_case(v))
     })
 }
-/// Compile `.proto` source in pure Rust using `protox`; no external `protoc` or
-/// code generation is required.
-pub fn compile(path: &Path, includes: &[PathBuf]) -> Result<Document> {
-    let path = path
+struct ResolvedLocalEntry {
+    virtual_name: String,
+    search_roots: Vec<PathBuf>,
+}
+
+fn lexical_normalize(path: &Path) -> PathBuf {
+    use std::path::Component;
+    let mut out = PathBuf::new();
+    for comp in path.components() {
+        match comp {
+            Component::Prefix(p) => out.push(p.as_os_str()),
+            Component::RootDir => out.push(Component::RootDir.as_os_str()),
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if matches!(out.components().next_back(), Some(Component::Normal(_))) {
+                    out.pop();
+                } else if !out.has_root() {
+                    out.push(comp.as_os_str());
+                }
+            }
+            Component::Normal(part) => out.push(part),
+        }
+    }
+    out
+}
+
+fn lexical_absolute(path: &Path) -> Result<PathBuf> {
+    let joined = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .context("Failed to determine current working directory")?
+            .join(path)
+    };
+    Ok(lexical_normalize(&joined))
+}
+
+fn raw_parent_dir(path: &Path) -> Option<PathBuf> {
+    let parent = path.parent()?;
+    if parent.as_os_str().is_empty() {
+        Some(PathBuf::from("."))
+    } else {
+        Some(parent.to_path_buf())
+    }
+}
+
+/// Resolve a local `.proto` entry path against user `-I` include roots without
+/// breaking symlinked files or symlinked subdirectories under `-I`, and verify
+/// canonical shadowing semantics before compilation.
+fn resolve_local_entry(path: &Path, includes: &[PathBuf]) -> Result<ResolvedLocalEntry> {
+    let canonical_path = path
         .canonicalize()
         .with_context(|| format!("Missing protobuf source: {path:?}"))?;
-    let mut resolver = ChainFileResolver::new();
-    // User roots precede the input directory, matching protoc import semantics.
+    anyhow::ensure!(
+        !canonical_path.is_dir(),
+        "Protobuf source is a directory, expected a file: {path:?}"
+    );
+    let abs_path = lexical_absolute(path)?;
+
+    let mut roots: Vec<(PathBuf, PathBuf)> = Vec::with_capacity(includes.len());
     for root in includes {
         let canonical = root
             .canonicalize()
             .with_context(|| format!("Invalid protobuf import root: {root:?}"))?;
-        resolver.add(EditionCheckingIncludeResolver::new(canonical));
-    }
-    let parent = path
-        .parent()
-        .context("Missing protobuf input directory")?
-        .to_path_buf();
-    resolver.add(EditionCheckingIncludeResolver::new(parent));
-    resolver.add(GoogleFileResolver::new());
-    compile_with_resolver(resolver, &path)
-}
-
-#[cfg(feature = "cli")]
-pub(crate) fn compile_bytes(path: &Path, bytes: &[u8], includes: &[PathBuf]) -> Result<Document> {
-    let canonical_path = path
-        .canonicalize()
-        .with_context(|| format!("Missing protobuf source: {path:?}"))?;
-    let mut canonical_roots = Vec::with_capacity(includes.len());
-    for root in includes {
-        canonical_roots.push(
-            root.canonicalize()
-                .with_context(|| format!("Invalid protobuf import root: {root:?}"))?,
+        anyhow::ensure!(
+            canonical.is_dir(),
+            "Invalid protobuf import root (not a directory): {root:?}"
         );
+        let abs = lexical_absolute(root)?;
+        roots.push((abs, canonical));
     }
-    let parent = canonical_path
-        .parent()
-        .context("Missing protobuf input directory")?
-        .to_path_buf();
-    let virtual_path = canonical_roots
-        .iter()
-        .chain(std::iter::once(&parent))
-        .filter_map(|root| {
-            canonical_path
-                .strip_prefix(root)
-                .ok()
-                .filter(|relative| !relative.as_os_str().is_empty())
-                .map(Path::to_path_buf)
-        })
-        .next()
-        .context("Missing protobuf input filename")?;
+
+    let verifies = |canonical_root: &Path, rel: &Path| -> bool {
+        !rel.as_os_str().is_empty()
+            && proto_virtual_name(rel).is_some()
+            && canonical_root.join(rel).canonicalize().ok().as_deref()
+                == Some(canonical_path.as_path())
+    };
+
+    let entry_parent = raw_parent_dir(path)
+        .and_then(|p| p.canonicalize().ok())
+        .or_else(|| abs_path.parent().and_then(|p| p.canonicalize().ok()));
+    let entry_file_name = path
+        .file_name()
+        .or_else(|| abs_path.file_name())
+        .or_else(|| canonical_path.file_name());
+    let parent_canonical_path = entry_parent
+        .as_ref()
+        .zip(entry_file_name)
+        .map(|(dir, name)| dir.join(name));
+
+    // Pass 1: path-preserving match across user `-I` roots (in order), keeping
+    // symlinked leaf filenames and symlinked subdirectory prefixes intact.
+    let mut virtual_path: Option<PathBuf> = None;
+    for (abs_root, canonical_root) in &roots {
+        if let Ok(rel) = abs_path.strip_prefix(abs_root)
+            && verifies(canonical_root, rel)
+        {
+            virtual_path = Some(rel.to_path_buf());
+            break;
+        }
+        for anc in abs_path.ancestors().skip(1) {
+            if anc.canonicalize().ok().as_deref() == Some(canonical_root.as_path())
+                && let Ok(rel) = abs_path.strip_prefix(anc)
+                && verifies(canonical_root, rel)
+            {
+                virtual_path = Some(rel.to_path_buf());
+                break;
+            }
+        }
+        if virtual_path.is_some() {
+            break;
+        }
+    }
+
+    // Pass 2: parent-canonical match (handles `..` through a symlink while
+    // keeping the leaf symlink unfollowed).
+    if virtual_path.is_none()
+        && let Some(ref pcp) = parent_canonical_path
+    {
+        for (_, canonical_root) in &roots {
+            if let Ok(rel) = pcp.strip_prefix(canonical_root)
+                && verifies(canonical_root, rel)
+            {
+                virtual_path = Some(rel.to_path_buf());
+                break;
+            }
+        }
+    }
+
+    // Pass 3: full-canonical match (e.g. symlink outside `-I` pointing inside `-I`).
+    if virtual_path.is_none() {
+        for (_, canonical_root) in &roots {
+            if let Ok(rel) = canonical_path.strip_prefix(canonical_root)
+                && verifies(canonical_root, rel)
+            {
+                virtual_path = Some(rel.to_path_buf());
+                break;
+            }
+        }
+    }
+
+    let virtual_path = match virtual_path {
+        Some(rel) => rel,
+        None => {
+            let name = entry_file_name.context("Missing protobuf input filename")?;
+            PathBuf::from(name)
+        }
+    };
     let virtual_name = proto_virtual_name(&virtual_path)
         .with_context(|| format!("Invalid protobuf virtual path: {virtual_path:?}"))?;
-    // Match protoc / protox::Compiler::open_file shadowing semantics before
-    // serving the hashed entry bytes ahead of include roots.
-    for root in canonical_roots.iter().chain(std::iter::once(&parent)) {
+
+    // User roots precede the entry directory and canonical target directory,
+    // matching protoc import semantics while allowing sibling imports next to
+    // either the symlink or its target.
+    let mut search_roots: Vec<PathBuf> = Vec::with_capacity(roots.len() + 2);
+    for (_, canonical) in roots {
+        if !search_roots.iter().any(|r| r == &canonical) {
+            search_roots.push(canonical);
+        }
+    }
+    let canonical_target_parent = canonical_path
+        .parent()
+        .context("Missing protobuf input directory")?
+        .to_path_buf();
+    for fallback in [entry_parent, Some(canonical_target_parent)]
+        .into_iter()
+        .flatten()
+    {
+        if !search_roots.iter().any(|r| r == &fallback) {
+            search_roots.push(fallback);
+        }
+    }
+
+    // Canonicalized shadow check across `search_roots`: the first root
+    // containing `virtual_path` must resolve to `canonical_path`.
+    let mut found_target = false;
+    for root in &search_roots {
         let candidate = root.join(&virtual_path);
         match candidate.canonicalize() {
             Ok(resolved) => {
                 if resolved != canonical_path {
                     anyhow::bail!(
                         "Protobuf source {:?} ({virtual_name}) is shadowed by {:?} in import root {:?}",
-                        canonical_path,
+                        path,
                         resolved,
                         root
                     );
                 }
+                found_target = true;
                 break;
             }
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => continue,
-            Err(_) => {
+            Err(err) => {
                 anyhow::bail!(
-                    "Protobuf source {:?} ({virtual_name}) is shadowed by unreadable path {:?} in import root {:?}",
-                    canonical_path,
+                    "Protobuf source {:?} ({virtual_name}) is shadowed by unreadable path {:?} in import root {:?}: {err}",
+                    path,
                     candidate,
                     root
                 );
             }
         }
     }
+    anyhow::ensure!(
+        found_target,
+        "Protobuf source {:?} ({virtual_name}) could not be resolved in any import root",
+        path
+    );
+
+    Ok(ResolvedLocalEntry {
+        virtual_name,
+        search_roots,
+    })
+}
+
+/// Compile `.proto` source in pure Rust using `protox`; no external `protoc` or
+/// code generation is required.
+pub fn compile(path: &Path, includes: &[PathBuf]) -> Result<Document> {
+    let entry = resolve_local_entry(path, includes)?;
+    let mut resolver = ChainFileResolver::new();
+    for root in entry.search_roots {
+        resolver.add(EditionCheckingIncludeResolver::new(root));
+    }
+    resolver.add(GoogleFileResolver::new());
+    compile_with_resolver(resolver, Path::new(&entry.virtual_name))
+}
+
+#[cfg(feature = "cli")]
+pub(crate) fn compile_bytes(path: &Path, bytes: &[u8], includes: &[PathBuf]) -> Result<Document> {
+    let entry = resolve_local_entry(path, includes)?;
     let source = std::str::from_utf8(bytes)
         .with_context(|| format!("Protobuf source is not valid UTF-8: {path:?}"))?
         .to_owned();
 
     let mut resolver = ChainFileResolver::new();
     resolver.add(MemoryFileResolver {
-        name: virtual_name.clone(),
+        name: entry.virtual_name.clone(),
         source,
     });
-    for root in canonical_roots {
+    for root in entry.search_roots {
         resolver.add(EditionCheckingIncludeResolver::new(root));
     }
-    resolver.add(EditionCheckingIncludeResolver::new(parent));
     resolver.add(GoogleFileResolver::new());
-    compile_with_resolver(resolver, Path::new(&virtual_name))
+    compile_with_resolver(resolver, Path::new(&entry.virtual_name))
 }
 
 pub(crate) fn compile_with_resolver<R>(resolver: R, entry: &Path) -> Result<Document>
@@ -232,7 +381,6 @@ pub(crate) fn parse_proto_source(name: &str, source: &str) -> Result<ProtoxFile,
     ProtoxFile::from_source(name, source)
 }
 
-#[cfg(feature = "cli")]
 pub(crate) fn proto_virtual_name(path: &Path) -> Option<String> {
     let mut name = String::new();
     for component in path.components() {
