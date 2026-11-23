@@ -55,9 +55,8 @@ serde = { version = "1.0", features = ["derive"] }
 # OpenAPI 2.0 `securityDefinitions` (read via the extensions map) and `$ref`
 # resolution preserve declaration order rather than sorting alphabetically.
 serde_json = { version = "1.0", features = ["preserve_order"] }
-# Maintained fork of the (deprecated) serde_yaml; chosen over other forks for
-# its better handling of YAML 1.1 footguns (the "Norway problem" et al).
-serde_norway = "0.9"
+# Pure-Rust, unsafe-free YAML 1.2 deserializer with parsing budgets (#4)
+serde-saphyr = { version = "2.2", default-features = false, features = ["deserialize"] }
 
 # Insertion-order-preserving maps for deterministic output
 indexmap = { version = "2.14", features = ["serde"] }
@@ -83,6 +82,7 @@ apollo-parser = "0.8"
 # Testing
 assert_cmd = "2.2"
 predicates = "3.1"
+serde-saphyr = { version = "2.2", default-features = false, features = ["serialize"] }
 tempfile = "3.27"
 
 # The profile that 'dist' will build with

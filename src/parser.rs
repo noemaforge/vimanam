@@ -149,12 +149,30 @@ where
     })
 }
 
+/// Shared YAML 1.2 deserialization options for OpenAPI specs and Git candidate
+/// sniffing. Enables strict YAML 1.2 booleans (solving the YAML 1.1 "Norway
+/// problem" so unquoted `NO`/`yes`/`on`/`off` remain strings), keeps leading-zero
+/// and underscored scalars as strings in untyped values to match JSON/OpenAPI
+/// semantics, and keeps anti-DoS budgets sized for large multi-MB OpenAPI specs.
+pub(crate) fn yaml_options() -> serde_saphyr::Options {
+    serde_saphyr::options! {
+        strict_booleans: true,
+        leading_zero_numbers_as_strings: true,
+        underscored_numbers_as_strings: true,
+        budget: serde_saphyr::budget! {
+            max_events: 5_000_000,
+            max_nodes: 1_000_000,
+            max_depth: 128,
+        },
+    }
+}
+
 /// Parse YAML content as OpenAPI spec with enhanced error messages.
 fn parse_yaml_spec(content: &str) -> Result<OpenApiSpec> {
     parse_spec(
         content,
-        |s| serde_norway::from_str(s).map_err(anyhow::Error::new),
-        |s| serde_norway::from_str(s).map_err(anyhow::Error::new),
+        |s| serde_saphyr::from_str_with_options(s, yaml_options()).map_err(anyhow::Error::new),
+        |s| serde_saphyr::from_str_with_options(s, yaml_options()).map_err(anyhow::Error::new),
         "YAML",
     )
 }
