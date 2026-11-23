@@ -1,0 +1,912 @@
+{
+  "meta": {
+    "model": "claude-haiku-5-5",
+    "vimanam_version": "vimanam 2.2.0",
+    "task_count": 10,
+    "fitting_task_count": 8,
+    "grading": "deterministic programmatic JSON assertions (no LLM judge)",
+    "isolation": "claude -p --tools '' --strict-mcp-config --setting-sources ''"
+  },
+  "summary_all_10_tasks": {
+    "no_spec": {
+      "tasks_passed": 2,
+      "tasks_total": 10,
+      "assertions_passed": 12,
+      "assertions_total": 50,
+      "context_overflow_tasks": 0,
+      "total_bpe_o200k": 0,
+      "total_api_input_tokens": 12751,
+      "total_duration_api_ms": 29609,
+      "total_cost_usd": 0.00496
+    },
+    "summary": {
+      "tasks_passed": 3,
+      "tasks_total": 10,
+      "assertions_passed": 25,
+      "assertions_total": 50,
+      "context_overflow_tasks": 0,
+      "total_bpe_o200k": 15788,
+      "total_api_input_tokens": 45104,
+      "total_duration_api_ms": 34009,
+      "total_cost_usd": 0.012137
+    },
+    "raw_spec": {
+      "tasks_passed": 8,
+      "tasks_total": 10,
+      "assertions_passed": 42,
+      "assertions_total": 50,
+      "context_overflow_tasks": 2,
+      "total_bpe_o200k": 3987803,
+      "total_api_input_tokens": 1741037,
+      "total_duration_api_ms": 18175,
+      "total_cost_usd": 1.711876
+    },
+    "focused_slice": {
+      "tasks_passed": 6,
+      "tasks_total": 10,
+      "assertions_passed": 42,
+      "assertions_total": 50,
+      "context_overflow_tasks": 0,
+      "total_bpe_o200k": 28642,
+      "total_api_input_tokens": 58664,
+      "total_duration_api_ms": 28545,
+      "total_cost_usd": 0.014297
+    }
+  },
+  "summary_8_tasks_where_raw_fits": {
+    "no_spec": {
+      "tasks_passed": 2,
+      "tasks_total": 8,
+      "assertions_passed": 12,
+      "assertions_total": 42,
+      "total_bpe_o200k": 0,
+      "total_api_input_tokens": 10234,
+      "total_duration_api_ms": 24242,
+      "total_cost_usd": 0.004024
+    },
+    "summary": {
+      "tasks_passed": 3,
+      "tasks_total": 8,
+      "assertions_passed": 23,
+      "assertions_total": 42,
+      "total_bpe_o200k": 5806,
+      "total_api_input_tokens": 21047,
+      "total_duration_api_ms": 28628,
+      "total_cost_usd": 0.006887
+    },
+    "raw_spec": {
+      "tasks_passed": 8,
+      "tasks_total": 8,
+      "assertions_passed": 42,
+      "assertions_total": 42,
+      "total_bpe_o200k": 1151315,
+      "total_api_input_tokens": 1741037,
+      "total_duration_api_ms": 18175,
+      "total_cost_usd": 1.711876
+    },
+    "focused_slice": {
+      "tasks_passed": 4,
+      "tasks_total": 8,
+      "assertions_passed": 34,
+      "assertions_total": 42,
+      "total_bpe_o200k": 9762,
+      "total_api_input_tokens": 26253,
+      "total_duration_api_ms": 23613,
+      "total_cost_usd": 0.007412
+    }
+  },
+  "tasks": [
+    {
+      "id": "oa_embeddings",
+      "format": "OpenAPI YAML",
+      "spec": "OpenAI OpenAPI 3.0 (1.3 MB YAML)",
+      "conditions": {
+        "no_spec": {
+          "status": "ok",
+          "context_bpe_o200k": 0,
+          "context_chars_div_4": 0,
+          "api_input_tokens": 1267,
+          "api_output_tokens": 277,
+          "duration_api_ms": 1910,
+          "cost_usd": 0.000392,
+          "task_passed": false,
+          "assertions_passed": 0,
+          "assertions_total": 5,
+          "checks": {
+            "operation_id": false,
+            "required_fields": false,
+            "encoding_format_enum": false,
+            "dimensions_type": false,
+            "response_schema": false
+          }
+        },
+        "summary": {
+          "status": "ok",
+          "context_bpe_o200k": 1041,
+          "context_chars_div_4": 923,
+          "api_input_tokens": 2935,
+          "api_output_tokens": 393,
+          "duration_api_ms": 2290,
+          "cost_usd": 0.000783,
+          "task_passed": false,
+          "assertions_passed": 1,
+          "assertions_total": 5,
+          "checks": {
+            "operation_id": true,
+            "required_fields": false,
+            "encoding_format_enum": false,
+            "dimensions_type": false,
+            "response_schema": false
+          }
+        },
+        "raw_spec": {
+          "status": "ok",
+          "context_bpe_o200k": 281146,
+          "context_chars_div_4": 343997,
+          "api_input_tokens": 408004,
+          "api_output_tokens": 83,
+          "duration_api_ms": 3221,
+          "cost_usd": 0.40821,
+          "task_passed": true,
+          "assertions_passed": 5,
+          "assertions_total": 5,
+          "checks": {
+            "operation_id": true,
+            "required_fields": true,
+            "encoding_format_enum": true,
+            "dimensions_type": true,
+            "response_schema": true
+          }
+        },
+        "focused_slice": {
+          "status": "ok",
+          "context_bpe_o200k": 988,
+          "context_chars_div_4": 1031,
+          "api_input_tokens": 2925,
+          "api_output_tokens": 379,
+          "duration_api_ms": 2372,
+          "cost_usd": 0.000774,
+          "task_passed": true,
+          "assertions_passed": 5,
+          "assertions_total": 5,
+          "checks": {
+            "operation_id": true,
+            "required_fields": true,
+            "encoding_format_enum": true,
+            "dimensions_type": true,
+            "response_schema": true
+          }
+        }
+      }
+    },
+    {
+      "id": "oa_batches",
+      "format": "OpenAPI YAML",
+      "spec": "OpenAI OpenAPI 3.0 (1.3 MB YAML)",
+      "conditions": {
+        "no_spec": {
+          "status": "ok",
+          "context_bpe_o200k": 0,
+          "context_chars_div_4": 0,
+          "api_input_tokens": 1261,
+          "api_output_tokens": 289,
+          "duration_api_ms": 1946,
+          "cost_usd": 0.000396,
+          "task_passed": false,
+          "assertions_passed": 0,
+          "assertions_total": 5,
+          "checks": {
+            "operation_id": false,
+            "required_fields": false,
+            "completion_window_value": false,
+            "supported_endpoints": false,
+            "response_schema": false
+          }
+        },
+        "summary": {
+          "status": "ok",
+          "context_bpe_o200k": 1041,
+          "context_chars_div_4": 923,
+          "api_input_tokens": 2929,
+          "api_output_tokens": 498,
+          "duration_api_ms": 2866,
+          "cost_usd": 0.000835,
+          "task_passed": false,
+          "assertions_passed": 1,
+          "assertions_total": 5,
+          "checks": {
+            "operation_id": true,
+            "required_fields": false,
+            "completion_window_value": false,
+            "supported_endpoints": false,
+            "response_schema": false
+          }
+        },
+        "raw_spec": {
+          "status": "ok",
+          "context_bpe_o200k": 281146,
+          "context_chars_div_4": 343997,
+          "api_input_tokens": 407998,
+          "api_output_tokens": 114,
+          "duration_api_ms": 2217,
+          "cost_usd": 0.408282,
+          "task_passed": true,
+          "assertions_passed": 5,
+          "assertions_total": 5,
+          "checks": {
+            "operation_id": true,
+            "required_fields": true,
+            "completion_window_value": true,
+            "supported_endpoints": true,
+            "response_schema": true
+          }
+        },
+        "focused_slice": {
+          "status": "ok",
+          "context_bpe_o200k": 1480,
+          "context_chars_div_4": 1483,
+          "api_input_tokens": 3550,
+          "api_output_tokens": 446,
+          "duration_api_ms": 2420,
+          "cost_usd": 0.000933,
+          "task_passed": false,
+          "assertions_passed": 4,
+          "assertions_total": 5,
+          "checks": {
+            "operation_id": true,
+            "required_fields": false,
+            "completion_window_value": true,
+            "supported_endpoints": true,
+            "response_schema": true
+          }
+        }
+      }
+    },
+    {
+      "id": "oa_files",
+      "format": "OpenAPI YAML",
+      "spec": "OpenAI OpenAPI 3.0 (1.3 MB YAML)",
+      "conditions": {
+        "no_spec": {
+          "status": "ok",
+          "context_bpe_o200k": 0,
+          "context_chars_div_4": 0,
+          "api_input_tokens": 1249,
+          "api_output_tokens": 250,
+          "duration_api_ms": 1867,
+          "cost_usd": 0.000375,
+          "task_passed": false,
+          "assertions_passed": 0,
+          "assertions_total": 4,
+          "checks": {
+            "operation_id": false,
+            "required_fields": false,
+            "purpose_enum": false,
+            "response_schema": false
+          }
+        },
+        "summary": {
+          "status": "ok",
+          "context_bpe_o200k": 1041,
+          "context_chars_div_4": 923,
+          "api_input_tokens": 2917,
+          "api_output_tokens": 655,
+          "duration_api_ms": 3533,
+          "cost_usd": 0.000911,
+          "task_passed": false,
+          "assertions_passed": 3,
+          "assertions_total": 4,
+          "checks": {
+            "operation_id": true,
+            "required_fields": true,
+            "purpose_enum": true,
+            "response_schema": false
+          }
+        },
+        "raw_spec": {
+          "status": "ok",
+          "context_bpe_o200k": 281146,
+          "context_chars_div_4": 343997,
+          "api_input_tokens": 407986,
+          "api_output_tokens": 85,
+          "duration_api_ms": 2747,
+          "cost_usd": 0.408197,
+          "task_passed": true,
+          "assertions_passed": 4,
+          "assertions_total": 4,
+          "checks": {
+            "operation_id": true,
+            "required_fields": true,
+            "purpose_enum": true,
+            "response_schema": true
+          }
+        },
+        "focused_slice": {
+          "status": "ok",
+          "context_bpe_o200k": 1050,
+          "context_chars_div_4": 1017,
+          "api_input_tokens": 2834,
+          "api_output_tokens": 503,
+          "duration_api_ms": 2552,
+          "cost_usd": 0.000818,
+          "task_passed": false,
+          "assertions_passed": 3,
+          "assertions_total": 4,
+          "checks": {
+            "operation_id": true,
+            "required_fields": true,
+            "purpose_enum": true,
+            "response_schema": false
+          }
+        }
+      }
+    },
+    {
+      "id": "oa_stripe_customers",
+      "format": "OpenAPI JSON",
+      "spec": "Stripe OpenAPI 3.0 (7.9 MB JSON)",
+      "conditions": {
+        "no_spec": {
+          "status": "ok",
+          "context_bpe_o200k": 0,
+          "context_chars_div_4": 0,
+          "api_input_tokens": 1259,
+          "api_output_tokens": 454,
+          "duration_api_ms": 2889,
+          "cost_usd": 0.000479,
+          "task_passed": false,
+          "assertions_passed": 0,
+          "assertions_total": 4,
+          "checks": {
+            "operation_id": false,
+            "tax_exempt_enum": false,
+            "invoice_prefix_max_len": false,
+            "response_schema": false
+          }
+        },
+        "summary": {
+          "status": "ok",
+          "context_bpe_o200k": 4991,
+          "context_chars_div_4": 5149,
+          "api_input_tokens": 12029,
+          "api_output_tokens": 511,
+          "duration_api_ms": 3086,
+          "cost_usd": 0.002661,
+          "task_passed": false,
+          "assertions_passed": 1,
+          "assertions_total": 4,
+          "checks": {
+            "operation_id": true,
+            "tax_exempt_enum": false,
+            "invoice_prefix_max_len": false,
+            "response_schema": false
+          }
+        },
+        "raw_spec": {
+          "status": "context_overflow",
+          "note": "Raw 7.9 MB JSON (1,418,244 o200k_base tokens) exceeds 1,000,000-token context window",
+          "context_bpe_o200k": 1418244,
+          "context_chars_div_4": 2079211,
+          "task_passed": false,
+          "assertions_passed": 0,
+          "assertions_total": 4
+        },
+        "focused_slice": {
+          "status": "ok",
+          "context_bpe_o200k": 3693,
+          "context_chars_div_4": 3834,
+          "api_input_tokens": 6992,
+          "api_output_tokens": 329,
+          "duration_api_ms": 2064,
+          "cost_usd": 0.001563,
+          "task_passed": true,
+          "assertions_passed": 4,
+          "assertions_total": 4,
+          "checks": {
+            "operation_id": true,
+            "tax_exempt_enum": true,
+            "invoice_prefix_max_len": true,
+            "response_schema": true
+          }
+        }
+      }
+    },
+    {
+      "id": "oa_stripe_payment_intents",
+      "format": "OpenAPI JSON",
+      "spec": "Stripe OpenAPI 3.0 (7.9 MB JSON)",
+      "conditions": {
+        "no_spec": {
+          "status": "ok",
+          "context_bpe_o200k": 0,
+          "context_chars_div_4": 0,
+          "api_input_tokens": 1258,
+          "api_output_tokens": 411,
+          "duration_api_ms": 2478,
+          "cost_usd": 0.000457,
+          "task_passed": false,
+          "assertions_passed": 0,
+          "assertions_total": 4,
+          "checks": {
+            "operation_id": false,
+            "required_fields": false,
+            "amount_max_digits": false,
+            "currency_type": false
+          }
+        },
+        "summary": {
+          "status": "ok",
+          "context_bpe_o200k": 4991,
+          "context_chars_div_4": 5149,
+          "api_input_tokens": 12028,
+          "api_output_tokens": 367,
+          "duration_api_ms": 2295,
+          "cost_usd": 0.002589,
+          "task_passed": false,
+          "assertions_passed": 1,
+          "assertions_total": 4,
+          "checks": {
+            "operation_id": true,
+            "required_fields": false,
+            "amount_max_digits": false,
+            "currency_type": false
+          }
+        },
+        "raw_spec": {
+          "status": "context_overflow",
+          "note": "Raw 7.9 MB JSON (1,418,244 o200k_base tokens) exceeds 1,000,000-token context window",
+          "context_bpe_o200k": 1418244,
+          "context_chars_div_4": 2079211,
+          "task_passed": false,
+          "assertions_passed": 0,
+          "assertions_total": 4
+        },
+        "focused_slice": {
+          "status": "ok",
+          "context_bpe_o200k": 15187,
+          "context_chars_div_4": 15269,
+          "api_input_tokens": 25419,
+          "api_output_tokens": 477,
+          "duration_api_ms": 2868,
+          "cost_usd": 0.005322,
+          "task_passed": true,
+          "assertions_passed": 4,
+          "assertions_total": 4,
+          "checks": {
+            "operation_id": true,
+            "required_fields": true,
+            "amount_max_digits": true,
+            "currency_type": true
+          }
+        }
+      }
+    },
+    {
+      "id": "pb_health_watch",
+      "format": "Protobuf / gRPC",
+      "spec": "grpc/grpc health-v1.20.0.proto",
+      "conditions": {
+        "no_spec": {
+          "status": "ok",
+          "context_bpe_o200k": 0,
+          "context_chars_div_4": 0,
+          "api_input_tokens": 1278,
+          "api_output_tokens": 1144,
+          "duration_api_ms": 6372,
+          "cost_usd": 0.000827,
+          "task_passed": false,
+          "assertions_passed": 0,
+          "assertions_total": 6,
+          "checks": {
+            "streaming_mode": false,
+            "request_message": false,
+            "response_message": false,
+            "status_field_number": false,
+            "watch_only_enum_name": false,
+            "watch_only_enum_number": false
+          }
+        },
+        "summary": {
+          "status": "ok",
+          "context_bpe_o200k": 62,
+          "context_chars_div_4": 67,
+          "api_input_tokens": 1394,
+          "api_output_tokens": 1389,
+          "duration_api_ms": 6313,
+          "cost_usd": 0.000973,
+          "task_passed": true,
+          "assertions_passed": 6,
+          "assertions_total": 6,
+          "checks": {
+            "streaming_mode": true,
+            "request_message": true,
+            "response_message": true,
+            "status_field_number": true,
+            "watch_only_enum_name": true,
+            "watch_only_enum_number": true
+          }
+        },
+        "raw_spec": {
+          "status": "ok",
+          "context_bpe_o200k": 549,
+          "context_chars_div_4": 604,
+          "api_input_tokens": 2167,
+          "api_output_tokens": 244,
+          "duration_api_ms": 1474,
+          "cost_usd": 0.000555,
+          "task_passed": true,
+          "assertions_passed": 6,
+          "assertions_total": 6,
+          "checks": {
+            "streaming_mode": true,
+            "request_message": true,
+            "response_message": true,
+            "status_field_number": true,
+            "watch_only_enum_name": true,
+            "watch_only_enum_number": true
+          }
+        },
+        "focused_slice": {
+          "status": "ok",
+          "context_bpe_o200k": 825,
+          "context_chars_div_4": 869,
+          "api_input_tokens": 2707,
+          "api_output_tokens": 388,
+          "duration_api_ms": 2069,
+          "cost_usd": 0.000735,
+          "task_passed": true,
+          "assertions_passed": 6,
+          "assertions_total": 6,
+          "checks": {
+            "streaming_mode": true,
+            "request_message": true,
+            "response_message": true,
+            "status_field_number": true,
+            "watch_only_enum_name": true,
+            "watch_only_enum_number": true
+          }
+        }
+      }
+    },
+    {
+      "id": "pb_otel_trace",
+      "format": "Protobuf / gRPC",
+      "spec": "OpenTelemetry trace_service.proto (+ imports)",
+      "conditions": {
+        "no_spec": {
+          "status": "ok",
+          "context_bpe_o200k": 0,
+          "context_chars_div_4": 0,
+          "api_input_tokens": 1319,
+          "api_output_tokens": 849,
+          "duration_api_ms": 4380,
+          "cost_usd": 0.000688,
+          "task_passed": true,
+          "assertions_passed": 7,
+          "assertions_total": 7,
+          "checks": {
+            "streaming_mode": true,
+            "request_field_1_name": true,
+            "request_field_1_json_name": true,
+            "partial_success_field_1_name": true,
+            "partial_success_field_1_type": true,
+            "partial_success_field_2_name": true,
+            "partial_success_field_2_number": true
+          }
+        },
+        "summary": {
+          "status": "ok",
+          "context_bpe_o200k": 66,
+          "context_chars_div_4": 74,
+          "api_input_tokens": 1441,
+          "api_output_tokens": 982,
+          "duration_api_ms": 4830,
+          "cost_usd": 0.000779,
+          "task_passed": true,
+          "assertions_passed": 7,
+          "assertions_total": 7,
+          "checks": {
+            "streaming_mode": true,
+            "request_field_1_name": true,
+            "request_field_1_json_name": true,
+            "partial_success_field_1_name": true,
+            "partial_success_field_1_type": true,
+            "partial_success_field_2_name": true,
+            "partial_success_field_2_number": true
+          }
+        },
+        "raw_spec": {
+          "status": "ok",
+          "context_bpe_o200k": 6717,
+          "context_chars_div_4": 7063,
+          "api_input_tokens": 11844,
+          "api_output_tokens": 118,
+          "duration_api_ms": 1013,
+          "cost_usd": 0.002428,
+          "task_passed": true,
+          "assertions_passed": 7,
+          "assertions_total": 7,
+          "checks": {
+            "streaming_mode": true,
+            "request_field_1_name": true,
+            "request_field_1_json_name": true,
+            "partial_success_field_1_name": true,
+            "partial_success_field_1_type": true,
+            "partial_success_field_2_name": true,
+            "partial_success_field_2_number": true
+          }
+        },
+        "focused_slice": {
+          "status": "ok",
+          "context_bpe_o200k": 1393,
+          "context_chars_div_4": 1433,
+          "api_input_tokens": 3691,
+          "api_output_tokens": 637,
+          "duration_api_ms": 3649,
+          "cost_usd": 0.001057,
+          "task_passed": false,
+          "assertions_passed": 3,
+          "assertions_total": 7,
+          "checks": {
+            "streaming_mode": true,
+            "request_field_1_name": true,
+            "request_field_1_json_name": true,
+            "partial_success_field_1_name": false,
+            "partial_success_field_1_type": false,
+            "partial_success_field_2_name": false,
+            "partial_success_field_2_number": false
+          }
+        }
+      }
+    },
+    {
+      "id": "pb_otel_metrics",
+      "format": "Protobuf / gRPC",
+      "spec": "OpenTelemetry metrics_service.proto (+ imports)",
+      "conditions": {
+        "no_spec": {
+          "status": "ok",
+          "context_bpe_o200k": 0,
+          "context_chars_div_4": 0,
+          "api_input_tokens": 1298,
+          "api_output_tokens": 633,
+          "duration_api_ms": 3639,
+          "cost_usd": 0.000576,
+          "task_passed": true,
+          "assertions_passed": 5,
+          "assertions_total": 5,
+          "checks": {
+            "request_field_1_name": true,
+            "request_field_1_json_name": true,
+            "partial_success_field_1_name": true,
+            "partial_success_field_1_json_name": true,
+            "partial_success_field_2_name": true
+          }
+        },
+        "summary": {
+          "status": "ok",
+          "context_bpe_o200k": 68,
+          "context_chars_div_4": 76,
+          "api_input_tokens": 1424,
+          "api_output_tokens": 523,
+          "duration_api_ms": 2894,
+          "cost_usd": 0.000546,
+          "task_passed": true,
+          "assertions_passed": 5,
+          "assertions_total": 5,
+          "checks": {
+            "request_field_1_name": true,
+            "request_field_1_json_name": true,
+            "partial_success_field_1_name": true,
+            "partial_success_field_1_json_name": true,
+            "partial_success_field_2_name": true
+          }
+        },
+        "raw_spec": {
+          "status": "ok",
+          "context_bpe_o200k": 10266,
+          "context_chars_div_4": 10926,
+          "api_input_tokens": 17230,
+          "api_output_tokens": 366,
+          "duration_api_ms": 1957,
+          "cost_usd": 0.003629,
+          "task_passed": true,
+          "assertions_passed": 5,
+          "assertions_total": 5,
+          "checks": {
+            "request_field_1_name": true,
+            "request_field_1_json_name": true,
+            "partial_success_field_1_name": true,
+            "partial_success_field_1_json_name": true,
+            "partial_success_field_2_name": true
+          }
+        },
+        "focused_slice": {
+          "status": "ok",
+          "context_bpe_o200k": 1376,
+          "context_chars_div_4": 1459,
+          "api_input_tokens": 3740,
+          "api_output_tokens": 1517,
+          "duration_api_ms": 7369,
+          "cost_usd": 0.001506,
+          "task_passed": false,
+          "assertions_passed": 3,
+          "assertions_total": 5,
+          "checks": {
+            "request_field_1_name": true,
+            "request_field_1_json_name": true,
+            "partial_success_field_1_name": false,
+            "partial_success_field_1_json_name": false,
+            "partial_success_field_2_name": true
+          }
+        }
+      }
+    },
+    {
+      "id": "gql_spacex_launches",
+      "format": "GraphQL SDL",
+      "spec": "SpaceX Land (12 KB SDL)",
+      "conditions": {
+        "no_spec": {
+          "status": "ok",
+          "context_bpe_o200k": 0,
+          "context_chars_div_4": 0,
+          "api_input_tokens": 1283,
+          "api_output_tokens": 311,
+          "duration_api_ms": 2511,
+          "cost_usd": 0.000412,
+          "task_passed": false,
+          "assertions_passed": 0,
+          "assertions_total": 5,
+          "checks": {
+            "argument_names": false,
+            "return_type": false,
+            "apoapsis_km_type": false,
+            "fairings_recovery_attempt_type": false,
+            "core_flight_type": false
+          }
+        },
+        "summary": {
+          "status": "ok",
+          "context_bpe_o200k": 251,
+          "context_chars_div_4": 214,
+          "api_input_tokens": 1676,
+          "api_output_tokens": 436,
+          "duration_api_ms": 2744,
+          "cost_usd": 0.000553,
+          "task_passed": false,
+          "assertions_passed": 0,
+          "assertions_total": 5,
+          "checks": {
+            "argument_names": false,
+            "return_type": false,
+            "apoapsis_km_type": false,
+            "fairings_recovery_attempt_type": false,
+            "core_flight_type": false
+          }
+        },
+        "raw_spec": {
+          "status": "ok",
+          "context_bpe_o200k": 3672,
+          "context_chars_div_4": 3110,
+          "api_input_tokens": 6906,
+          "api_output_tokens": 212,
+          "duration_api_ms": 1439,
+          "cost_usd": 0.001487,
+          "task_passed": true,
+          "assertions_passed": 5,
+          "assertions_total": 5,
+          "checks": {
+            "argument_names": true,
+            "return_type": true,
+            "apoapsis_km_type": true,
+            "fairings_recovery_attempt_type": true,
+            "core_flight_type": true
+          }
+        },
+        "focused_slice": {
+          "status": "ok",
+          "context_bpe_o200k": 1746,
+          "context_chars_div_4": 1506,
+          "api_input_tokens": 3978,
+          "api_output_tokens": 240,
+          "duration_api_ms": 1706,
+          "cost_usd": 0.000915,
+          "task_passed": true,
+          "assertions_passed": 5,
+          "assertions_total": 5,
+          "checks": {
+            "argument_names": true,
+            "return_type": true,
+            "apoapsis_km_type": true,
+            "fairings_recovery_attempt_type": true,
+            "core_flight_type": true
+          }
+        }
+      }
+    },
+    {
+      "id": "gql_github_create_issue",
+      "format": "GraphQL SDL",
+      "spec": "GitHub GraphQL API (1.2 MB SDL)",
+      "conditions": {
+        "no_spec": {
+          "status": "ok",
+          "context_bpe_o200k": 0,
+          "context_chars_div_4": 0,
+          "api_input_tokens": 1279,
+          "api_output_tokens": 204,
+          "duration_api_ms": 1617,
+          "cost_usd": 0.000358,
+          "task_passed": false,
+          "assertions_passed": 0,
+          "assertions_total": 5,
+          "checks": {
+            "argument_name": false,
+            "return_type": false,
+            "required_input_fields": false,
+            "issue_template_type": false,
+            "parent_issue_id_type": false
+          }
+        },
+        "summary": {
+          "status": "ok",
+          "context_bpe_o200k": 2236,
+          "context_chars_div_4": 2534,
+          "api_input_tokens": 6331,
+          "api_output_tokens": 481,
+          "duration_api_ms": 3158,
+          "cost_usd": 0.001507,
+          "task_passed": false,
+          "assertions_passed": 0,
+          "assertions_total": 5,
+          "checks": {
+            "argument_name": false,
+            "return_type": false,
+            "required_input_fields": false,
+            "issue_template_type": false,
+            "parent_issue_id_type": false
+          }
+        },
+        "raw_spec": {
+          "status": "ok",
+          "context_bpe_o200k": 286673,
+          "context_chars_div_4": 305959,
+          "api_input_tokens": 478902,
+          "api_output_tokens": 75,
+          "duration_api_ms": 4107,
+          "cost_usd": 0.479088,
+          "task_passed": true,
+          "assertions_passed": 5,
+          "assertions_total": 5,
+          "checks": {
+            "argument_name": true,
+            "return_type": true,
+            "required_input_fields": true,
+            "issue_template_type": true,
+            "parent_issue_id_type": true
+          }
+        },
+        "focused_slice": {
+          "status": "ok",
+          "context_bpe_o200k": 904,
+          "context_chars_div_4": 929,
+          "api_input_tokens": 2828,
+          "api_output_tokens": 218,
+          "duration_api_ms": 1476,
+          "cost_usd": 0.000674,
+          "task_passed": true,
+          "assertions_passed": 5,
+          "assertions_total": 5,
+          "checks": {
+            "argument_name": true,
+            "return_type": true,
+            "required_input_fields": true,
+            "issue_template_type": true,
+            "parent_issue_id_type": true
+          }
+        }
+      }
+    }
+  ]
+}

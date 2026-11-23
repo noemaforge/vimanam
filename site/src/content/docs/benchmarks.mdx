@@ -1,115 +1,191 @@
 ---
 title: "Benchmarks & v2.2 analysis"
-description: "Standalone v2.2.0 performance, token compression, and v2.1.0 upgrade comparison across public OpenAPI, GraphQL, and Protobuf specifications."
+description: "Task-accuracy eval, exact BPE tokenization, external oasdiff/buf baselines, standalone v2.2.0 performance, and v2.1.0 upgrade data on public specs."
 ---
 
 import { Aside } from '@astrojs/starlight/components';
 import BenchmarkChart from '../../components/BenchmarkChart.astro';
 import OutputDiff from '../../components/OutputDiff.astro';
 
-Every measurement on this page comes from public open-source specifications benchmarked with `hyperfine 2.0.0` (release builds, Apple Silicon macOS `arm64`, `libprotoc 36.2` baseline for `v2.1.0`). No private or proprietary schemas appear in this suite.
+All data on this page comes from public open-source specifications on one Apple Silicon (`macOS 26.7 arm64`) machine using `hyperfine 2.0.0`, `tiktoken` (`o200k_base`), `oasdiff 1.39.0`, `buf 1.75.0`, `libprotoc 36.2`, and `claude-haiku-5-5`. Raw JSON outputs and runner scripts are checked into the repository:
 
-## Standalone v2.2.0 performance
+- [`scripts/eval-context-accuracy.py`](https://github.com/noemaforge/vimanam/blob/main/scripts/eval-context-accuracy.py) and [`scripts/eval-context-accuracy-results.json`](https://github.com/noemaforge/vimanam/blob/main/scripts/eval-context-accuracy-results.json)
+- [`scripts/benchmark-public.py`](https://github.com/noemaforge/vimanam/blob/main/scripts/benchmark-public.py) and [`scripts/benchmark-v22-results.json`](https://github.com/noemaforge/vimanam/blob/main/scripts/benchmark-v22-results.json)
 
-Vimanam `2.2.0` parses multi-megabyte OpenAPI, GraphQL, and Protocol Buffers contracts in milliseconds inside one static binary, with zero external compilers or C YAML libraries.
+---
 
-<div class="vim-metric-strip not-content">
-  <div class="vim-metric-cell">
-    <span class="vim-metric-value is-accent">118.5 ms</span>
-    <span class="vim-metric-label">Full Markdown render of Stripe's 7.9 MB OpenAPI 3.0 JSON (612 endpoints)</span>
-  </div>
-  <div class="vim-metric-cell">
-    <span class="vim-metric-value">65.2 ms</span>
-    <span class="vim-metric-label">Full Markdown render of GitHub's 1.2 MB GraphQL SDL (278 operations)</span>
-  </div>
-  <div class="vim-metric-cell">
-    <span class="vim-metric-value is-accent">9.5 ms</span>
-    <span class="vim-metric-label">Pure-Rust compile &amp; render of OpenTelemetry <code>trace_service.proto</code> (<code>PATH=""</code>)</span>
-  </div>
-  <div class="vim-metric-cell">
-    <span class="vim-metric-value">99.6–99.8%</span>
-    <span class="vim-metric-label">Token reduction when slicing OpenAI or Stripe specs to one focused operation</span>
-  </div>
-</div>
+## Task-accuracy evaluation: raw spec vs summary vs focused slice
 
-### Standalone render latency and peak memory (`v2.2.0`)
+Extracting one operation out of 612 is selection, not compression. The real question is whether an LLM given a focused Vimanam slice answers exact contract questions as accurately as one given the raw specification — and what happens when a raw spec overflows the context window.
+
+### Experimental setup
+
+Ten contract tasks across OpenAI OpenAPI 3.0 (`1.3 MB` YAML), Stripe OpenAPI 3.0 (`7.9 MB` JSON), gRPC Health (`health-v1.20.0.proto`), OpenTelemetry Collector (`trace_service.proto` and `metrics_service.proto` with transitive imports), SpaceX Land GraphQL (`12 KB` SDL), and GitHub GraphQL (`1.2 MB` SDL) ran under four conditions on the same model (`claude-haiku-5-5`, zero tools, isolated system prompt):
+
+1. **`no_spec`** *(memorization control)*: question only, no contract context.
+2. **`summary`**: `vimanam --detail summary --no-report`.
+3. **`raw_spec`**: raw YAML, JSON, concatenated `.proto` + transitive imports, or raw `.graphql` SDL.
+4. **`focused_slice`**: single-turn `vimanam --operation ... --detail full --include-schemas --schema-depth 2` (or depth `3` for nested OTel RPCs; plus `--schema` for GraphQL input objects).
+
+Every response was graded programmatically on strict JSON assertions (`50` assertions across `10` tasks; no LLM judge).
+
+### Results across all 10 tasks (50 strict assertions)
+
+| Condition | Exact tasks passed | Assertions passed | Context overflow | Total `o200k_base` BPE tokens | Total API input tokens | Total API cost (USD) |
+|---|---:|---:|---:|---:|---:|---:|
+| **`no_spec`** *(control)* | `2 / 10` | `12 / 50` (24%) | `0` | `0` | `12,751` | `$0.0050` |
+| **`summary`** | `3 / 10` | `25 / 50` (50%) | `0` | `15,788` | `45,104` | `$0.0121` |
+| **`raw_spec`** | `8 / 10` | `42 / 50` (84%) | **`2`** *(Stripe 7.9 MB)* | `3,987,803` | `1,741,037` *(8 fitting tasks)* | **`$1.7119`** |
+| **`focused_slice`** *(single-turn)* | `6 / 10` | `42 / 50` (84%) | **`0`** | `28,642` | `58,664` | **`$0.0143`** |
+
+### Per-task breakdown and failure analysis
+
+| Task | Format | `no_spec` | `summary` | `raw_spec` (BPE / score) | `focused_slice` (BPE / score) |
+|---|---|---:|---:|---|---|
+| `oa_embeddings` (`POST /embeddings`) | OpenAPI YAML | `0/5` | `1/5` | `281,146` · **`5/5`** (`$0.408`) | `988` · **`5/5`** (`$0.0008`) |
+| `oa_batches` (`POST /batches`) | OpenAPI YAML | `0/5` | `1/5` | `281,146` · **`5/5`** (`$0.408`) | `1,480` · `4/5` *(see note 1)* |
+| `oa_files` (`POST /files`) | OpenAPI YAML | `0/4` | `3/4` | `281,146` · **`4/4`** (`$0.408`) | `1,050` · `3/4` *(see note 1)* |
+| `oa_stripe_customers` (`POST /v1/customers`) | OpenAPI JSON | `0/4` | `1/4` | `1,418,244` · **OVERFLOW** | `3,693` · **`4/4`** (`$0.0016`) |
+| `oa_stripe_payment_intents` (`POST /v1/payment_intents`) | OpenAPI JSON | `0/4` | `1/4` | `1,418,244` · **OVERFLOW** | `15,187` · **`4/4`** (`$0.0053`) |
+| `pb_health_watch` (`Health.Watch`) | Protobuf | `0/6` | `6/6` | `549` · **`6/6`** | `825` · **`6/6`** |
+| `pb_otel_trace` (`TraceService.Export`) | Protobuf | `7/7` | `7/7` | `6,717` · **`7/7`** | `1,393` · `3/7` *(depth-3 cutoff; note 2)* |
+| `pb_otel_metrics` (`MetricsService.Export`) | Protobuf | `5/5` | `5/5` | `10,266` · **`5/5`** | `1,376` · `3/5` *(depth-3 cutoff; note 2)* |
+| `gql_spacex_launches` (`Query.launchesPastResult`) | GraphQL SDL | `0/5` | `0/5` | `3,672` · **`5/5`** | `1,746` · **`5/5`** |
+| `gql_github_create_issue` (`Mutation.createIssue`) | GraphQL SDL | `0/5` | `0/5` | `286,673` · **`5/5`** (`$0.479`) | `904` · **`5/5`** (`$0.0007`) |
+
+What the raw results show honestly:
+
+1. **Cost and context-window survival**: on the 8 tasks where `raw_spec` fit in context, `raw_spec` spent **`$1.7119`** (`1.74M` API input tokens) versus **`$0.0074`** (`26.3k` API input tokens) for `focused_slice` — **231× lower cost** (`120×` lower across all 10 tasks). On both Stripe `7.9 MB` tasks (`1.42M` `o200k_base` tokens), `raw_spec` exceeded the 1M-token window completely while `focused_slice` passed **`4/4`** on both (`$0.0016` and `$0.0053`).
+2. **Note 1 — two strict-string mismatches on OpenAI (`oa_batches` 4/5, `oa_files` 3/4)**: inspecting the model's exact responses showed every fact was present in the Markdown slice. On `oa_batches`, the model returned `["request.input_file_id", "request.endpoint", "request.completion_window"]` (copying the `request.` prefix from Vimanam's Request Schema table); on `oa_files`, it returned `"OpenAIFile object with fields: ..."` instead of bare `"OpenAIFile"`.
+3. **Note 2 — `--schema-depth 3` truncation on OTel (`pb_otel_trace` 3/7, `pb_otel_metrics` 3/5)**: at `--schema-depth 3`, Vimanam stopped before `ExportTracePartialSuccess` and `ExportMetricsPartialSuccess` and printed the exact `--schema` retrieval command. Because the single-turn harness gave the model no tools, it declined to guess the omitted fields (even though it recalled them from training data under `no_spec`!). Appending Vimanam's printed `--schema` follow-up command lifted `pb_otel_trace` to **`7/7`** (`1,785` BPE tokens) and `pb_otel_metrics` to **`5/5`** (`1,769` BPE tokens).
+4. **Why `summary` is a router, not a payload reference**: `--detail summary` scored `25/50` assertions (mostly `operationId` plus memorized OTel/gRPC Health facts) and `0/5` on both GraphQL tasks. Use `summary` or `SKILL.md` to pick an operation, then load the focused slice.
+
+---
+
+## Standalone v2.2.0 performance and BPE tokenization
+
+### Exact `o200k_base` BPE tokens vs `chars / 4` estimate
+
+Vimanam's `--max-tokens`, `--stats`, and `--costs` use a fast `chars / 4` heuristic (`estimate_tokens` in `src/markdown/mod.rs`). Because JSON, YAML, GraphQL SDL, `.proto`, and Markdown tables tokenize differently, the table below compares exact `tiktoken` (`o200k_base`) BPE token counts against `chars / 4`:
+
+| Public specification | Raw `o200k_base` BPE | Raw `chars / 4` (chars/BPE) | Full Markdown `o200k_base` BPE | Full MD `chars / 4` (chars/BPE) | Focused slice `o200k_base` BPE | Selection ratio (BPE) |
+|---|---:|---:|---:|---:|---:|---:|
+| **Stripe OpenAPI 3.0** (`7.9 MB` JSON) | `1,418,244` | `2,079,211` (`5.86`) | `1,095,911` | `1,147,353` (`4.19`) | `3,693` (`POST /v1/customers`) | `99.7%` fewer |
+| **OpenAI OpenAPI 3.0** (`1.3 MB` YAML) | `281,146` | `343,997` (`4.89`) | `151,987` | `154,266` (`4.06`) | `1,286` (`POST /chat/completions`) | `99.5%` fewer |
+| **GitHub GraphQL API** (`1.2 MB` SDL) | `286,673` | `305,959` (`4.27`) | `414,860` | `427,790` (`4.12`) | `9,902` (`Query.repository`) | `96.5%` fewer |
+| **SpaceX Land GraphQL** (`12 KB` SDL) | `3,672` | `3,110` (`3.39`) | `15,129` | `13,556` (`3.58`) | `510` (`Query.launchesPastResult`) | `86.1%` fewer |
+| **OTel TraceService** (4 `.proto` files) | `6,696` | `7,036` (`4.20`) | `9,369` | `9,359` (`4.00`) | `1,393` (`TraceService.Export`, d=3) | `79.2%` fewer |
+
+Calibration takeaways:
+
+- **On Vimanam's rendered Markdown**, `chars / 4` tracks `o200k_base` closely (`4.00–4.19` chars/BPE, within `±5%` on large specs; `3.58` on small dense GraphQL tables).
+- **On raw JSON and YAML**, `chars / 4` overestimates real BPE tokens by `22%–47%` (`4.89` chars/BPE on OpenAI YAML, `5.86` on Stripe JSON) because repeated indentation merges into single BPE tokens.
+- **Full-document Markdown vs raw source**: for verbose OpenAPI JSON/YAML, full Markdown is smaller than the raw spec (`-23%` to `-46%` BPE). For terse GraphQL SDL and `.proto`, full Markdown with tables is larger than raw source — focused selection (`--operation`, `--schema`, `--output-mode skill`) is what reduces context size.
+
+### Standalone render latency (`v2.2.0`, `mean ± σ`)
+
+Measurements below `10 ms` are dominated by macOS process startup (~`5–6 ms`).
 
 <BenchmarkChart
   title="Vimanam v2.2.0 standalone full-detail render latency across public API specs"
   unit="ms"
   xAxisLabel="Mean wall time, lower is better"
   primaryLabel="vimanam 2.2.0"
-  caption="hyperfine 2.0.0 · 4–10 runs, warmup 1–2 · --detail full --include-schemas --no-report"
+  caption="hyperfine 2.0.0 · 6–10 runs, warmup 2 · --detail full --include-schemas --no-report (raw JSON in scripts/benchmark-v22-results.json)"
   items={[
-    { label: 'Petstore OAS3 (2.6 KB JSON)', primary: 7.2, note: '4.0 MB RSS' },
-    { label: 'gRPC Health v1.20.0 (.proto, PATH="")', primary: 7.6, note: '5.9 MB RSS' },
-    { label: 'OTel Collector TraceService (.proto, PATH="")', primary: 9.5, note: '7.3 MB RSS' },
-    { label: 'OTel Collector MetricsService (.proto, PATH="")', primary: 9.8, note: '8.0 MB RSS' },
-    { label: 'SpaceX Land GraphQL (12 KB SDL)', primary: 9.9, note: '5.2 MB RSS' },
-    { label: 'OpenAI OpenAPI 3.0 (1.3 MB YAML)', primary: 46.5, note: '23.6 MB RSS' },
-    { label: 'GitHub GraphQL API (1.2 MB SDL)', primary: 65.2, note: '24.3 MB RSS' },
-    { label: 'GitHub GraphQL API (4.7 MB Introspection JSON)', primary: 99.9, note: '44.3 MB RSS' },
-    { label: 'Stripe OpenAPI 3.0 (7.9 MB JSON)', primary: 118.5, note: '124.0 MB RSS' },
-    { label: 'Stripe OpenAPI 3.0 (6.3 MB YAML)', primary: 216.8, note: '122.0 MB RSS' },
+    { label: 'Petstore OAS3 (2.6 KB JSON)', primary: 7.25, note: '±1.46 ms · 4.0 MB RSS' },
+    { label: 'gRPC Health v1.20.0 (.proto, no protoc)', primary: 7.71, note: '±1.81 ms · 5.9 MB RSS' },
+    { label: 'OTel Collector LogsService (.proto, no protoc)', primary: 7.75, note: '±0.49 ms · 7.2 MB RSS' },
+    { label: 'OTel Collector TraceService (.proto, no protoc)', primary: 7.85, note: '±0.61 ms · 7.4 MB RSS' },
+    { label: 'SpaceX Land GraphQL (12 KB SDL)', primary: 8.41, note: '±0.91 ms · 5.2 MB RSS' },
+    { label: 'OTel Collector MetricsService (.proto, no protoc)', primary: 9.15, note: '±0.97 ms · 7.9 MB RSS' },
+    { label: 'OpenAI OpenAPI 3.0 (1.3 MB YAML)', primary: 43.87, note: '±2.68 ms · 23.6 MB RSS' },
+    { label: 'GitHub GraphQL API (1.2 MB SDL)', primary: 63.72, note: '±3.15 ms · 24.4 MB RSS' },
+    { label: 'GitHub GraphQL API (4.7 MB Introspection JSON)', primary: 93.83, note: '±1.63 ms · 44.4 MB RSS' },
+    { label: 'Stripe OpenAPI 3.0 (7.9 MB JSON)', primary: 115.87, note: '±2.65 ms · 124.1 MB RSS' },
+    { label: 'Stripe OpenAPI 3.0 (6.3 MB YAML)', primary: 231.73, note: '±19.31 ms · 121.9 MB RSS' },
   ]}
 />
 
-### Standalone LLM context compression (`v2.2.0`)
+---
 
-Feeding a raw multi-megabyte API spec directly into a model exhausts context windows. Slicing the same public specs with `--detail summary` or `--operation ... --schema-depth 2` cuts token volume by over 96%:
+## External baseline comparisons: `oasdiff` and `buf breaking`
 
-| Public specification | Raw spec (~tokens) | Full Markdown (~tokens) | `--detail summary` (~tokens) | Focused operation (`--schema-depth 2`) | Reduction vs raw |
-|---|---:|---:|---:|---:|---:|
-| **Stripe OpenAPI 3.0** (`7.9 MB` JSON, 612 ops) | `2,079,378` | `1,147,538` | `5,148` | `3,795` (`POST /v1/customers`) | **99.8%** |
-| **OpenAI OpenAPI 3.0** (`1.3 MB` YAML, 148 ops) | `344,000` | `154,266` | `923` | `1,372` (`POST /chat/completions`) | **99.6%** |
-| **GitHub GraphQL API** (`1.2 MB` SDL, 278 ops) | `305,960` | `427,790` | `2,533` | `10,164` (`QUERY Query.repository`) | **96.7%** |
-| **OTel TraceService** (`.proto` + imported schemas) | `851` *(entry file)* | `9,359` *(transitive)* | `73` | `1,273` (`TraceService.Export`) | **86.4%** *(vs full transitive)* |
+Diff correctness matters more than diff speed. Both comparisons below run against installed release binaries on the same machine (`oasdiff 1.39.0` and `buf 1.75.0`).
 
-### Standalone semantic diff performance (`v2.2.0`)
+### OpenAPI: `vimanam diff` vs `oasdiff 1.39.0`
 
-| Public diff benchmark | Mode | Mean wall time | Peak RSS | Detected facts |
-|---|---|---:|---:|---|
-| **SpaceX Land GraphQL** (`0a482d1 -> 64a7fa9`) | File-pair SDL JSON v2 | `33.1 ms` | `6.8 MB` | 9 changes (8 breaking, 1 non-breaking) |
-| **GitHub GraphQL SDL** (`octokit/graphql-schema`, `HEAD~1 -> HEAD`) | Git-ref JSON v2 | `885.5 ms` | `54.7 MB` | Full 1.2 MB × 2 surface comparison |
-| **GitHub GraphQL Introspection** (`4.7 MB × 2`, `HEAD~1 -> HEAD`) | Git-ref JSON v2 | `937.6 ms` | `70.8 MB` | Full 4.7 MB × 2 surface comparison |
-| **OpenTelemetry Proto** (`d31f7ac~1 -> d31f7ac`, `trace.proto`) | Git-ref in-memory `protox` | `930.9 ms` | `8.3 MB` | 1 non-breaking change (0 temp disk writes) |
+Tested across a 6-case OpenAPI 3.0 mutation matrix (`--fail-on-breaking` vs `oasdiff breaking --fail-on ERR`) and `tests/fixtures/diff_old_oas3.json -> diff_new_oas3.json`:
+
+| OpenAPI mutation case | `vimanam diff` (v2.2.0) | `oasdiff breaking` (1.39.0) | Notes |
+|---|---|---|---|
+| Endpoint removed (`POST /v1/items`) | Breaking (`operation_removed`) | Breaking (`api-removed-without-deprecation`) | Exact agreement |
+| Required query parameter added | Breaking (`argument_added`) | Breaking (`new-required-request-parameter`) | Exact agreement |
+| Request body property made required | Breaking (`field_required_changed`) | Breaking (`request-property-became-required`) | Exact agreement |
+| Optional response property removed | **Breaking** (`field_removed`) | **Non-breaking** *(not ERR)* | `oasdiff` flags required-property removals as ERR and optional ones as WARN; Vimanam treats any response field removal as breaking |
+| Optional response property added | Non-breaking (`field_added`) | Non-breaking | Exact agreement |
+| Versioned path moved (`/v1/items -> /v2/items`) | Breaking (`operation_moved`) | Breaking (`api-path-removed-without-deprecation`) | Vimanam pairs the move and attributes inner changes; `oasdiff` reports separate path removal |
+
+- **Timing on `diff_old_oas3.json -> diff_new_oas3.json` (10 runs)**: `vimanam` `12.68 ± 3.79 ms` (`5.2 MB` RSS, `57.0M` instructions) vs `oasdiff` `16.67 ± 2.13 ms` (`24.1 MB` RSS, `123.3M` instructions — wall-time difference is within `1σ` noise; Vimanam uses `4.6×` less memory).
+- **Known scope difference**: `vimanam diff` compares the first request/response media type only; `oasdiff` checks every media type in `content`.
+
+### Protobuf: `vimanam diff` vs `buf breaking 1.75.0`
+
+Tested across an 8-case proto3 compatibility matrix comparing `vimanam --breaking wire` against `buf` `WIRE`, and `vimanam --breaking source` against `buf` `WIRE_JSON` and `FILE`:
+
+| Protobuf mutation case | Vimanam `wire` / `buf WIRE` | Vimanam `source` / `buf FILE` | Native rule names |
+|---|---|---|---|
+| Field type changed (`int32 -> string`) | Breaking / Breaking | Breaking / Breaking | `FIELD_SAME_TYPE` (match) |
+| Field removed without reserving number | Breaking / Breaking | Breaking / Breaking | `FIELD_NO_DELETE*` (match) |
+| Field removed with `reserved 2` | Pass / Pass | Breaking / Breaking | `FIELD_NO_DELETE` (match) |
+| Same-number field rename (`quantity -> qty`) | Pass / Pass | Breaking / Breaking | `FIELD_SAME_NAME`, `FIELD_SAME_JSON_NAME` (match) |
+| `json_name` override changed | Pass / Pass | Breaking / Breaking | `FIELD_SAME_JSON_NAME` (match) |
+| Enum value removed without reserving number | Breaking / Breaking | Breaking / Breaking | `ENUM_VALUE_NO_DELETE*` (match) |
+| RPC changed unary → server streaming | **Pass** / **Breaking** | Breaking / Breaking | `RPC_SAME_SERVER_STREAMING` *(wire divergence — see below)* |
+| Optional field added | Pass / Pass | Pass / Pass | Non-breaking (match) |
+
+Two genuine policy differences surfaced by the comparison:
+
+- **`RPC_SAME_SERVER_STREAMING` under `--breaking wire`**: `buf` `WIRE` flags changing an RPC from unary to server streaming as wire-breaking; `vimanam 2.2.0` classifies it under `source` (and default `--breaking all`), not `--breaking wire`.
+- **File options on `grpc/grpc` `health-v1.0.0 -> v1.20.0`**: `buf` `FILE` flags newly added `go_package`/`java_*` file options as breaking (`exit 100`), whereas `vimanam` classifies file-option additions as `review`.
+- **Timing on `health-v1.0.0 -> v1.20.0` (10 runs)**: `vimanam` **`10.33 ± 2.35 ms`** (`6.2 MB` RSS, `39.2M` instructions, no `buf.yaml`) vs `buf breaking` **`39.67 ± 4.46 ms`** (`49.4 MB` RSS, `434.8M` instructions — `3.84×` faster, `7.9×` less memory).
 
 ---
 
 ## Upgrade analysis: v2.2.0 vs v2.1.0
 
-Vimanam `2.2.0` replaced external `protoc` with pure-Rust `protox 0.10`, migrated GraphQL SDL from `graphql-parser 0.4` to `apollo-parser 0.8`, migrated YAML from `serde_norway` (`unsafe-libyaml-norway`) to pure-Rust `serde-saphyr 2.2`, added `.proto` source comments, and resolved `RUSTSEC-2026-0486`.
+Vimanam `2.2.0` dropped two external/unsafe runtime dependencies — replacing external `protoc` with pure-Rust `protox 0.10`, replacing `serde_norway` (which wraps C-ported `unsafe-libyaml-norway`) with `serde-saphyr 2.2` (whose crate declares `#![forbid(unsafe_code)]`), replacing unmaintained `graphql-parser 0.4` with `apollo-parser 0.8`, displaying `.proto` source comments, and fixing `RUSTSEC-2026-0486`.
 
-### Protocol Buffers: 4.1x–6.3x faster with zero `protoc`
+### Protocol Buffers: 6.0x–7.4x faster `.proto` compilation and 31x faster 200-proto Git diffs
 
-Eliminating `protoc` subprocess spawns and temporary descriptor files cuts compile-and-render latency across every public `.proto` target while running with `PATH=""`:
+Eliminating `protoc` subprocess spawns cuts compile-and-render wall time well outside `1σ` noise while running with an empty `PATH`:
 
 <BenchmarkChart
-  title="Protobuf compile & render latency: v2.2.0 (pure-Rust protox) vs v2.1.0 (external protoc 36.2)"
+  title="Protobuf compile & render latency: v2.2.0 (protox 0.10) vs v2.1.0 (protoc 36.2)"
   unit="ms"
-  xAxisLabel="Mean wall time, lower is better"
-  primaryLabel="v2.2.0 (protox 0.10, PATH empty)"
+  xAxisLabel="Mean wall time across 10 runs, lower is better"
+  primaryLabel="v2.2.0 (protox 0.10, zero protoc)"
   baselineLabel="v2.1.0 (protoc 36.2)"
-  caption="hyperfine 2.0.0 · 10 runs, warmup 2 · open-telemetry/opentelemetry-proto @ d31f7ac & grpc/grpc health"
+  caption="hyperfine 2.0.0 · 10 runs, warmup 2 · all .proto deltas exceed 1σ noise; .pb descriptor delta is within 1σ noise"
   items={[
-    { label: 'gRPC Health v1.20.0 (.proto)', primary: 7.55, baseline: 47.75 },
-    { label: 'OTel Collector TraceService (.proto)', primary: 9.45, baseline: 48.45 },
-    { label: 'OTel Collector MetricsService (.proto)', primary: 9.78, baseline: 54.57 },
-    { label: 'OTel Collector LogsService (.proto)', primary: 10.25, baseline: 52.10 },
-    { label: 'gRPC Health v1.20.0 (.pb descriptor)', primary: 6.73, baseline: 8.22 },
+    { label: 'gRPC Health v1.20.0 (.proto)', primary: 7.71, baseline: 47.17, note: '±1.8 vs ±2.4 ms' },
+    { label: 'OTel Collector TraceService (.proto)', primary: 7.85, baseline: 57.78, note: '±0.6 vs ±12.5 ms' },
+    { label: 'OTel Collector MetricsService (.proto)', primary: 9.15, baseline: 54.52, note: '±1.0 vs ±9.0 ms' },
+    { label: 'OTel Collector LogsService (.proto)', primary: 7.75, baseline: 51.56, note: '±0.5 vs ±12.0 ms' },
+    { label: 'gRPC Health v1.20.0 (.pb descriptor)', primary: 9.76, baseline: 10.96, note: 'within 1σ noise' },
   ]}
 />
 
-Across the full 13-file public Protobuf corpus (all 11 OpenTelemetry `.proto` files plus both gRPC Health versions):
+### Git-ref `.proto` diff scaling (measured)
 
-- **Batch speed**: `0.774 s` (`v2.1.0`) → **`0.187 s`** (`v2.2.0`, **4.14× faster**) with **`13 / 13`** passing under `PATH=""`.
-- **Neutral contract parity**: **`13 / 13`** exact `ve2_` surface match between `protoc 36.2` and `protox 0.10`.
-- **Peak memory**: dropped **38–51%** on single-file runs (`12.0–12.9 MB` → `5.9–8.0 MB`) because no child `protoc` process or temporary descriptor buffer is allocated.
-- **Git-ref `.proto` diff (`open-telemetry/opentelemetry-proto` @ `d31f7ac`)**: **`2.54×` faster** (`2,360 ms` → `931 ms`), **55.8% fewer CPU instructions** (`698.3M` → `308.8M`), and **34% lower peak RSS** (`12.6` → `8.3 MB`), with **100% identical JSON diff output**. On large monorepos with thousands of committed `.proto` files, the speedup grows past **100×** because `v2.2.0` lazily reads only imported Git blobs in memory instead of writing every committed `.proto` to disk.
+In `v2.1.0`, Git-ref `.proto` diffs extracted every committed `.proto` file in the repository to temporary directories on disk for both refs before running `protoc`. In `v2.2.0`, `GitFileResolver` still checks every committed `.proto` mode (rejecting symlinks) but lazily reads only imported blobs in memory:
 
-### Protobuf documentation quality: `.proto` comments and `$ref` field metadata
+| Git-ref `.proto` diff benchmark | Committed `.proto` files | v2.1.0 (`mean ± σ`) | v2.2.0 (`mean ± σ`) | Speedup | Instructions (2.1 → 2.2) | Exact diff parity |
+|---|---:|---:|---:|---:|---:|---|
+| **OpenTelemetry Proto** (`d31f7ac~1..d31f7ac`, `trace.proto`) | `11` | `2,344 ± 76 ms` | **`817 ± 11 ms`** | **`2.87×`** | `749.6M -> 324.7M` | Exact (`1` change) |
+| **Synthetic repo** (`scripts/benchmark-public.py`, 4 imported) | `200` | `30,567 ± 485 ms` | **`983 ± 28 ms`** | **`31.09×`** | `7,718.7M -> 274.2M` | Exact (`1` change) |
 
-Across the 13 public `.proto` files, rendered Markdown documentation grew **+106%** (`95.0 KB` → `195.8 KB`) as `.proto` comments and `Field #N` notes on singular message, enum, and `map<K, V>` fields (`189` → `295` field annotations) are now preserved while keeping neutral `ve2_`/`vc2_` IDs comment-invariant.
+### Protobuf documentation quality: `.proto` comments and `$ref` field notes
 
 <OutputDiff
   title="grpc/grpc health-v1.20.0.proto — Health.Watch Markdown (v2.1.0 -> v2.2.0)"
@@ -143,71 +219,57 @@ Across the 13 public `.proto` files, rendered Markdown documentation grew **+106
   ]}
 />
 
-### OpenAPI JSON and pure-Rust YAML (`serde-saphyr` vs `serde_norway`)
+### OpenAPI and GraphQL: v2.2.0 vs v2.1.0 (`mean ± σ`)
 
-| Specification | Format & Size | v2.1.0 (ms / RSS) | v2.2.0 (ms / RSS) | Parity & Upgrade Impact |
+Wall-time differences within overlapping `±1σ` bands are marked as parity rather than speedups or regressions:
+
+| Public specification | v2.1.0 (`mean ± σ` / RSS) | v2.2.0 (`mean ± σ` / RSS) | Statistically distinct? | Parity & notable change |
 |---|---|---|---|---|
-| **Petstore OAS3** | JSON · `2.6 KB` | `6.9 ms` / `4.0 MB` | `7.2 ms` / `4.0 MB` | Byte-identical |
-| **Petstore OAS3** | YAML · `1.9 KB` | `7.4 ms` / `4.2 MB` | `7.2 ms` / `5.1 MB` | Byte-identical (`1.03x`) |
-| **OpenAI OpenAPI 3.0** | YAML · `1.3 MB` | **Failed (`exit 1`)** | **`46.5 ms` / `23.6 MB`** | `serde_norway` rejected `-9223372036854776000` in `seed.minimum`; `v2.2.0` parses cleanly |
-| **Stripe OpenAPI 3.0** | JSON · `7.9 MB` | `123.1 ms` / `124.2 MB` | **`118.5 ms` / `124.0 MB`** | Byte-identical (`1.04x`) |
-| **Stripe OpenAPI 3.0** | YAML · `6.3 MB` | `203.4 ms` / `153.4 MB` | `216.8 ms` / **`122.0 MB`** | Byte-identical; **-20.5% peak RAM**, **-6.5% CPU instructions**, `#![forbid(unsafe_code)]` |
+| **Petstore OAS3** (`2.6 KB` JSON) | `7.19 ± 0.76 ms` / `4.0 MB` | `7.25 ± 1.46 ms` / `4.0 MB` | Within 1σ (startup floor) | Byte-identical |
+| **Petstore OAS3** (`1.9 KB` YAML) | `8.57 ± 1.03 ms` / `4.2 MB` | `8.30 ± 0.84 ms` / `5.1 MB` | Within 1σ (startup floor) | Byte-identical |
+| **OpenAI OpenAPI 3.0** (`1.3 MB` YAML) | **Failed (`exit 1`)** | **`43.87 ± 2.68 ms` / `23.6 MB`** | Pass vs fail | `serde_norway` rejected `-9223372036854776000` in `seed.minimum`; `serde-saphyr` parses cleanly |
+| **Stripe OpenAPI 3.0** (`7.9 MB` JSON) | `119.72 ± 3.02 ms` / `124.2 MB` | `115.87 ± 2.65 ms` / `124.1 MB` | Within 1σ (parity) | Byte-identical (`1,462M` vs `1,465M` instr) |
+| **Stripe OpenAPI 3.0** (`6.3 MB` YAML) | `302.96 ± 166.1 ms` *(med `201.4`)* / `151.0 MB` | `231.73 ± 19.3 ms` *(med `224.9`)* / **`121.9 MB`** | Wall within 1σ; **-19% RAM** | Byte-identical; `-6.8%` CPU instructions; `serde-saphyr` eliminates `unsafe-libyaml-norway` |
+| **SpaceX Land GraphQL** (`12 KB` SDL) | `10.49 ± 1.13 ms` / `5.3 MB` | `8.41 ± 0.91 ms` / `5.2 MB` | Startup-dominated | Byte-identical |
+| **GitHub GraphQL** (`1.2 MB` SDL) | **`53.11 ± 2.88 ms`** / `23.6 MB` | `63.72 ± 3.15 ms` / `24.4 MB` | **Yes (`+10.6 ms` slower)** | Byte-identical; `apollo-parser` adds `extend schema`, `@oneOf`, strict CST checks |
+| **GitHub GraphQL** (`4.7 MB` Introspection) | `95.17 ± 2.21 ms` / `44.7 MB` | `93.83 ± 1.63 ms` / `44.4 MB` | Within 1σ (parity) | Byte-identical |
+| **SpaceX Land SDL Diff** (`9` changes) | `33.63 ± 2.17 ms` / `6.7 MB` | `32.17 ± 3.07 ms` / `6.8 MB` | Within 1σ (parity) | 100% exact `vc2_` change parity |
+| **GitHub GraphQL Git-Ref Diff** (`1.2 MB × 2`) | **`800.8 ± 2.6 ms`** / `52.4 MB` | `834.8 ± 7.4 ms` / `54.4 MB` | **Yes (`+34 ms` slower)** | 100% exact `vc2_` change parity |
 
-<BenchmarkChart
-  title="Stripe 6.3 MB OpenAPI YAML peak memory: v2.2.0 (serde-saphyr) vs v2.1.0 (serde_norway)"
-  unit="MB"
-  xAxisLabel="Peak resident memory, lower is better"
-  primaryLabel="v2.2.0 (serde-saphyr, pure Rust)"
-  baselineLabel="v2.1.0 (serde_norway, C libyaml)"
-  caption="hyperfine 2.0.0 memory_peak_resident · stripe/openapi spec3.yaml (6.3 MB, 612 operations)"
-  items={[
-    { label: 'Stripe OpenAPI 3.0 (6.3 MB YAML)', primary: 122.0, baseline: 153.4, note: '-20.5% RAM' },
-  ]}
-/>
+---
 
-### GraphQL SDL and introspection (`apollo-parser` vs `graphql-parser`)
+## Trade-offs and known limits
 
-| Public GraphQL benchmark | v2.1.0 (ms / RSS) | v2.2.0 (ms / RSS) | Parity & Capability Impact |
-|---|---|---|---|
-| **SpaceX Land SDL** (`12 KB`) | `9.8 ms` / `5.3 MB` | `9.9 ms` / `5.2 MB` | Byte-identical |
-| **SpaceX Land Introspection** (`118 KB`) | `11.1 ms` / `6.0 MB` | `11.0 ms` / `6.1 MB` | Byte-identical |
-| **GitHub GraphQL SDL** (`1.2 MB`, 278 ops) | `52.9 ms` / `23.6 MB` | `65.2 ms` / `24.3 MB` | Byte-identical; adds `extend schema`, `@oneOf`, repeatable directives, strict CST validation |
-| **GitHub GraphQL Introspection** (`4.7 MB`) | `104.5 ms` / `44.6 MB` | **`99.9 ms` / `44.3 MB`** | Byte-identical (`1.05x` faster) |
-| **SpaceX Land SDL Diff** (`9` changes) | `30.2 ms` / `6.7 MB` | `33.1 ms` / `6.8 MB` | 100% exact `vc2_` change parity |
-| **GitHub GraphQL Git-Ref Diff** (`1.2 MB × 2`) | `829.6 ms` / `52.7 MB` | `885.5 ms` / `54.7 MB` | 100% exact `vc2_` change parity |
-
-## Measured trade-offs and caveats
-
-<Aside type="caution" title="Honest trade-offs in v2.2.0">
-  - **Binary size**: the release binary grew from `7.24 MB` to `9.28 MB` (`+2.04 MB`) to bundle pure-Rust `protox`, Google well-known descriptors, `apollo-parser`, `serde-saphyr`, and optional Nushell/manpage generators.
-  - **Large SDL & YAML wall time**: `apollo-parser`'s lossless CST adds `+12.2 ms` on GitHub's `1.2 MB` GraphQL SDL (`52.9 -> 65.2 ms`) in exchange for modern GraphQL syntax (`extend schema`, `@oneOf`) and stricter validation. Pure-Rust `serde-saphyr` adds `+13.4 ms` on Stripe's `6.3 MB` YAML (`203.4 -> 216.8 ms`) in exchange for `-20.5%` peak RAM, zero `unsafe` C code, merge-key expansion, and parsing OpenAI's official `openapi.yaml`.
-  - **Mixed `protoc` `.pb` vs `v2.2.0` `.proto` diffs**: source-to-source diffs under `v2.2.0` are deterministic across machines because `protox` pins one bundled `google/protobuf/descriptor.proto`. Comparing a prebuilt `.pb` from a newer `protoc` (such as `libprotoc 36.2`) directly against a `.proto` compiled by `v2.2.0` can report differences inside `google.protobuf.descriptor.proto` if the schema imports it transitively.
+<Aside type="caution" title="Measured trade-offs in v2.2.0">
+  - **Binary size**: the `arm64` release binary grew from `7.24 MB` to `9.28 MB` (`+2.04 MB`) to bundle `protox`, Google well-known descriptors, `apollo-parser`, `serde-saphyr`, and optional Nushell/manpage crates.
+  - **GraphQL SDL parse time**: `apollo-parser`'s lossless CST costs `+10.6 ms` on GitHub's `1.2 MB` SDL (`53.1 -> 63.7 ms`, `+42%` CPU instructions) in exchange for `extend schema`, `@oneOf`, repeatable directives, and stricter syntax validation.
+  - **Mixed `protoc` `.pb` vs `v2.2.0` `.proto` diffs**: source-to-source diffs under `v2.2.0` are deterministic across machines because `protox` pins one bundled `google/protobuf/descriptor.proto`. Comparing a prebuilt `.pb` from a newer `protoc` directly against a `.proto` compiled by `v2.2.0` can report deltas inside `google.protobuf.descriptor.proto` when imported transitively.
+  - **YAML `unsafe` scope**: `#![forbid(unsafe_code)]` is declared by the `serde-saphyr` dependency (replacing `serde_norway`'s C-ported `unsafe-libyaml-norway`), not as a crate-wide attribute on `vimanam/src/`.
 </Aside>
 
-## Reproduce these benchmarks
+## Reproduce these measurements
 
-You can reproduce every measurement locally with `vimanam` `2.2.0` and `hyperfine`:
+Run the full checked-in benchmark and accuracy scripts, or invoke `hyperfine` directly (using `--env PATH=` with an absolute binary path so `hyperfine` itself remains discoverable while `vimanam` executes with an empty `PATH`):
 
 ```bash
-# 1. Stripe 7.9 MB OpenAPI JSON & 6.3 MB YAML
-curl -fsSL https://raw.githubusercontent.com/stripe/openapi/master/openapi/spec3.json -o stripe.json
-curl -fsSL https://raw.githubusercontent.com/stripe/openapi/master/openapi/spec3.yaml -o stripe.yaml
-hyperfine --warmup 2 \
-  'vimanam stripe.json --detail full --include-schemas --no-report' \
-  'vimanam stripe.yaml --detail full --include-schemas --no-report'
-
-# 2. OpenAI 1.3 MB OpenAPI YAML
-curl -fsSL https://raw.githubusercontent.com/openai/openai-openapi/manual_spec/openapi.yaml -o openai.yaml
-vimanam openai.yaml --operation "POST /chat/completions" --detail full --include-schemas --schema-depth 2 --no-report
-
-# 3. GitHub 1.2 MB GraphQL SDL & 4.7 MB Introspection JSON
-git clone --depth 5 https://github.com/octokit/graphql-schema.git
-hyperfine --warmup 2 \
-  'vimanam graphql-schema/schema.graphql --detail full --include-schemas --no-report' \
-  'vimanam graphql-schema/schema.json --detail full --include-schemas --no-report'
-
-# 4. OpenTelemetry Proto (pure Rust with empty PATH)
+# 1. Pure-Rust .proto compilation verified with empty PATH
+VIMANAM="$(command -v vimanam)"
 git clone --depth 15 https://github.com/open-telemetry/opentelemetry-proto.git
-PATH="" hyperfine --warmup 2 \
-  'vimanam opentelemetry-proto/opentelemetry/proto/collector/trace/v1/trace_service.proto -I opentelemetry-proto --detail full --include-schemas --no-report'
+hyperfine --env PATH= --warmup 2 --runs 10 \
+  "'$VIMANAM' opentelemetry-proto/opentelemetry/proto/collector/trace/v1/trace_service.proto -I opentelemetry-proto --detail full --include-schemas --no-report"
+
+# 2. Full public benchmark, BPE calibration, 200-proto Git-ref scaling, and oasdiff/buf baselines
+uv run --with tiktoken python3 scripts/benchmark-public.py \
+  --v21 /path/to/vimanam-2.1.0 \
+  --v22 /path/to/vimanam-2.2.0 \
+  --corpus /tmp/vimanam-eval-corpus \
+  --runs 10 \
+  --output scripts/benchmark-v22-results.json
+
+# 3. 10-task LLM context-accuracy evaluation
+uv run --with tiktoken python3 scripts/eval-context-accuracy.py \
+  --v22 /path/to/vimanam-2.2.0 \
+  --corpus /tmp/vimanam-eval-corpus \
+  --model haiku \
+  --output scripts/eval-context-accuracy-results.json
 ```

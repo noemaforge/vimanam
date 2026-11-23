@@ -98,6 +98,30 @@ The merge scenario showed no measured benefit (6.5% slower here), with two
 additional probes. Timings vary by machine and load; the raw file retains the
 sample ranges, and these measurements are not a promise for other repositories.
 
+## `benchmark-public.py` and `eval-context-accuracy.py`
+
+Reproducible public evaluation scripts backing the [Benchmarks & v2.2 analysis](https://noemaforge.github.io/vimanam/benchmarks/) page. Both use only public open-source specifications (Stripe OpenAPI, OpenAI OpenAPI, GitHub GraphQL, SpaceX Land GraphQL, OpenTelemetry Proto, and gRPC Health) and checked-in raw captures:
+
+- `scripts/benchmark-public.py` → `scripts/benchmark-v22-results.json`: runs `hyperfine 2.0.0` (`mean`, `stddev`, `median`, `min`, `max`, peak RSS, CPU instructions, plus a 1σ overlap check), compares `tiktoken` (`o200k_base`) BPE tokens against Vimanam's `chars / 4` estimate, benchmarks a generated 200-file `.proto` Git repo (`git fast-import`), and compares diff verdicts and timing against `oasdiff` and `buf breaking`.
+- `scripts/eval-context-accuracy.py` → `scripts/eval-context-accuracy-results.json`: runs a 10-task, 4-condition (`no_spec`, `summary`, `raw_spec`, `focused_slice`) deterministic programmatic-grading evaluation on the same model (`claude-haiku-5-5`, zero tools, isolated system prompt), recording exact API token counts, `o200k_base` BPE tokens, latency, USD cost, and per-assertion pass/fail.
+
+```bash
+# Re-run public performance, BPE calibration, and oasdiff/buf baselines
+uv run --with tiktoken python3 scripts/benchmark-public.py \
+  --v21 /tmp/vimanam-v2.1.0/target/release/vimanam \
+  --v22 target/release/vimanam \
+  --corpus /tmp/vimanam-eval-corpus \
+  --runs 10 \
+  --output scripts/benchmark-v22-results.json
+
+# Re-run the 10-task LLM context-accuracy evaluation
+uv run --with tiktoken python3 scripts/eval-context-accuracy.py \
+  --v22 target/release/vimanam \
+  --corpus /tmp/vimanam-eval-corpus \
+  --model haiku \
+  --output scripts/eval-context-accuracy-results.json
+```
+
 ## `compare-baseline.sh`
 
 Runs a released vimanam binary and a fresh build of the working tree over the same matrix of CLI invocations, then compares stdout, stderr, exit code and any files or directories written, byte for byte. Use it to prove a refactor changes no behaviour, or to see exactly which outputs an intentional change affects.
