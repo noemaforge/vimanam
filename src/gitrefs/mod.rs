@@ -689,7 +689,9 @@ struct Info {
 
 fn sniff(bytes: &[u8], extension: &str) -> bool {
     let json = || serde_json::from_slice::<Header>(bytes).ok();
-    let yaml = || serde_norway::from_slice::<Header>(bytes).ok();
+    let yaml = || {
+        serde_saphyr::from_slice_with_options::<Header>(bytes, crate::parser::yaml_options()).ok()
+    };
     let header = if extension.eq_ignore_ascii_case("json") {
         json().or_else(yaml)
     } else {

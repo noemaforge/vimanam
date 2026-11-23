@@ -7,9 +7,10 @@ Vimanam reads GraphQL schemas as:
   and directories are followed; a directory reached twice (including symlink
   loops) is read once, and a file reachable through several paths is merged
   once, under its first path in sort order. A dangling `.graphql`/`.graphqls`
-  link is an error; `extend type`/`extend enum`/… may appear in any file. Duplicate type
-  definitions, duplicate members from extensions, extensions of undefined
-  types and references to undefined types are errors naming the file.
+  link is an error; `extend schema`, `extend type`, `extend enum`, … may appear
+  in any file. Duplicate schema/type definitions, duplicate root operations,
+  duplicate members from extensions, extensions of undefined types and
+  references to undefined types are errors naming the file.
 - **Introspection JSON**: the result of an introspection query, either
   `{"data": {"__schema": …}}` or `{"__schema": …}`. A `.json` input is GraphQL
   only when it contains a `__schema` object, so OpenAPI JSON is unaffected.
@@ -19,10 +20,9 @@ deprecation without a reason uses the specification default
 (`No longer supported`), and defaults are printed as canonical GraphQL
 literals, so SDL and introspection of the same schema produce the same surface
 and no changes. Without a `schema { … }` definition the roots are `Query`,
-`Mutation` and `Subscription` when defined. Directive definitions and applied
-directives other than `@deprecated` are not modeled. `extend schema` is
-rejected with an explicit error (the parser cannot read it); declare root types
-in one `schema { … }` definition.
+`Mutation` and `Subscription` when defined (merged with any `extend schema`
+declarations). Directive definitions and applied directives other than
+`@deprecated` are not modeled.
 
 Capture introspection with input-value deprecation enabled (graphql-js
 `inputValueDeprecation: true`, or `args(includeDeprecated: true)` and

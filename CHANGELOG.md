@@ -7,6 +7,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Pure-Rust `.proto` source compilation via `protox` (#126): `.proto` files,
+  Google well-known imports, `source_code_info`, and Git-ref `.proto` diffs no
+  longer require an external `protoc` binary on `PATH`. Committed Git-ref
+  `.proto` snapshots are resolved directly from Git blobs in memory (preserving
+  import-root confinement, symlink/regular-file checks, and canonical shadow
+  detection). Protobuf Editions remain explicitly rejected before output
+  creation.
+- `.proto` source comments surfaced in rendered Markdown documentation (#126):
+  leading and trailing comments from `source_code_info` appear on services,
+  RPCs, messages, scalar/repeated/singular-message/enum/`map` fields (alongside
+  `Field #N` metadata across linked, `--inline-schemas`, `--split`, and
+  `--output-mode skill` views), enums, and enum values, while neutral
+  `ve2_`/`vc2_` IDs and diff facts remain comment-invariant.
+- GraphQL `extend schema`, schema descriptions, repeatable directives, and
+  `@oneOf` input objects (#125), powered by `apollo-parser`.
+- CLI usability and packaging additions (#41, #33, #31):
+  - `vimanam completions nushell` alongside bash, zsh, fish, elvish, and
+    powershell.
+  - `vimanam man [--out-dir DIR]` to emit roff manual pages (`vimanam(1)` on
+    stdout, or `vimanam` and every subcommand page into `DIR`).
+  - `clap::ValueHint` file/directory annotations on path flags and terminal-width
+    `wrap_help`.
+
+### Changed
+
+- Replaced unmaintained `graphql-parser` with `apollo-parser` (#125), tightening
+  GraphQL SDL and `canonical_literal` validation (rejecting braceless/empty
+  `schema` blocks, conflicting `extend schema` overrides against implicit
+  roots, malformed object fields / directive arguments, and duplicate
+  input-object field or directive argument names) while preserving `ve2_`/`vc2_`
+  identities and SDL/introspection parity.
+- Replaced `serde_norway` (and its `unsafe-libyaml-norway` backend) with
+  pure-Rust, unsafe-free `serde-saphyr` (#4, #78): enforces YAML 1.2 Core
+  booleans (keeping `NO`/`yes`/`on`/`off`, leading-zero, and underscored
+  scalars as strings in untyped JSON values), expands `<<:` merge keys, rejects
+  duplicate mapping keys, and applies anti-DoS parsing budgets sized for
+  multi-MB OpenAPI specs.
+- Moved `tempfile` to `[dev-dependencies]` now that runtime Protobuf
+  compilation no longer creates temporary directories.
+
+### Security
+
+- Updated `Cargo.lock` dependencies, resolving `RUSTSEC-2026-0486`
+  (`rustix` `1.1.5` -> `1.1.6`) (#77).
+
 ## [2.1.0] - 2026-11-04
 
 ### Added

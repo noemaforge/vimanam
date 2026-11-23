@@ -9,7 +9,7 @@
 //! out of scope.
 use super::*;
 use anyhow::{Context, Result, bail};
-use graphql_parser::schema as ast;
+use apollo_parser::{Parser, cst, cst::CstNode};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -222,44 +222,63 @@ impl Document {
             .map(|(kind, _)| kind.as_str())
     }
 
-    /// Parse and merge SDL sources `(label, text)`. Type extensions may appear
-    /// in any file; duplicate definitions and unknown type references fail.
+    /// Parse and merge SDL sources `(label, text)`. Schema and type extensions
+    /// may appear in any file; duplicate definitions and unknown type references fail.
     pub fn from_sdl(sources: &[(String, String)]) -> Result<Self> {
         let mut types: BTreeMap<String, (TypeDef, String)> = BTreeMap::new();
         let mut roots = BTreeMap::new();
         let mut schema_seen: Option<String> = None;
         let documents = sources
             .iter()
-            .map(|(label, text)| {
-                if has_schema_extension(text) {
-                    bail!(
-                        "Unsupported `extend schema` in {label}: declare root operation types in a single `schema {{ ... }}` definition"
-                    );
-                }
-                ast::parse_schema::<String>(text)
-                    .map(|doc| (label, doc))
-                    .map_err(|e| anyhow::anyhow!("Invalid GraphQL SDL in {label}: {e}"))
-            })
+            .map(|(label, text)| parse_sdl_document(label, text).map(|doc| (label.as_str(), doc)))
             .collect::<Result<Vec<_>>>()?;
-        let mut extensions = vec![];
+        let mut schema_extensions = vec![];
+        let mut type_extensions = vec![];
         for (label, doc) in &documents {
-            for definition in &doc.definitions {
+            for definition in doc.definitions() {
                 match definition {
-                    ast::Definition::SchemaDefinition(s) => {
+                    cst::Definition::SchemaDefinition(s) => {
                         if let Some(previous) = &schema_seen {
                             bail!("Duplicate GraphQL schema definition in {label} and {previous}");
                         }
-                        schema_seen = Some((*label).clone());
-                        for (kind, name) in
-                            ROOTS.iter().zip([&s.query, &s.mutation, &s.subscription])
+                        if s.l_curly_token().is_none()
+                            || s.root_operation_type_definitions().next().is_none()
                         {
-                            if let Some(name) = name {
-                                roots.insert((*kind).to_owned(), name.clone());
-                            }
+                            bail!(
+                                "Invalid GraphQL schema definition in {label}: expected '{{' with at least one root operation type"
+                            );
+                        }
+                        schema_seen = Some((*label).to_owned());
+                        for root in s.root_operation_type_definitions() {
+                            insert_root_operation(&mut roots, &root, label)?;
                         }
                     }
-                    ast::Definition::TypeDefinition(t) => {
-                        let def = sdl_type(t);
+                    cst::Definition::SchemaExtension(e) => {
+                        let has_braces = e.l_curly_token().is_some();
+                        let has_roots = e.root_operation_type_definitions().next().is_some();
+                        let has_directives = e
+                            .directives()
+                            .is_some_and(|d| d.directives().next().is_some());
+                        if has_braces {
+                            if !has_roots {
+                                bail!(
+                                    "Invalid GraphQL schema extension in {label}: expected at least one root operation type inside '{{ ... }}'"
+                                );
+                            }
+                        } else if !has_directives {
+                            bail!(
+                                "Invalid GraphQL schema extension in {label}: expected directives or '{{ ... }}'"
+                            );
+                        }
+                        schema_extensions.push((*label, e));
+                    }
+                    cst::Definition::ScalarTypeDefinition(_)
+                    | cst::Definition::ObjectTypeDefinition(_)
+                    | cst::Definition::InterfaceTypeDefinition(_)
+                    | cst::Definition::UnionTypeDefinition(_)
+                    | cst::Definition::EnumTypeDefinition(_)
+                    | cst::Definition::InputObjectTypeDefinition(_) => {
+                        let def = sdl_type(&definition)?;
                         if is_builtin(&def.name) {
                             continue;
                         }
@@ -269,15 +288,25 @@ impl Document {
                                 def.name
                             );
                         }
-                        types.insert(def.name.clone(), (def, (*label).clone()));
+                        types.insert(def.name.clone(), (def, (*label).to_owned()));
                     }
-                    ast::Definition::TypeExtension(e) => extensions.push((label.as_str(), e)),
-                    ast::Definition::DirectiveDefinition(_) => {}
+                    cst::Definition::ScalarTypeExtension(_)
+                    | cst::Definition::ObjectTypeExtension(_)
+                    | cst::Definition::InterfaceTypeExtension(_)
+                    | cst::Definition::UnionTypeExtension(_)
+                    | cst::Definition::EnumTypeExtension(_)
+                    | cst::Definition::InputObjectTypeExtension(_) => {
+                        type_extensions.push((*label, definition));
+                    }
+                    cst::Definition::DirectiveDefinition(_) => {}
+                    cst::Definition::OperationDefinition(_)
+                    | cst::Definition::FragmentDefinition(_) => {
+                        bail!(
+                            "Invalid GraphQL SDL in {label}: executable definitions are not allowed in a schema"
+                        );
+                    }
                 }
             }
-        }
-        for (label, extension) in extensions {
-            apply_extension(&mut types, label, extension)?;
         }
         if schema_seen.is_none() {
             for (kind, name) in ROOTS.iter().zip(["Query", "Mutation", "Subscription"]) {
@@ -285,6 +314,14 @@ impl Document {
                     roots.insert((*kind).to_owned(), name.to_owned());
                 }
             }
+        }
+        for (label, extension) in schema_extensions {
+            for root in extension.root_operation_type_definitions() {
+                insert_root_operation(&mut roots, &root, label)?;
+            }
+        }
+        for (label, extension) in type_extensions {
+            apply_extension(&mut types, label, &extension)?;
         }
         let document = Self {
             source: SourceKind::Sdl,
@@ -438,45 +475,398 @@ impl Document {
     }
 }
 
-/// `extend schema` outside strings and comments (graphql-parser 0.4 cannot
-/// parse it); detected so the error is explicit rather than a syntax error.
-fn has_schema_extension(text: &str) -> bool {
-    let mut previous_word: Option<&str> = None;
-    let mut rest = text;
-    while let Some(c) = rest.chars().next() {
-        if let Some(body) = rest.strip_prefix("\"\"\"") {
-            rest = body.find("\"\"\"").map_or("", |i| &body[i + 3..]);
-            previous_word = None;
-        } else if c == '"' {
-            let mut escaped = false;
-            let end = rest[1..].char_indices().find(|&(_, ch)| {
-                let done = ch == '"' && !escaped;
-                escaped = ch == '\\' && !escaped;
-                done
-            });
-            rest = end.map_or("", |(i, _)| &rest[i + 2..]);
-            previous_word = None;
-        } else if c == '#' {
-            rest = rest.find('\n').map_or("", |i| &rest[i..]);
-        } else if c.is_ascii_alphanumeric() || c == '_' {
-            let end = rest
-                .find(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_'))
-                .unwrap_or(rest.len());
-            let word = &rest[..end];
-            if previous_word == Some("extend") && word == "schema" {
-                return true;
+fn line_col(text: &str, offset: usize) -> (usize, usize) {
+    let mut offset = offset.min(text.len());
+    while offset > 0 && !text.is_char_boundary(offset) {
+        offset -= 1;
+    }
+    let prefix = &text[..offset];
+    let line = prefix.bytes().filter(|&b| b == b'\n').count() + 1;
+    let col = prefix
+        .rsplit('\n')
+        .next()
+        .map_or(1, |s| s.chars().count() + 1);
+    (line, col)
+}
+
+fn format_parse_error(text: &str, err: &apollo_parser::Error) -> String {
+    let (line, col) = line_col(text, err.index());
+    format!("line {line}, column {col}: {}", err.message())
+}
+
+fn node_line_col(
+    node: &apollo_parser::SyntaxNode,
+    source: &str,
+    base_offset: usize,
+) -> (usize, usize) {
+    let offset = usize::from(node.text_range().start()).saturating_sub(base_offset);
+    line_col(source, offset)
+}
+
+/// Validate CST nodes for grammar holes where `apollo-parser` 0.8 omits an
+/// error branch (such as missing `:` in `ObjectField`/`Argument`, missing
+/// named type in `RootOperationTypeDefinition`, unclosed `ListValue` at EOF,
+/// braceless `SchemaDefinition`, and empty braces on `SchemaExtension`), and
+/// enforce GraphQL Spec §5.6.3 / §5.4.2 uniqueness on input-object fields and
+/// argument lists.
+fn validate_cst_syntax(
+    root: &apollo_parser::SyntaxNode,
+    source: &str,
+    base_offset: usize,
+    context: &str,
+) -> Result<()> {
+    use apollo_parser::SyntaxKind;
+
+    for node in root.descendants() {
+        match node.kind() {
+            SyntaxKind::OBJECT_FIELD => {
+                if let Some(field) = cst::ObjectField::cast(node)
+                    && (field.name().is_none()
+                        || field.colon_token().is_none()
+                        || field.value().is_none())
+                {
+                    let (line, col) = node_line_col(field.syntax(), source, base_offset);
+                    bail!(
+                        "{context}: line {line}, column {col}: invalid input object field (expected `name: value`)"
+                    );
+                }
             }
-            previous_word = Some(word);
-            rest = &rest[end..];
-        } else {
-            // Whitespace and commas separate tokens; punctuation breaks a pair.
-            if !(c.is_whitespace() || c == ',') {
-                previous_word = None;
+            SyntaxKind::OBJECT_VALUE => {
+                if let Some(obj) = cst::ObjectValue::cast(node) {
+                    if obj.l_curly_token().is_none() || obj.r_curly_token().is_none() {
+                        let (line, col) = node_line_col(obj.syntax(), source, base_offset);
+                        bail!(
+                            "{context}: line {line}, column {col}: unclosed input object literal"
+                        );
+                    }
+                    let mut seen = BTreeSet::new();
+                    for field in obj.object_fields() {
+                        let Some(name) = field.name() else {
+                            let (line, col) = node_line_col(field.syntax(), source, base_offset);
+                            bail!(
+                                "{context}: line {line}, column {col}: invalid input object field (expected `name: value`)"
+                            );
+                        };
+                        if field.colon_token().is_none() || field.value().is_none() {
+                            let (line, col) = node_line_col(field.syntax(), source, base_offset);
+                            bail!(
+                                "{context}: line {line}, column {col}: invalid input object field {:?} (expected `name: value`)",
+                                name.text().as_ref()
+                            );
+                        }
+                        let key = name.text().to_string();
+                        if !seen.insert(key.clone()) {
+                            let (line, col) = node_line_col(field.syntax(), source, base_offset);
+                            bail!(
+                                "{context}: line {line}, column {col}: duplicate field {key:?} in GraphQL input object literal"
+                            );
+                        }
+                    }
+                }
             }
-            rest = &rest[c.len_utf8()..];
+            SyntaxKind::ARGUMENT => {
+                if let Some(arg) = cst::Argument::cast(node)
+                    && (arg.name().is_none()
+                        || arg.colon_token().is_none()
+                        || arg.value().is_none())
+                {
+                    let (line, col) = node_line_col(arg.syntax(), source, base_offset);
+                    bail!(
+                        "{context}: line {line}, column {col}: invalid argument (expected `name: value`)"
+                    );
+                }
+            }
+            SyntaxKind::ARGUMENTS => {
+                if let Some(args) = cst::Arguments::cast(node) {
+                    if args.l_paren_token().is_none()
+                        || args.r_paren_token().is_none()
+                        || args.arguments().next().is_none()
+                    {
+                        let (line, col) = node_line_col(args.syntax(), source, base_offset);
+                        bail!("{context}: line {line}, column {col}: invalid argument list");
+                    }
+                    let mut seen = BTreeSet::new();
+                    for arg in args.arguments() {
+                        let Some(name) = arg.name() else {
+                            let (line, col) = node_line_col(arg.syntax(), source, base_offset);
+                            bail!(
+                                "{context}: line {line}, column {col}: invalid argument (expected `name: value`)"
+                            );
+                        };
+                        if arg.colon_token().is_none() || arg.value().is_none() {
+                            let (line, col) = node_line_col(arg.syntax(), source, base_offset);
+                            bail!(
+                                "{context}: line {line}, column {col}: invalid argument {:?} (expected `name: value`)",
+                                name.text().as_ref()
+                            );
+                        }
+                        let key = name.text().to_string();
+                        if !seen.insert(key.clone()) {
+                            let (line, col) = node_line_col(arg.syntax(), source, base_offset);
+                            bail!(
+                                "{context}: line {line}, column {col}: duplicate argument {key:?}"
+                            );
+                        }
+                    }
+                }
+            }
+            SyntaxKind::LIST_VALUE => {
+                if let Some(list) = cst::ListValue::cast(node)
+                    && (list.l_brack_token().is_none() || list.r_brack_token().is_none())
+                {
+                    let (line, col) = node_line_col(list.syntax(), source, base_offset);
+                    bail!("{context}: line {line}, column {col}: unclosed list literal");
+                }
+            }
+            SyntaxKind::DEFAULT_VALUE => {
+                if let Some(def) = cst::DefaultValue::cast(node)
+                    && (def.eq_token().is_none() || def.value().is_none())
+                {
+                    let (line, col) = node_line_col(def.syntax(), source, base_offset);
+                    bail!("{context}: line {line}, column {col}: missing default value after `=`");
+                }
+            }
+            SyntaxKind::DIRECTIVE => {
+                if let Some(dir) = cst::Directive::cast(node)
+                    && (dir.at_token().is_none() || dir.name().is_none())
+                {
+                    let (line, col) = node_line_col(dir.syntax(), source, base_offset);
+                    bail!("{context}: line {line}, column {col}: invalid directive (missing name)");
+                }
+            }
+            SyntaxKind::DIRECTIVE_DEFINITION => {
+                if let Some(def) = cst::DirectiveDefinition::cast(node)
+                    && (def.at_token().is_none()
+                        || def.name().is_none()
+                        || def.on_token().is_none()
+                        || def
+                            .directive_locations()
+                            .is_none_or(|locs| locs.directive_locations().next().is_none()))
+                {
+                    let (line, col) = node_line_col(def.syntax(), source, base_offset);
+                    bail!("{context}: line {line}, column {col}: invalid directive definition");
+                }
+            }
+            SyntaxKind::SCHEMA_DEFINITION => {
+                if let Some(schema) = cst::SchemaDefinition::cast(node)
+                    && (schema.l_curly_token().is_none()
+                        || schema.r_curly_token().is_none()
+                        || schema.root_operation_type_definitions().next().is_none())
+                {
+                    let (line, col) = node_line_col(schema.syntax(), source, base_offset);
+                    bail!(
+                        "{context}: line {line}, column {col}: expected '{{' with at least one root operation type in schema definition"
+                    );
+                }
+            }
+            SyntaxKind::SCHEMA_EXTENSION => {
+                if let Some(ext) = cst::SchemaExtension::cast(node) {
+                    let has_braces = ext.l_curly_token().is_some();
+                    let has_roots = ext.root_operation_type_definitions().next().is_some();
+                    let has_directives = ext
+                        .directives()
+                        .is_some_and(|d| d.directives().next().is_some());
+                    if has_braces {
+                        if ext.r_curly_token().is_none() || !has_roots {
+                            let (line, col) = node_line_col(ext.syntax(), source, base_offset);
+                            bail!(
+                                "{context}: line {line}, column {col}: expected at least one root operation type inside '{{ ... }}' in schema extension"
+                            );
+                        }
+                    } else if !has_directives {
+                        let (line, col) = node_line_col(ext.syntax(), source, base_offset);
+                        bail!(
+                            "{context}: line {line}, column {col}: expected directives or '{{ ... }}' in schema extension"
+                        );
+                    }
+                }
+            }
+            SyntaxKind::ROOT_OPERATION_TYPE_DEFINITION => {
+                if let Some(root_op) = cst::RootOperationTypeDefinition::cast(node) {
+                    let has_op = root_op.operation_type().is_some_and(|op| {
+                        op.query_token().is_some()
+                            || op.mutation_token().is_some()
+                            || op.subscription_token().is_some()
+                    });
+                    let has_type = root_op.named_type().and_then(|t| t.name()).is_some();
+                    if !has_op || root_op.colon_token().is_none() || !has_type {
+                        let (line, col) = node_line_col(root_op.syntax(), source, base_offset);
+                        bail!(
+                            "{context}: line {line}, column {col}: invalid root operation type definition (expected `query|mutation|subscription: TypeName`)"
+                        );
+                    }
+                }
+            }
+            SyntaxKind::FIELD_DEFINITION => {
+                if let Some(field) = cst::FieldDefinition::cast(node)
+                    && (field.name().is_none()
+                        || field.colon_token().is_none()
+                        || field.ty().is_none())
+                {
+                    let (line, col) = node_line_col(field.syntax(), source, base_offset);
+                    bail!(
+                        "{context}: line {line}, column {col}: invalid field definition (expected `name: Type`)"
+                    );
+                }
+            }
+            SyntaxKind::INPUT_VALUE_DEFINITION => {
+                if let Some(input) = cst::InputValueDefinition::cast(node)
+                    && (input.name().is_none()
+                        || input.colon_token().is_none()
+                        || input.ty().is_none())
+                {
+                    let (line, col) = node_line_col(input.syntax(), source, base_offset);
+                    bail!(
+                        "{context}: line {line}, column {col}: invalid input value definition (expected `name: Type`)"
+                    );
+                }
+            }
+            SyntaxKind::LIST_TYPE => {
+                if let Some(list_ty) = cst::ListType::cast(node)
+                    && (list_ty.l_brack_token().is_none()
+                        || list_ty.ty().is_none()
+                        || list_ty.r_brack_token().is_none())
+                {
+                    let (line, col) = node_line_col(list_ty.syntax(), source, base_offset);
+                    bail!("{context}: line {line}, column {col}: invalid list type");
+                }
+            }
+            SyntaxKind::NON_NULL_TYPE => {
+                if let Some(nn) = cst::NonNullType::cast(node)
+                    && (nn.excl_token().is_none()
+                        || (nn.named_type().is_none() && nn.list_type().is_none()))
+                {
+                    let (line, col) = node_line_col(nn.syntax(), source, base_offset);
+                    bail!("{context}: line {line}, column {col}: invalid non-null type");
+                }
+            }
+            SyntaxKind::NAMED_TYPE => {
+                if let Some(nt) = cst::NamedType::cast(node)
+                    && nt.name().is_none()
+                {
+                    let (line, col) = node_line_col(nt.syntax(), source, base_offset);
+                    bail!("{context}: line {line}, column {col}: missing type name");
+                }
+            }
+            SyntaxKind::IMPLEMENTS_INTERFACES => {
+                if let Some(imp) = cst::ImplementsInterfaces::cast(node)
+                    && (imp.implements_token().is_none() || imp.named_types().next().is_none())
+                {
+                    let (line, col) = node_line_col(imp.syntax(), source, base_offset);
+                    bail!(
+                        "{context}: line {line}, column {col}: expected at least one interface name after `implements`"
+                    );
+                }
+            }
+            SyntaxKind::UNION_MEMBER_TYPES => {
+                if let Some(members) = cst::UnionMemberTypes::cast(node)
+                    && (members.eq_token().is_none() || members.named_types().next().is_none())
+                {
+                    let (line, col) = node_line_col(members.syntax(), source, base_offset);
+                    bail!(
+                        "{context}: line {line}, column {col}: expected at least one union member type after `=`"
+                    );
+                }
+            }
+            SyntaxKind::ENUM_VALUE_DEFINITION => {
+                if let Some(ev) = cst::EnumValueDefinition::cast(node)
+                    && ev.enum_value().and_then(|v| v.name()).is_none()
+                {
+                    let (line, col) = node_line_col(ev.syntax(), source, base_offset);
+                    bail!("{context}: line {line}, column {col}: missing enum value name");
+                }
+            }
+            SyntaxKind::ARGUMENTS_DEFINITION => {
+                if let Some(args) = cst::ArgumentsDefinition::cast(node)
+                    && (args.l_paren_token().is_none()
+                        || args.r_paren_token().is_none()
+                        || args.input_value_definitions().next().is_none())
+                {
+                    let (line, col) = node_line_col(args.syntax(), source, base_offset);
+                    bail!("{context}: line {line}, column {col}: invalid arguments definition");
+                }
+            }
+            SyntaxKind::FIELDS_DEFINITION => {
+                if let Some(fields) = cst::FieldsDefinition::cast(node)
+                    && (fields.l_curly_token().is_none()
+                        || fields.r_curly_token().is_none()
+                        || fields.field_definitions().next().is_none())
+                {
+                    let (line, col) = node_line_col(fields.syntax(), source, base_offset);
+                    bail!("{context}: line {line}, column {col}: invalid fields definition");
+                }
+            }
+            SyntaxKind::INPUT_FIELDS_DEFINITION => {
+                if let Some(fields) = cst::InputFieldsDefinition::cast(node)
+                    && (fields.l_curly_token().is_none()
+                        || fields.r_curly_token().is_none()
+                        || fields.input_value_definitions().next().is_none())
+                {
+                    let (line, col) = node_line_col(fields.syntax(), source, base_offset);
+                    bail!("{context}: line {line}, column {col}: invalid input fields definition");
+                }
+            }
+            SyntaxKind::ENUM_VALUES_DEFINITION => {
+                if let Some(vals) = cst::EnumValuesDefinition::cast(node)
+                    && (vals.l_curly_token().is_none()
+                        || vals.r_curly_token().is_none()
+                        || vals.enum_value_definitions().next().is_none())
+                {
+                    let (line, col) = node_line_col(vals.syntax(), source, base_offset);
+                    bail!("{context}: line {line}, column {col}: invalid enum values definition");
+                }
+            }
+            _ => {}
         }
     }
-    false
+    Ok(())
+}
+
+fn parse_sdl_document(label: &str, text: &str) -> Result<cst::Document> {
+    let tree = Parser::new(text).parse();
+    if let Some(err) = tree.errors().next() {
+        bail!(
+            "Invalid GraphQL SDL in {label}: {}",
+            format_parse_error(text, err)
+        );
+    }
+    let doc = tree.document();
+    validate_cst_syntax(
+        doc.syntax(),
+        text,
+        0,
+        &format!("Invalid GraphQL SDL in {label}"),
+    )?;
+    Ok(doc)
+}
+
+fn insert_root_operation(
+    roots: &mut BTreeMap<String, String>,
+    root: &cst::RootOperationTypeDefinition,
+    label: &str,
+) -> Result<()> {
+    let op = root
+        .operation_type()
+        .context("Missing GraphQL root operation type")?;
+    let kind = if op.query_token().is_some() {
+        "query"
+    } else if op.mutation_token().is_some() {
+        "mutation"
+    } else if op.subscription_token().is_some() {
+        "subscription"
+    } else {
+        bail!("Invalid GraphQL root operation type in {label}");
+    };
+    let name = root
+        .named_type()
+        .and_then(|t| t.name())
+        .map(|n| n.text().to_string())
+        .with_context(|| format!("Missing GraphQL root type name for {kind} in {label}"))?;
+    if roots.contains_key(kind) {
+        bail!("Duplicate GraphQL {kind} root operation in {label}");
+    }
+    roots.insert(kind.to_owned(), name);
+    Ok(())
 }
 
 fn is_builtin(name: &str) -> bool {
@@ -634,70 +1024,184 @@ fn introspection_input(v: &Value) -> Result<InputValueDef> {
 /// Canonical printed form of a GraphQL literal (object keys sorted), so SDL
 /// and introspection defaults compare equal.
 pub fn canonical_literal(literal: &str) -> Result<String> {
-    let source = format!("query($v: V = {literal}) {{ v }}");
-    let document = graphql_parser::parse_query::<String>(&source)
-        .map_err(|e| anyhow::anyhow!("Invalid GraphQL default value {literal:?}: {e}"))?;
-    let Some(graphql_parser::query::Definition::Operation(
-        graphql_parser::query::OperationDefinition::Query(q),
-    )) = document.definitions.first()
-    else {
+    let prefix = "query($v: V = ";
+    let source = format!("{prefix}{literal}\n) {{ v }}");
+    let tree = Parser::new(&source).parse();
+    if let Some(err) = tree.errors().next() {
+        bail!(
+            "Invalid GraphQL default value {literal:?}: {}",
+            err.message()
+        );
+    }
+    let document = tree.document();
+    let mut defs = document.definitions();
+    let Some(cst::Definition::OperationDefinition(op)) = defs.next() else {
         bail!("Invalid GraphQL default value {literal:?}");
     };
-    q.variable_definitions
-        .first()
-        .and_then(|v| v.default_value.as_ref())
-        .map(print_value)
-        .with_context(|| format!("Invalid GraphQL default value {literal:?}"))
+    if defs.next().is_some() {
+        bail!("Invalid GraphQL default value {literal:?}");
+    }
+    let var_defs = op
+        .variable_definitions()
+        .with_context(|| format!("Invalid GraphQL default value {literal:?}"))?;
+    let r_paren = var_defs
+        .r_paren_token()
+        .with_context(|| format!("Invalid GraphQL default value {literal:?}"))?;
+    if usize::from(r_paren.text_range().start()) < prefix.len() + literal.len() {
+        bail!("Invalid GraphQL default value {literal:?}");
+    }
+    let mut vars = var_defs.variable_definitions();
+    let var = vars
+        .next()
+        .with_context(|| format!("Invalid GraphQL default value {literal:?}"))?;
+    if vars.next().is_some() || var.directives().is_some() {
+        bail!("Invalid GraphQL default value {literal:?}");
+    }
+    let value = var
+        .default_value()
+        .and_then(|d| d.value())
+        .with_context(|| format!("Invalid GraphQL default value {literal:?}"))?;
+    validate_cst_syntax(
+        value.syntax(),
+        literal,
+        prefix.len(),
+        &format!("Invalid GraphQL default value {literal:?}"),
+    )?;
+    print_value(&value)
 }
 
-fn print_value(v: &graphql_parser::query::Value<'_, String>) -> String {
-    use graphql_parser::query::Value as V;
-    match v {
-        V::Variable(n) => format!("${n}"),
-        // graphql-parser stores integers as i64, so `as_i64` always succeeds.
-        V::Int(n) => n.as_i64().map(|n| n.to_string()).unwrap_or_default(),
-        V::Float(f) => {
-            let mut s = f.to_string();
+fn print_value(v: &cst::Value) -> Result<String> {
+    Ok(match v {
+        cst::Value::Variable(n) => {
+            let name = n
+                .name()
+                .context("Invalid GraphQL variable literal: missing name")?;
+            format!("${}", name.text())
+        }
+        cst::Value::IntValue(n) => {
+            let token = n
+                .int_token()
+                .map(|t| t.text().to_owned())
+                .unwrap_or_else(|| n.syntax().text().to_string().trim().to_owned());
+            token.parse::<i64>().map_or(token, |i| i.to_string())
+        }
+        cst::Value::FloatValue(f) => {
+            let mut s = f64::try_from(f).map(|n| n.to_string()).unwrap_or_else(|_| {
+                f.float_token()
+                    .map(|t| t.text().to_owned())
+                    .unwrap_or_else(|| f.syntax().text().to_string().trim().to_owned())
+            });
             if !s.contains(['.', 'e', 'E', 'N', 'i']) {
                 s.push_str(".0");
             }
             s
         }
-        V::String(s) => serde_json::to_string(s).unwrap_or_default(),
-        V::Boolean(b) => b.to_string(),
-        V::Null => "null".into(),
-        V::Enum(e) => e.clone(),
-        V::List(items) => format!(
-            "[{}]",
-            items.iter().map(print_value).collect::<Vec<_>>().join(", ")
-        ),
-        V::Object(map) => format!(
-            "{{{}}}",
-            map.iter()
-                .map(|(k, v)| format!("{k}: {}", print_value(v)))
-                .collect::<Vec<_>>()
-                .join(", ")
-        ),
+        cst::Value::StringValue(s) => serde_json::to_string(&String::from(s)).unwrap_or_default(),
+        cst::Value::BooleanValue(b) => bool::try_from(b)
+            .map(|v| v.to_string())
+            .unwrap_or_else(|_| b.syntax().text().to_string().trim().to_owned()),
+        cst::Value::NullValue(_) => "null".into(),
+        cst::Value::EnumValue(e) => e
+            .name()
+            .context("Invalid GraphQL enum literal: missing name")?
+            .text()
+            .to_string(),
+        cst::Value::ListValue(list) => {
+            if list.l_brack_token().is_none() || list.r_brack_token().is_none() {
+                bail!("Invalid GraphQL list literal: missing bracket");
+            }
+            let items = list
+                .values()
+                .map(|item| print_value(&item))
+                .collect::<Result<Vec<_>>>()?;
+            format!("[{}]", items.join(", "))
+        }
+        cst::Value::ObjectValue(obj) => {
+            if obj.l_curly_token().is_none() || obj.r_curly_token().is_none() {
+                bail!("Invalid GraphQL input object literal: missing brace");
+            }
+            let mut sorted = BTreeMap::new();
+            for field in obj.object_fields() {
+                let key = field
+                    .name()
+                    .context("Invalid GraphQL input object field: missing field name")?
+                    .text()
+                    .to_string();
+                if field.colon_token().is_none() {
+                    bail!("Invalid GraphQL input object field {key:?}: missing ':'");
+                }
+                let value = field.value().with_context(|| {
+                    format!("Invalid GraphQL input object field {key:?}: missing value")
+                })?;
+                let val = print_value(&value)?;
+                if sorted.insert(key.clone(), val).is_some() {
+                    bail!("Duplicate field {key:?} in GraphQL input object literal");
+                }
+            }
+            format!(
+                "{{{}}}",
+                sorted
+                    .iter()
+                    .map(|(k, v)| format!("{k}: {v}"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        }
+    })
+}
+
+fn name_text(name: Option<cst::Name>, context: &str) -> Result<String> {
+    name.map(|n| n.text().to_string())
+        .with_context(|| format!("Missing GraphQL {context} name"))
+}
+
+fn sdl_description(description: Option<cst::Description>) -> Option<String> {
+    description
+        .and_then(|d| d.string_value())
+        .map(|s| String::from(&s))
+}
+
+fn sdl_typeref(t: &cst::Type) -> Result<TypeRef> {
+    match t {
+        cst::Type::NamedType(n) => Ok(TypeRef::Named(name_text(n.name(), "named type")?)),
+        cst::Type::ListType(l) => Ok(TypeRef::List(Box::new(sdl_typeref(
+            &l.ty().context("Missing GraphQL list item type")?,
+        )?))),
+        cst::Type::NonNullType(nn) => {
+            if let Some(named) = nn.named_type() {
+                Ok(TypeRef::NonNull(Box::new(TypeRef::Named(name_text(
+                    named.name(),
+                    "non-null named type",
+                )?))))
+            } else if let Some(list) = nn.list_type() {
+                Ok(TypeRef::NonNull(Box::new(TypeRef::List(Box::new(
+                    sdl_typeref(&list.ty().context("Missing GraphQL list item type")?)?,
+                )))))
+            } else {
+                bail!("Invalid GraphQL non-null type")
+            }
+        }
     }
 }
 
-fn sdl_typeref(t: &ast::Type<'_, String>) -> TypeRef {
-    match t {
-        ast::Type::NamedType(n) => TypeRef::Named(n.clone()),
-        ast::Type::ListType(t) => TypeRef::List(Box::new(sdl_typeref(t))),
-        ast::Type::NonNullType(t) => TypeRef::NonNull(Box::new(sdl_typeref(t))),
-    }
-}
-fn sdl_deprecation(directives: &[ast::Directive<'_, String>]) -> Deprecation {
-    let Some(d) = directives.iter().find(|d| d.name == "deprecated") else {
+fn sdl_deprecation(directives: Option<cst::Directives>) -> Deprecation {
+    let Some(directives) = directives else {
+        return Deprecation::default();
+    };
+    let Some(d) = directives
+        .directives()
+        .find(|d| d.name().is_some_and(|n| n.text().as_ref() == "deprecated"))
+    else {
         return Deprecation::default();
     };
     let reason = d
-        .arguments
-        .iter()
-        .find(|(name, _)| name == "reason")
-        .and_then(|(_, v)| match v {
-            ast::Value::String(s) => Some(s.clone()),
+        .arguments()
+        .and_then(|args| {
+            args.arguments()
+                .find(|a| a.name().is_some_and(|n| n.text().as_ref() == "reason"))
+        })
+        .and_then(|arg| match arg.value()? {
+            cst::Value::StringValue(s) => Some(String::from(&s)),
             _ => None,
         })
         .unwrap_or_else(|| DEFAULT_DEPRECATION_REASON.into());
@@ -706,63 +1210,145 @@ fn sdl_deprecation(directives: &[ast::Directive<'_, String>]) -> Deprecation {
         reason: Some(reason),
     }
 }
-fn sdl_input(v: &ast::InputValue<'_, String>) -> InputValueDef {
-    InputValueDef {
-        name: v.name.clone(),
-        description: v.description.clone(),
-        ty: sdl_typeref(&v.value_type),
-        default: v.default_value.as_ref().map(print_value),
-        deprecation: sdl_deprecation(&v.directives),
-    }
+
+fn sdl_interfaces(implements: Option<cst::ImplementsInterfaces>) -> Vec<String> {
+    implements
+        .into_iter()
+        .flat_map(|i| i.named_types())
+        .filter_map(|nt| nt.name().map(|n| n.text().to_string()))
+        .collect()
 }
-fn sdl_field(f: &ast::Field<'_, String>) -> FieldDef {
-    FieldDef {
-        name: f.name.clone(),
-        description: f.description.clone(),
-        args: f.arguments.iter().map(sdl_input).collect(),
-        ty: sdl_typeref(&f.field_type),
-        deprecation: sdl_deprecation(&f.directives),
-    }
+
+fn sdl_union_members(members: Option<cst::UnionMemberTypes>) -> Vec<String> {
+    members
+        .into_iter()
+        .flat_map(|m| m.named_types())
+        .filter_map(|nt| nt.name().map(|n| n.text().to_string()))
+        .collect()
 }
-fn sdl_value(v: &ast::EnumValue<'_, String>) -> EnumValueDef {
-    EnumValueDef {
-        name: v.name.clone(),
-        description: v.description.clone(),
-        deprecation: sdl_deprecation(&v.directives),
-    }
+
+fn sdl_input(v: &cst::InputValueDefinition) -> Result<InputValueDef> {
+    let default = match v.default_value() {
+        Some(def) => {
+            let val = def.value().context("Missing GraphQL input default value")?;
+            Some(print_value(&val)?)
+        }
+        None => None,
+    };
+    Ok(InputValueDef {
+        name: name_text(v.name(), "input value")?,
+        description: sdl_description(v.description()),
+        ty: sdl_typeref(&v.ty().context("Missing GraphQL input value type")?)?,
+        default,
+        deprecation: sdl_deprecation(v.directives()),
+    })
 }
-fn sdl_type(t: &ast::TypeDefinition<'_, String>) -> TypeDef {
+
+fn sdl_field(f: &cst::FieldDefinition) -> Result<FieldDef> {
+    let args = f
+        .arguments_definition()
+        .into_iter()
+        .flat_map(|a| a.input_value_definitions())
+        .map(|v| sdl_input(&v))
+        .collect::<Result<Vec<_>>>()?;
+    Ok(FieldDef {
+        name: name_text(f.name(), "field")?,
+        description: sdl_description(f.description()),
+        args,
+        ty: sdl_typeref(&f.ty().context("Missing GraphQL field type")?)?,
+        deprecation: sdl_deprecation(f.directives()),
+    })
+}
+
+fn sdl_value(v: &cst::EnumValueDefinition) -> Result<EnumValueDef> {
+    let name = v
+        .enum_value()
+        .and_then(|ev| ev.name())
+        .map(|n| n.text().to_string())
+        .context("Missing GraphQL enum value name")?;
+    Ok(EnumValueDef {
+        name,
+        description: sdl_description(v.description()),
+        deprecation: sdl_deprecation(v.directives()),
+    })
+}
+
+fn sdl_fields(defs: Option<cst::FieldsDefinition>) -> Result<Vec<FieldDef>> {
+    defs.into_iter()
+        .flat_map(|f| f.field_definitions())
+        .map(|f| sdl_field(&f))
+        .collect()
+}
+
+fn sdl_input_fields(defs: Option<cst::InputFieldsDefinition>) -> Result<Vec<InputValueDef>> {
+    defs.into_iter()
+        .flat_map(|f| f.input_value_definitions())
+        .map(|v| sdl_input(&v))
+        .collect()
+}
+
+fn sdl_enum_values(defs: Option<cst::EnumValuesDefinition>) -> Result<Vec<EnumValueDef>> {
+    defs.into_iter()
+        .flat_map(|e| e.enum_value_definitions())
+        .map(|v| sdl_value(&v))
+        .collect()
+}
+
+fn sdl_type(t: &cst::Definition) -> Result<TypeDef> {
     match t {
-        ast::TypeDefinition::Scalar(s) => {
-            TypeDef::new(&s.name, TypeKind::Scalar, s.description.clone())
+        cst::Definition::ScalarTypeDefinition(s) => Ok(TypeDef::new(
+            &name_text(s.name(), "scalar")?,
+            TypeKind::Scalar,
+            sdl_description(s.description()),
+        )),
+        cst::Definition::ObjectTypeDefinition(o) => {
+            let mut d = TypeDef::new(
+                &name_text(o.name(), "object")?,
+                TypeKind::Object,
+                sdl_description(o.description()),
+            );
+            d.fields = sdl_fields(o.fields_definition())?;
+            d.interfaces = sdl_interfaces(o.implements_interfaces());
+            Ok(d)
         }
-        ast::TypeDefinition::Object(o) => {
-            let mut d = TypeDef::new(&o.name, TypeKind::Object, o.description.clone());
-            d.fields = o.fields.iter().map(sdl_field).collect();
-            d.interfaces = o.implements_interfaces.clone();
-            d
+        cst::Definition::InterfaceTypeDefinition(o) => {
+            let mut d = TypeDef::new(
+                &name_text(o.name(), "interface")?,
+                TypeKind::Interface,
+                sdl_description(o.description()),
+            );
+            d.fields = sdl_fields(o.fields_definition())?;
+            d.interfaces = sdl_interfaces(o.implements_interfaces());
+            Ok(d)
         }
-        ast::TypeDefinition::Interface(o) => {
-            let mut d = TypeDef::new(&o.name, TypeKind::Interface, o.description.clone());
-            d.fields = o.fields.iter().map(sdl_field).collect();
-            d.interfaces = o.implements_interfaces.clone();
-            d
+        cst::Definition::UnionTypeDefinition(u) => {
+            let mut d = TypeDef::new(
+                &name_text(u.name(), "union")?,
+                TypeKind::Union,
+                sdl_description(u.description()),
+            );
+            d.members = sdl_union_members(u.union_member_types());
+            Ok(d)
         }
-        ast::TypeDefinition::Union(u) => {
-            let mut d = TypeDef::new(&u.name, TypeKind::Union, u.description.clone());
-            d.members = u.types.clone();
-            d
+        cst::Definition::EnumTypeDefinition(e) => {
+            let mut d = TypeDef::new(
+                &name_text(e.name(), "enum")?,
+                TypeKind::Enum,
+                sdl_description(e.description()),
+            );
+            d.values = sdl_enum_values(e.enum_values_definition())?;
+            Ok(d)
         }
-        ast::TypeDefinition::Enum(e) => {
-            let mut d = TypeDef::new(&e.name, TypeKind::Enum, e.description.clone());
-            d.values = e.values.iter().map(sdl_value).collect();
-            d
+        cst::Definition::InputObjectTypeDefinition(i) => {
+            let mut d = TypeDef::new(
+                &name_text(i.name(), "input object")?,
+                TypeKind::InputObject,
+                sdl_description(i.description()),
+            );
+            d.input_fields = sdl_input_fields(i.input_fields_definition())?;
+            Ok(d)
         }
-        ast::TypeDefinition::InputObject(i) => {
-            let mut d = TypeDef::new(&i.name, TypeKind::InputObject, i.description.clone());
-            d.input_fields = i.fields.iter().map(sdl_input).collect();
-            d
-        }
+        _ => bail!("Unexpected GraphQL definition"),
     }
 }
 
@@ -788,18 +1374,25 @@ fn extend<T>(
 fn apply_extension(
     types: &mut BTreeMap<String, (TypeDef, String)>,
     label: &str,
-    extension: &ast::TypeExtension<'_, String>,
+    extension: &cst::Definition,
 ) -> Result<()> {
-    use ast::TypeExtension as X;
+    use cst::Definition as X;
     let (name, kind) = match extension {
-        X::Scalar(e) => (&e.name, TypeKind::Scalar),
-        X::Object(e) => (&e.name, TypeKind::Object),
-        X::Interface(e) => (&e.name, TypeKind::Interface),
-        X::Union(e) => (&e.name, TypeKind::Union),
-        X::Enum(e) => (&e.name, TypeKind::Enum),
-        X::InputObject(e) => (&e.name, TypeKind::InputObject),
+        X::ScalarTypeExtension(e) => (name_text(e.name(), "scalar extension")?, TypeKind::Scalar),
+        X::ObjectTypeExtension(e) => (name_text(e.name(), "object extension")?, TypeKind::Object),
+        X::InterfaceTypeExtension(e) => (
+            name_text(e.name(), "interface extension")?,
+            TypeKind::Interface,
+        ),
+        X::UnionTypeExtension(e) => (name_text(e.name(), "union extension")?, TypeKind::Union),
+        X::EnumTypeExtension(e) => (name_text(e.name(), "enum extension")?, TypeKind::Enum),
+        X::InputObjectTypeExtension(e) => (
+            name_text(e.name(), "input object extension")?,
+            TypeKind::InputObject,
+        ),
+        _ => bail!("Unexpected GraphQL extension in {label}"),
     };
-    let Some((def, _)) = types.get_mut(name) else {
+    let Some((def, _)) = types.get_mut(&name) else {
         bail!("GraphQL extension in {label} extends undefined type {name}");
     };
     anyhow::ensure!(
@@ -821,73 +1414,74 @@ fn apply_extension(
         s
     }
     match extension {
-        X::Scalar(_) => {}
-        X::Object(e) => {
+        X::ScalarTypeExtension(_) => {}
+        X::ObjectTypeExtension(e) => {
             extend(
                 &mut def.fields,
-                e.fields.iter().map(sdl_field),
+                sdl_fields(e.fields_definition())?,
                 field_name,
                 "field",
-                name,
+                &name,
                 label,
             )?;
             extend(
                 &mut def.interfaces,
-                e.implements_interfaces.iter().cloned(),
+                sdl_interfaces(e.implements_interfaces()),
                 string,
                 "interface",
-                name,
+                &name,
                 label,
             )?;
         }
-        X::Interface(e) => {
+        X::InterfaceTypeExtension(e) => {
             extend(
                 &mut def.fields,
-                e.fields.iter().map(sdl_field),
+                sdl_fields(e.fields_definition())?,
                 field_name,
                 "field",
-                name,
+                &name,
                 label,
             )?;
             extend(
                 &mut def.interfaces,
-                e.implements_interfaces.iter().cloned(),
+                sdl_interfaces(e.implements_interfaces()),
                 string,
                 "interface",
-                name,
+                &name,
                 label,
             )?;
         }
-        X::Union(e) => {
+        X::UnionTypeExtension(e) => {
             extend(
                 &mut def.members,
-                e.types.iter().cloned(),
+                sdl_union_members(e.union_member_types()),
                 string,
                 "union member",
-                name,
+                &name,
                 label,
             )?;
         }
-        X::Enum(e) => {
+        X::EnumTypeExtension(e) => {
             extend(
                 &mut def.values,
-                e.values.iter().map(sdl_value),
+                sdl_enum_values(e.enum_values_definition())?,
                 value_name,
                 "enum value",
-                name,
+                &name,
                 label,
             )?;
         }
-        X::InputObject(e) => {
+        X::InputObjectTypeExtension(e) => {
             extend(
                 &mut def.input_fields,
-                e.fields.iter().map(sdl_input),
+                sdl_input_fields(e.input_fields_definition())?,
                 input_name,
                 "input field",
-                name,
+                &name,
                 label,
             )?;
         }
+        _ => {}
     }
     Ok(())
 }

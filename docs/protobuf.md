@@ -1,10 +1,11 @@
 # Protocol Buffers and gRPC contracts
 
 Vimanam accepts proto2/proto3 `.proto` source and binary `FileDescriptorSet`
-inputs (`.pb`, `.bin`, `.binpb`, `.fds`, `.desc`, `.descriptor`, `.protoset`). Compiling source requires the
-**official `protoc` compiler on PATH**; Vimanam invokes it without code generation,
-with `--include_imports` and `--include_source_info`. Descriptor inputs work
-without protoc or buf. Build complete descriptors using:
+inputs (`.pb`, `.bin`, `.binpb`, `.fds`, `.desc`, `.descriptor`, `.protoset`).
+Both `.proto` source compilation (via `protox`, including Google well-known
+imports and `source_code_info`) and descriptor decoding run in pure Rust with
+no external `protoc` or `buf` binary required. Prebuilt descriptors are also
+supported; build complete descriptors using:
 
 ```sh
 protoc -I proto --include_imports --descriptor_set_out=api.pb proto/api.proto
@@ -30,18 +31,23 @@ vimanam diff --from-ref v1 --to-ref v2 --spec proto/api.proto -I proto --breakin
 
 Operation IDs are fully qualified RPC names. Markdown uses native `RPC`, input
 message and `result` labels; messages show field numbers, JSON names, oneofs,
-requiredness and presence. Enum descriptions retain value numbers. The existing
+requiredness and presence. Enum descriptions retain value numbers. When
+`source_code_info` is present (always included for `.proto` inputs, and for
+descriptors built with `--include_source_info`), leading and trailing `.proto`
+comments are surfaced on services, RPCs, messages, fields, enums and enum
+values without altering neutral entity IDs or diff facts. The existing
 selection, schema-depth, budget and protected split/Skill-tree machinery applies.
 Use `--operation-id example.v1.Service.List` as an alternative to `--operation`.
 Schemas use their fully qualified names, including nested types.
 
 Git source comparisons require an explicit `--spec` (or paired `--from-spec` and
 `--to-spec`) because existing OpenAPI automatic candidate discovery is unchanged.
-All tracked regular `.proto` files are materialized from the exact selected
-commit into a temporary snapshot. Include roots are repository-relative and
-cannot escape it; symlink proto entries are rejected. Imports cannot read newer
-worktree files. Standard compiler-provided imports remain available. Descriptor
-sets at Git refs are decoded directly. Missing imports fail before output creation.
+Committed `.proto` entries at the exact selected commit are validated and
+resolved directly from Git blobs in memory. Include roots are
+repository-relative and cannot escape it; symlink proto entries are rejected.
+Imports cannot read newer worktree files. Standard Google well-known imports
+remain available. Descriptor sets at Git refs are decoded directly. Missing
+imports fail before output creation.
 
 ## Identity and compatibility
 

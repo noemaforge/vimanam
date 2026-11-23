@@ -928,19 +928,87 @@ fn focused_context_reports_budget_overage() {
 }
 
 #[test]
-fn extend_schema_is_rejected_explicitly() {
-    let err = Document::from_sdl(&[(
+fn extend_schema_merges_roots_and_rejects_duplicates() {
+    // Implicit Query root + `extend schema` adding a mutation root.
+    let doc = Document::from_sdl(&[(
         "a.graphql".into(),
         "type Query { a: Int } type M { b: Int }\nextend schema { mutation: M }".into(),
     )])
+    .unwrap();
+    assert_eq!(doc.roots.get("query").map(String::as_str), Some("Query"));
+    assert_eq!(doc.roots.get("mutation").map(String::as_str), Some("M"));
+
+    // Explicit schema definition + multi-file `extend schema`.
+    let multi = Document::from_sdl(&[
+        (
+            "schema.graphql".into(),
+            "\"Schema description\" schema { query: Root } type Root { ping: String }".into(),
+        ),
+        (
+            "sub.graphql".into(),
+            "extend schema { subscription: Events } type Events { tick: Int }".into(),
+        ),
+    ])
+    .unwrap();
+    assert_eq!(multi.roots.get("query").map(String::as_str), Some("Root"));
+    assert_eq!(
+        multi.roots.get("subscription").map(String::as_str),
+        Some("Events")
+    );
+    assert!(!multi.roots.contains_key("mutation"));
+
+    // Duplicate root operation kind from `extend schema` is rejected.
+    let err = Document::from_sdl(&[
+        (
+            "a.graphql".into(),
+            "schema { query: Root } type Root { a: Int } type Other { b: Int }".into(),
+        ),
+        ("b.graphql".into(), "extend schema { query: Other }".into()),
+    ])
     .unwrap_err()
     .to_string();
     assert!(
-        err.contains("Unsupported `extend schema` in a.graphql"),
+        err.contains("Duplicate GraphQL query root operation in b.graphql"),
         "{err}"
     );
-    // The words inside descriptions, strings and comments are not schema extensions.
-    sdl(r#""extend schema" type Query { a(x: String = "extend schema"): Int } # extend schema"#);
+
+    // `extend schema` cannot override or duplicate an implicit Query root.
+    for (label, text) in [
+        (
+            "override.graphql",
+            "type Query { a: Int } type Other { b: Int } extend schema { query: Other }",
+        ),
+        (
+            "same.graphql",
+            "type Query { a: Int } extend schema { query: Query }",
+        ),
+    ] {
+        let err = Document::from_sdl(&[(label.into(), text.into())])
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains(&format!(
+                "Duplicate GraphQL query root operation in {label}"
+            )),
+            "{err}"
+        );
+    }
+
+    // Executable operations are rejected in SDL inputs.
+    let exec_err = Document::from_sdl(&[("q.graphql".into(), "query { viewer { id } }".into())])
+        .unwrap_err()
+        .to_string();
+    assert!(exec_err.contains("executable definitions"), "{exec_err}");
+
+    // Modern GraphQL SDL: repeatable directives and @oneOf parse cleanly.
+    let modern = sdl(r#"
+directive @tag(name: String!) repeatable on FIELD_DEFINITION
+input Lookup @oneOf { id: ID, slug: String }
+"extend schema" type Query {
+  a(x: String = "extend schema", by: Lookup): Int @tag(name: "v1") @tag(name: "public")
+}
+"#);
+    assert!(modern.types.contains_key("Lookup"));
 }
 
 #[test]
@@ -1047,5 +1115,146 @@ fn symlinked_sdl_is_followed_once_and_loops_terminate() {
             .unwrap_err()
             .to_string()
             .contains("dangling.graphql")
+    );
+}
+
+#[test]
+fn braceless_or_empty_schema_definitions_are_rejected() {
+    for (label, text) in [
+        ("braceless.graphql", "schema\ntype Query { a: Int }"),
+        (
+            "directive_only.graphql",
+            "schema @dir\ntype Query { a: Int }",
+        ),
+        ("empty.graphql", "schema {}\ntype Query { a: Int }"),
+        ("empty_ext.graphql", "type Query { a: Int }\nextend schema"),
+        (
+            "empty_ext_braces.graphql",
+            "type Query { a: Int }\nextend schema {}",
+        ),
+        (
+            "empty_ext_dir_braces.graphql",
+            "type Query { a: Int }\nextend schema @dir {}",
+        ),
+    ] {
+        let err = Document::from_sdl(&[(label.into(), text.into())])
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains(label), "{label}: {err}");
+    }
+
+    // Directive-only `extend schema @dir` is valid per spec and keeps implicit Query.
+    let doc = Document::from_sdl(&[(
+        "dir_ext.graphql".into(),
+        "directive @dir on SCHEMA\ntype Query { a: Int }\nextend schema @dir".into(),
+    )])
+    .unwrap();
+    assert_eq!(doc.roots.get("query").map(String::as_str), Some("Query"));
+}
+
+#[test]
+fn canonical_literal_rejects_injections_and_allows_trailing_comments() {
+    for invalid in ["42 @deprecated", "42) { x } #", "42) { x }", "42, $x: Int"] {
+        assert!(
+            graphql::canonical_literal(invalid).is_err(),
+            "expected error for {invalid:?}"
+        );
+    }
+    assert_eq!(graphql::canonical_literal("42 # comment").unwrap(), "42");
+    assert_eq!(
+        graphql::canonical_literal("{ b: 2, a: 1 } # trailing").unwrap(),
+        "{a: 1, b: 2}"
+    );
+}
+
+#[test]
+fn canonical_literal_rejects_malformed_and_duplicate_object_fields() {
+    for invalid in [
+        "{ a }",
+        "{ a b }",
+        "{ broken, b: 1 }",
+        "{ a: 1, b }",
+        "[{ a }]",
+        "{ a: 1, a: 2 }",
+        "{ a: [{ b: 1, b: 2 }] }",
+    ] {
+        assert!(
+            graphql::canonical_literal(invalid).is_err(),
+            "expected error for {invalid:?}"
+        );
+    }
+    assert_eq!(
+        graphql::canonical_literal("{ a: { a: 1 } }").unwrap(),
+        "{a: {a: 1}}"
+    );
+    assert_eq!(graphql::canonical_literal("{}").unwrap(), "{}");
+    assert_eq!(graphql::canonical_literal("[]").unwrap(), "[]");
+}
+
+#[test]
+fn sdl_rejects_malformed_arguments_object_fields_duplicates_and_incomplete_roots() {
+    for (label, text, expected_line) in [
+        (
+            "broken_default_obj.graphql",
+            "input In { broken: Int ok: Int }\ntype Query { f(x: In = { broken, ok: 1 }): Int }",
+            "line 2",
+        ),
+        (
+            "missing_colon_deprecated.graphql",
+            "type Query {\n  f: Int @deprecated(reason)\n}",
+            "line 2",
+        ),
+        (
+            "missing_colon_directive_arg.graphql",
+            "type Query @foo(bar) { f: Int }",
+            "line 1",
+        ),
+        (
+            "duplicate_default_obj_key.graphql",
+            "input In { a: Int }\ntype Query { f(x: In = { a: 1, a: 2 }): Int }",
+            "line 2",
+        ),
+        (
+            "duplicate_directive_obj_key.graphql",
+            "type Query {\n  f: Int @foo(arg: { a: 1, a: 2 })\n}",
+            "line 2",
+        ),
+        (
+            "duplicate_directive_arg.graphql",
+            "type Query { f: Int @foo(a: 1, a: 2) }",
+            "line 1",
+        ),
+        (
+            "missing_root_type.graphql",
+            "schema {\n  query:\n}\ntype Query { f: Int }",
+            "line 2",
+        ),
+        (
+            "missing_ext_root_type.graphql",
+            "type Query { f: Int }\nextend schema { mutation: }",
+            "line 2",
+        ),
+        (
+            "directive_def_broken_default.graphql",
+            "input In { broken: Int ok: Int }\ndirective @foo(x: In = { broken, ok: 1 }) on FIELD_DEFINITION\ntype Query { f: Int }",
+            "line 2",
+        ),
+    ] {
+        let err = Document::from_sdl(&[(label.into(), text.into())])
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains(label) && err.contains(expected_line),
+            "{label}: {err}"
+        );
+    }
+
+    // Valid nested input objects reusing the same key name at different levels remain accepted.
+    let ok = sdl(
+        "input Inner { a: Int }\ninput Outer { a: Inner }\ntype Query { f(x: Outer = { a: { a: 1 } }): Int }",
+    );
+    assert_eq!(
+        ok.types["Query"].fields[0].args[0].default.as_deref(),
+        Some("{a: {a: 1}}")
     );
 }

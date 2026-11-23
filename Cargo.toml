@@ -32,13 +32,22 @@ required-features = ["cli"]
 
 [features]
 default = ["cli"]
-cli = ["dep:clap", "dep:clap_complete", "dep:env_logger"]
+cli = [
+    "dep:clap",
+    "dep:clap_complete",
+    "dep:clap_complete_nushell",
+    "dep:clap_mangen",
+    "dep:env_logger",
+]
 
 [dependencies]
 # Command line argument parsing
-clap = { version = "4.6", features = ["derive"], optional = true }
+clap = { version = "4.6", features = ["derive", "wrap_help"], optional = true }
 # Shell completion generation for the `completions` subcommand
 clap_complete = { version = "4.6", optional = true }
+clap_complete_nushell = { version = "4.6", optional = true }
+# Manual page generation for the `man` subcommand
+clap_mangen = { version = "0.3", optional = true }
 
 # JSON parsing
 serde = { version = "1.0", features = ["derive"] }
@@ -46,9 +55,8 @@ serde = { version = "1.0", features = ["derive"] }
 # OpenAPI 2.0 `securityDefinitions` (read via the extensions map) and `$ref`
 # resolution preserve declaration order rather than sorting alphabetically.
 serde_json = { version = "1.0", features = ["preserve_order"] }
-# Maintained fork of the (deprecated) serde_yaml; chosen over other forks for
-# its better handling of YAML 1.1 footguns (the "Norway problem" et al).
-serde_norway = "0.9"
+# Pure-Rust, unsafe-free YAML 1.2 deserializer with parsing budgets (#4)
+serde-saphyr = { version = "2.2", default-features = false, features = ["deserialize"] }
 
 # Insertion-order-preserving maps for deterministic output
 indexmap = { version = "2.14", features = ["serde"] }
@@ -62,17 +70,19 @@ sha2 = "0.11"
 # Logging
 log = "0.4"
 env_logger = { version = "0.11", optional = true }
-tempfile = "3.27"
 prost = "0.14"
 prost-types = "0.14"
 prost-reflect = { version = "0.16", features = ["serde"] }
+# Pure-Rust .proto source compiler for the Protobuf adapter (#126)
+protox = { version = "0.10", default-features = false }
 # GraphQL SDL and literal parsing for the GraphQL adapter (#125)
-graphql-parser = "0.4"
+apollo-parser = "0.8"
 
 [dev-dependencies]
 # Testing
 assert_cmd = "2.2"
 predicates = "3.1"
+serde-saphyr = { version = "2.2", default-features = false, features = ["serialize"] }
 tempfile = "3.27"
 
 # The profile that 'dist' will build with

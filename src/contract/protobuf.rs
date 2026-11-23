@@ -1,13 +1,19 @@
-//! Protocol Buffers and gRPC adapter. Source compilation requires `protoc` on
-//! PATH; descriptor decoding and comparison do not require external tools.
+//! Protocol Buffers and gRPC adapter. Both `.proto` source compilation and
+//! descriptor decoding run in pure Rust without requiring external `protoc`.
 use super::*;
 use anyhow::{Context, Result};
 use prost::Message;
 use prost_reflect::{DescriptorPool, DynamicMessage, Kind};
+use protox::{
+    Compiler,
+    file::{
+        ChainFileResolver, File as ProtoxFile, FileResolver, GoogleFileResolver,
+        IncludeFileResolver,
+    },
+};
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
-    process::Command,
 };
 
 fn default_value(value: prost_reflect::Value) -> Value {
@@ -108,57 +114,383 @@ pub fn is_input(path: &Path) -> bool {
         .any(|v| e.eq_ignore_ascii_case(v))
     })
 }
-/// Compile source using the installed official compiler; no code generation occurs.
-pub fn compile(path: &Path, includes: &[PathBuf]) -> Result<Document> {
-    let path = path
+struct ResolvedLocalEntry {
+    virtual_name: String,
+    search_roots: Vec<PathBuf>,
+}
+
+fn lexical_normalize(path: &Path) -> PathBuf {
+    use std::path::Component;
+    let mut out = PathBuf::new();
+    for comp in path.components() {
+        match comp {
+            Component::Prefix(p) => out.push(p.as_os_str()),
+            Component::RootDir => out.push(Component::RootDir.as_os_str()),
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if matches!(out.components().next_back(), Some(Component::Normal(_))) {
+                    out.pop();
+                } else if !out.has_root() {
+                    out.push(comp.as_os_str());
+                }
+            }
+            Component::Normal(part) => out.push(part),
+        }
+    }
+    out
+}
+
+fn lexical_absolute(path: &Path) -> Result<PathBuf> {
+    let joined = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .context("Failed to determine current working directory")?
+            .join(path)
+    };
+    Ok(lexical_normalize(&joined))
+}
+
+fn raw_parent_dir(path: &Path) -> Option<PathBuf> {
+    let parent = path.parent()?;
+    if parent.as_os_str().is_empty() {
+        Some(PathBuf::from("."))
+    } else {
+        Some(parent.to_path_buf())
+    }
+}
+
+/// Resolve a local `.proto` entry path against user `-I` include roots without
+/// breaking symlinked files or symlinked subdirectories under `-I`, and verify
+/// canonical shadowing semantics before compilation.
+fn resolve_local_entry(path: &Path, includes: &[PathBuf]) -> Result<ResolvedLocalEntry> {
+    let canonical_path = path
         .canonicalize()
         .with_context(|| format!("Missing protobuf source: {path:?}"))?;
-    let temp = tempfile::tempdir()?;
-    let output = temp.path().join("descriptor.pb");
-    let mut command = Command::new("protoc");
-    command
-        .arg("--include_imports")
-        .arg("--include_source_info")
-        .arg(format!("--descriptor_set_out={}", output.display()));
-    // User roots precede the input directory, matching protoc import semantics.
-    for root in includes {
-        command.arg("-I").arg(
-            root.canonicalize()
-                .with_context(|| format!("Invalid protobuf import root: {root:?}"))?,
-        );
-    }
-    command.arg("-I").arg(path.parent().unwrap()).arg(&path);
-    let result = command.output().context("Compiling .proto requires protoc on PATH; alternatively supply a FileDescriptorSet built with --include_imports")?;
     anyhow::ensure!(
-        result.status.success(),
-        "protoc failed: {}",
-        String::from_utf8_lossy(&result.stderr)
+        !canonical_path.is_dir(),
+        "Protobuf source is a directory, expected a file: {path:?}"
     );
-    Document::decode(&std::fs::read(output)?)
+    let abs_path = lexical_absolute(path)?;
+
+    let mut roots: Vec<(PathBuf, PathBuf)> = Vec::with_capacity(includes.len());
+    for root in includes {
+        let canonical = root
+            .canonicalize()
+            .with_context(|| format!("Invalid protobuf import root: {root:?}"))?;
+        anyhow::ensure!(
+            canonical.is_dir(),
+            "Invalid protobuf import root (not a directory): {root:?}"
+        );
+        let abs = lexical_absolute(root)?;
+        roots.push((abs, canonical));
+    }
+
+    let verifies = |canonical_root: &Path, rel: &Path| -> bool {
+        !rel.as_os_str().is_empty()
+            && proto_virtual_name(rel).is_some()
+            && canonical_root.join(rel).canonicalize().ok().as_deref()
+                == Some(canonical_path.as_path())
+    };
+
+    let entry_parent = raw_parent_dir(path)
+        .and_then(|p| p.canonicalize().ok())
+        .or_else(|| abs_path.parent().and_then(|p| p.canonicalize().ok()));
+    let entry_file_name = path
+        .file_name()
+        .or_else(|| abs_path.file_name())
+        .or_else(|| canonical_path.file_name());
+    let parent_canonical_path = entry_parent
+        .as_ref()
+        .zip(entry_file_name)
+        .map(|(dir, name)| dir.join(name));
+
+    // Pass 1: path-preserving match across user `-I` roots (in order), keeping
+    // symlinked leaf filenames and symlinked subdirectory prefixes intact.
+    let mut virtual_path: Option<PathBuf> = None;
+    for (abs_root, canonical_root) in &roots {
+        if let Ok(rel) = abs_path.strip_prefix(abs_root)
+            && verifies(canonical_root, rel)
+        {
+            virtual_path = Some(rel.to_path_buf());
+            break;
+        }
+        for anc in abs_path.ancestors().skip(1) {
+            if anc.canonicalize().ok().as_deref() == Some(canonical_root.as_path())
+                && let Ok(rel) = abs_path.strip_prefix(anc)
+                && verifies(canonical_root, rel)
+            {
+                virtual_path = Some(rel.to_path_buf());
+                break;
+            }
+        }
+        if virtual_path.is_some() {
+            break;
+        }
+    }
+
+    // Pass 2: parent-canonical match (handles `..` through a symlink while
+    // keeping the leaf symlink unfollowed).
+    if virtual_path.is_none()
+        && let Some(ref pcp) = parent_canonical_path
+    {
+        for (_, canonical_root) in &roots {
+            if let Ok(rel) = pcp.strip_prefix(canonical_root)
+                && verifies(canonical_root, rel)
+            {
+                virtual_path = Some(rel.to_path_buf());
+                break;
+            }
+        }
+    }
+
+    // Pass 3: full-canonical match (e.g. symlink outside `-I` pointing inside `-I`).
+    if virtual_path.is_none() {
+        for (_, canonical_root) in &roots {
+            if let Ok(rel) = canonical_path.strip_prefix(canonical_root)
+                && verifies(canonical_root, rel)
+            {
+                virtual_path = Some(rel.to_path_buf());
+                break;
+            }
+        }
+    }
+
+    let virtual_path = match virtual_path {
+        Some(rel) => rel,
+        None => {
+            let name = entry_file_name.context("Missing protobuf input filename")?;
+            PathBuf::from(name)
+        }
+    };
+    let virtual_name = proto_virtual_name(&virtual_path)
+        .with_context(|| format!("Invalid protobuf virtual path: {virtual_path:?}"))?;
+
+    // User roots precede the entry directory and canonical target directory,
+    // matching protoc import semantics while allowing sibling imports next to
+    // either the symlink or its target.
+    let mut search_roots: Vec<PathBuf> = Vec::with_capacity(roots.len() + 2);
+    for (_, canonical) in roots {
+        if !search_roots.iter().any(|r| r == &canonical) {
+            search_roots.push(canonical);
+        }
+    }
+    let canonical_target_parent = canonical_path
+        .parent()
+        .context("Missing protobuf input directory")?
+        .to_path_buf();
+    for fallback in [entry_parent, Some(canonical_target_parent)]
+        .into_iter()
+        .flatten()
+    {
+        if !search_roots.iter().any(|r| r == &fallback) {
+            search_roots.push(fallback);
+        }
+    }
+
+    // Canonicalized shadow check across `search_roots`: the first root
+    // containing `virtual_path` must resolve to `canonical_path`.
+    let mut found_target = false;
+    for root in &search_roots {
+        let candidate = root.join(&virtual_path);
+        match candidate.canonicalize() {
+            Ok(resolved) => {
+                if resolved != canonical_path {
+                    anyhow::bail!(
+                        "Protobuf source {:?} ({virtual_name}) is shadowed by {:?} in import root {:?}",
+                        path,
+                        resolved,
+                        root
+                    );
+                }
+                found_target = true;
+                break;
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(err) => {
+                anyhow::bail!(
+                    "Protobuf source {:?} ({virtual_name}) is shadowed by unreadable path {:?} in import root {:?}: {err}",
+                    path,
+                    candidate,
+                    root
+                );
+            }
+        }
+    }
+    anyhow::ensure!(
+        found_target,
+        "Protobuf source {:?} ({virtual_name}) could not be resolved in any import root",
+        path
+    );
+
+    Ok(ResolvedLocalEntry {
+        virtual_name,
+        search_roots,
+    })
 }
+
+/// Compile `.proto` source in pure Rust using `protox`; no external `protoc` or
+/// code generation is required.
+pub fn compile(path: &Path, includes: &[PathBuf]) -> Result<Document> {
+    let entry = resolve_local_entry(path, includes)?;
+    let mut resolver = ChainFileResolver::new();
+    for root in entry.search_roots {
+        resolver.add(EditionCheckingIncludeResolver::new(root));
+    }
+    resolver.add(GoogleFileResolver::new());
+    compile_with_resolver(resolver, Path::new(&entry.virtual_name))
+}
+
 #[cfg(feature = "cli")]
 pub(crate) fn compile_bytes(path: &Path, bytes: &[u8], includes: &[PathBuf]) -> Result<Document> {
-    let temp = tempfile::tempdir()?;
-    let canonical_path = path.canonicalize()?;
-    let virtual_path = includes
-        .iter()
-        .filter_map(|root| {
-            root.canonicalize()
-                .ok()
-                .and_then(|root| canonical_path.strip_prefix(root).ok())
-                .filter(|relative| !relative.as_os_str().is_empty())
-                .map(Path::to_path_buf)
-        })
+    let entry = resolve_local_entry(path, includes)?;
+    let source = std::str::from_utf8(bytes)
+        .with_context(|| format!("Protobuf source is not valid UTF-8: {path:?}"))?
+        .to_owned();
+
+    let mut resolver = ChainFileResolver::new();
+    resolver.add(MemoryFileResolver {
+        name: entry.virtual_name.clone(),
+        source,
+    });
+    for root in entry.search_roots {
+        resolver.add(EditionCheckingIncludeResolver::new(root));
+    }
+    resolver.add(GoogleFileResolver::new());
+    compile_with_resolver(resolver, Path::new(&entry.virtual_name))
+}
+
+pub(crate) fn compile_with_resolver<R>(resolver: R, entry: &Path) -> Result<Document>
+where
+    R: FileResolver + 'static,
+{
+    let mut compiler = Compiler::with_file_resolver(resolver);
+    compiler
+        .include_imports(true)
+        .include_source_info(true)
+        .open_file(entry)
+        .with_context(|| format!("Failed to compile protobuf source: {}", entry.display()))?;
+    Document::decode(&compiler.encode_file_descriptor_set())
+}
+
+#[cfg(feature = "cli")]
+pub(crate) fn parse_proto_source(name: &str, source: &str) -> Result<ProtoxFile, protox::Error> {
+    if has_edition_header(source) {
+        return Err(unsupported_edition_error(name));
+    }
+    ProtoxFile::from_source(name, source)
+}
+
+pub(crate) fn proto_virtual_name(path: &Path) -> Option<String> {
+    let mut name = String::new();
+    for component in path.components() {
+        match component {
+            std::path::Component::Normal(part) => {
+                let part = part.to_str()?;
+                if !name.is_empty() {
+                    name.push('/');
+                }
+                name.push_str(part);
+            }
+            std::path::Component::CurDir => {}
+            _ => return None,
+        }
+    }
+    (!name.is_empty()).then_some(name)
+}
+
+fn unsupported_edition_error(name: &str) -> protox::Error {
+    protox::Error::new(format!(
+        "Unsupported protobuf syntax \"editions\" in {name:?}: the descriptor adapter supports proto2/proto3; Editions are not yet supported"
+    ))
+}
+
+/// Detect a leading Protobuf Editions header (`edition = "...";`) after
+/// skipping BOM, whitespace, and `//` or `/* ... */` comments.
+fn has_edition_header(source: &str) -> bool {
+    let rest = skip_proto_trivia(source.strip_prefix('\u{feff}').unwrap_or(source));
+    let Some(after_keyword) = rest.strip_prefix("edition") else {
+        return false;
+    };
+    if after_keyword
+        .chars()
         .next()
-        .or_else(|| path.file_name().map(PathBuf::from))
-        .context("Missing protobuf input filename")?;
-    let saved = temp.path().join(virtual_path);
-    std::fs::create_dir_all(saved.parent().context("Missing protobuf input directory")?)?;
-    std::fs::write(&saved, bytes)?;
-    let mut roots = vec![temp.path().to_path_buf()];
-    roots.extend_from_slice(includes);
-    roots.push(path.canonicalize()?.parent().unwrap().to_path_buf());
-    compile(&saved, &roots)
+        .is_some_and(|c| c.is_ascii_alphanumeric() || c == '_')
+    {
+        return false;
+    }
+    skip_proto_trivia(after_keyword).starts_with('=')
+}
+
+fn skip_proto_trivia(mut input: &str) -> &str {
+    loop {
+        input = input.trim_start();
+        if let Some(after) = input.strip_prefix("//") {
+            input = match after.find('\n') {
+                Some(idx) => &after[idx + 1..],
+                None => "",
+            };
+        } else if let Some(after) = input.strip_prefix("/*") {
+            input = match after.find("*/") {
+                Some(idx) => &after[idx + 2..],
+                None => "",
+            };
+        } else {
+            return input;
+        }
+    }
+}
+
+struct EditionCheckingIncludeResolver {
+    include: PathBuf,
+    inner: IncludeFileResolver,
+}
+
+impl EditionCheckingIncludeResolver {
+    fn new(include: PathBuf) -> Self {
+        Self {
+            inner: IncludeFileResolver::new(include.clone()),
+            include,
+        }
+    }
+}
+
+impl FileResolver for EditionCheckingIncludeResolver {
+    fn resolve_path(&self, path: &Path) -> Option<String> {
+        self.inner.resolve_path(path)
+    }
+
+    fn open_file(&self, name: &str) -> Result<ProtoxFile, protox::Error> {
+        match self.inner.open_file(name) {
+            Ok(file) => Ok(file),
+            Err(err) if err.is_file_not_found() => Err(err),
+            Err(err) => {
+                if let Ok(source) = std::fs::read_to_string(self.include.join(name))
+                    && has_edition_header(&source)
+                {
+                    return Err(unsupported_edition_error(name));
+                }
+                Err(err)
+            }
+        }
+    }
+}
+
+#[cfg(feature = "cli")]
+struct MemoryFileResolver {
+    name: String,
+    source: String,
+}
+
+#[cfg(feature = "cli")]
+impl FileResolver for MemoryFileResolver {
+    fn open_file(&self, name: &str) -> Result<ProtoxFile, protox::Error> {
+        if name == self.name {
+            parse_proto_source(name, &self.source)
+        } else {
+            Err(protox::Error::file_not_found(name))
+        }
+    }
 }
 fn id(kind: EntityKind, name: &str) -> String {
     entity_id(Format::Protobuf, kind, name)
@@ -782,11 +1114,89 @@ fn file_symbols(doc: &Document, filename: &str) -> std::collections::BTreeSet<St
     symbols
 }
 
+/// Clean a protoc `source_code_info` comment string, stripping the single
+/// leading space protoc leaves after `//` while preserving paragraph breaks.
+fn clean_comment(raw: &str) -> Option<String> {
+    let lines: Vec<&str> = raw
+        .lines()
+        .map(|line| line.strip_prefix(' ').unwrap_or(line).trim_end())
+        .collect();
+    let start = lines.iter().position(|line| !line.is_empty())?;
+    let end = lines.iter().rposition(|line| !line.is_empty())?;
+    Some(lines[start..=end].join("\n"))
+}
+
+/// Flatten a multiline comment into a single line for table cells and inline lists.
+fn inline_comment(comment: &str) -> String {
+    comment.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn annotate_block(comment: Option<&str>, note: String) -> Option<String> {
+    Some(match comment {
+        Some(text) if !text.is_empty() => format!("{text}\n\n{note}"),
+        _ => note,
+    })
+}
+
+fn annotate_inline(comment: Option<&str>, note: String) -> Option<String> {
+    Some(match comment.map(inline_comment) {
+        Some(text) if !text.is_empty() => format!("{text} ({note})"),
+        _ => note,
+    })
+}
+
+/// Source comments indexed by `(file_name, source_code_info path)`.
+/// Used only by [`documentation`]; neutral contract identity and diff facts
+/// deliberately ignore comments.
+struct SourceComments {
+    by_file: HashMap<String, HashMap<Vec<i32>, String>>,
+}
+
+impl SourceComments {
+    fn from_pool(pool: &DescriptorPool) -> Self {
+        let mut by_file = HashMap::new();
+        for file in pool.files() {
+            let Some(info) = &file.file_descriptor_proto().source_code_info else {
+                continue;
+            };
+            let mut entries: HashMap<Vec<i32>, String> = HashMap::new();
+            for loc in &info.location {
+                if loc.path.is_empty() {
+                    continue;
+                }
+                let leading = loc.leading_comments.as_deref().and_then(clean_comment);
+                let trailing = loc.trailing_comments.as_deref().and_then(clean_comment);
+                let combined = match (leading, trailing) {
+                    (Some(l), Some(t)) => Some(format!("{l}\n\n{t}")),
+                    (Some(l), None) => Some(l),
+                    (None, Some(t)) => Some(t),
+                    (None, None) => None,
+                };
+                if let Some(comment) = combined {
+                    entries.entry(loc.path.clone()).or_insert(comment);
+                }
+            }
+            if !entries.is_empty() {
+                by_file.insert(file.name().to_owned(), entries);
+            }
+        }
+        Self { by_file }
+    }
+
+    fn get(&self, file_name: &str, path: &[i32]) -> Option<&str> {
+        self.by_file
+            .get(file_name)
+            .and_then(|entries| entries.get(path))
+            .map(String::as_str)
+    }
+}
+
 /// Convert native descriptors to the renderer IR. RPC is a native operation
 /// label, not an HTTP method; `result` is not an HTTP status code.
 pub fn documentation(doc: &Document) -> crate::ApiDocumentation {
     use crate::{Endpoint, Parameter, Response, Schema, Service};
     use indexmap::IndexMap;
+    let comments = SourceComments::from_pool(&doc.pool);
     let reference = |name: &str| Schema {
         reference: Some(format!("#/components/schemas/{name}")),
         ..Default::default()
@@ -808,7 +1218,14 @@ pub fn documentation(doc: &Document) -> crate::ApiDocumentation {
                         ..Default::default()
                     },
                 };
-                schema.description = Some(format!(
+                if f.is_list() {
+                    schema = Schema {
+                        schema_type: Some("array".into()),
+                        items: Some(Box::new(schema)),
+                        ..Default::default()
+                    };
+                }
+                let field_note = format!(
                     "Field #{}; JSON name `{}`{}{}{}",
                     f.number(),
                     f.json_name(),
@@ -830,13 +1247,14 @@ pub fn documentation(doc: &Document) -> crate::ApiDocumentation {
                     } else {
                         ""
                     }
-                ));
-                if f.is_list() {
-                    schema = Schema {
-                        schema_type: Some("array".into()),
-                        items: Some(Box::new(schema)),
-                        ..Default::default()
-                    };
+                );
+                schema.description =
+                    annotate_inline(comments.get(f.parent_file().name(), f.path()), field_note);
+                if schema.reference.is_some() {
+                    schema.extensions.insert(
+                        crate::markdown::PREFER_REF_DESCRIPTION_EXT.into(),
+                        json!(true),
+                    );
                 }
                 (f.name().to_owned(), schema)
             })
@@ -846,7 +1264,10 @@ pub fn documentation(doc: &Document) -> crate::ApiDocumentation {
             Schema {
                 schema_type: Some("object".into()),
                 title: Some(m.full_name().into()),
-                description: Some("Protocol Buffers message".into()),
+                description: annotate_block(
+                    comments.get(m.parent_file().name(), m.path()),
+                    "Protocol Buffers message".into(),
+                ),
                 properties: Some(properties),
                 required: Some(
                     m.fields()
@@ -863,18 +1284,25 @@ pub fn documentation(doc: &Document) -> crate::ApiDocumentation {
     for en in enums {
         let mut values = en.values().collect::<Vec<_>>();
         values.sort_by_key(|v| (v.number(), v.name().to_owned()));
+        let enum_file = en.parent_file().name().to_owned();
+        let values_summary = values
+            .iter()
+            .map(
+                |v| match comments.get(&enum_file, v.path()).map(inline_comment) {
+                    Some(text) if !text.is_empty() => {
+                        format!("`{}` = {} ({text})", v.name(), v.number())
+                    }
+                    _ => format!("`{}` = {}", v.name(), v.number()),
+                },
+            )
+            .collect::<Vec<_>>()
+            .join(", ");
         schemas.insert(
             en.full_name().into(),
             Schema {
                 schema_type: Some("enum".into()),
                 title: Some(en.full_name().into()),
-                description: Some(
-                    values
-                        .iter()
-                        .map(|v| format!("`{}` = {}", v.name(), v.number()))
-                        .collect::<Vec<_>>()
-                        .join(", "),
-                ),
+                description: annotate_block(comments.get(&enum_file, en.path()), values_summary),
                 enum_values: Some(values.iter().map(|v| json!(v.name())).collect()),
                 ..Default::default()
             },
@@ -883,9 +1311,13 @@ pub fn documentation(doc: &Document) -> crate::ApiDocumentation {
     let mut services = vec![];
     let mut endpoints = vec![];
     for s in doc.pool.services() {
+        let service_file = s.parent_file().name().to_owned();
         services.push(Service {
             name: s.full_name().into(),
-            description: Some("gRPC service".into()),
+            description: annotate_block(
+                comments.get(&service_file, s.path()),
+                "gRPC service".into(),
+            ),
         });
         for rpc in s.methods() {
             let streaming = match (rpc.is_client_streaming(), rpc.is_server_streaming()) {
@@ -905,16 +1337,17 @@ pub fn documentation(doc: &Document) -> crate::ApiDocumentation {
                     extensions: HashMap::new(),
                 },
             );
+            let rpc_note = format!(
+                "{streaming}; input `{}` → result `{}`",
+                rpc.input().full_name(),
+                rpc.output().full_name()
+            );
             endpoints.push(Endpoint {
                 path: rpc.full_name().into(),
                 method: "RPC".into(),
                 services: vec![s.full_name().into()],
                 summary: Some(rpc.name().into()),
-                description: Some(format!(
-                    "{streaming}; input `{}` → result `{}`",
-                    rpc.input().full_name(),
-                    rpc.output().full_name()
-                )),
+                description: annotate_block(comments.get(&service_file, rpc.path()), rpc_note),
                 operation_id: Some(rpc.full_name().into()),
                 parameters: vec![Parameter {
                     reference: None,

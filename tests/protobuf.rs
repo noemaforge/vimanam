@@ -661,3 +661,303 @@ fn malformed_descriptor_fields_and_duplicate_symbols_return_errors() {
             .is_err()
     );
 }
+#[test]
+fn source_comments_appear_in_documentation_only() {
+    let commented = source(
+        r#"
+// Manages widget records.
+service WidgetService {
+  // Fetch a single widget by ID.
+  // Returns NOT_FOUND when absent.
+  rpc GetWidget(GetWidgetRequest) returns (Widget);
+}
+
+// Request payload for GetWidget.
+message GetWidgetRequest {
+  // Unique widget identifier.
+  string id = 1;
+  // Optional filter tags.
+  repeated string tags = 2;
+}
+
+// Lifecycle status of a widget.
+enum Status {
+  STATUS_UNSPECIFIED = 0; // Default unset status.
+  // Active and serving traffic.
+  STATUS_ACTIVE = 1;
+}
+
+// A stored widget.
+message Widget {
+  Status status = 1;
+}
+"#,
+    );
+    let plain = source(
+        r#"
+service WidgetService {
+  rpc GetWidget(GetWidgetRequest) returns (Widget);
+}
+message GetWidgetRequest {
+  string id = 1;
+  repeated string tags = 2;
+}
+enum Status {
+  STATUS_UNSPECIFIED = 0;
+  STATUS_ACTIVE = 1;
+}
+message Widget {
+  Status status = 1;
+}
+"#,
+    );
+
+    // Comments never change neutral entities or diff facts.
+    assert_eq!(protobuf::adapt(&commented), protobuf::adapt(&plain));
+    assert!(protobuf::diff(&commented, &plain).unwrap().is_empty());
+
+    let api_doc = protobuf::documentation(&commented);
+    let service = api_doc
+        .services
+        .iter()
+        .find(|s| s.name == "demo.WidgetService")
+        .unwrap();
+    assert!(
+        service
+            .description
+            .as_deref()
+            .unwrap()
+            .contains("Manages widget records.")
+    );
+    let rpc = api_doc
+        .endpoints
+        .iter()
+        .find(|e| e.path == "demo.WidgetService.GetWidget")
+        .unwrap();
+    let rpc_desc = rpc.description.as_deref().unwrap();
+    assert!(rpc_desc.contains("Fetch a single widget by ID.\nReturns NOT_FOUND when absent."));
+    assert!(rpc_desc.contains("unary; input `demo.GetWidgetRequest`"));
+
+    let req = api_doc.schemas.get("demo.GetWidgetRequest").unwrap();
+    assert!(
+        req.description
+            .as_deref()
+            .unwrap()
+            .contains("Request payload for GetWidget.")
+    );
+    let props = req.properties.as_ref().unwrap();
+    let id_desc = props.get("id").unwrap().description.as_deref().unwrap();
+    assert!(id_desc.contains("Unique widget identifier."));
+    assert!(id_desc.contains("Field #1"));
+    let tags_desc = props.get("tags").unwrap().description.as_deref().unwrap();
+    assert!(tags_desc.contains("Optional filter tags."));
+    assert!(tags_desc.contains("Field #2"));
+
+    let status = api_doc.schemas.get("demo.Status").unwrap();
+    let status_desc = status.description.as_deref().unwrap();
+    assert!(status_desc.contains("Lifecycle status of a widget."));
+    assert!(status_desc.contains("`STATUS_UNSPECIFIED` = 0 (Default unset status.)"));
+    assert!(status_desc.contains("`STATUS_ACTIVE` = 1 (Active and serving traffic.)"));
+
+    // Descriptors without source_code_info fall back cleanly to default notes.
+    let plain_doc = protobuf::documentation(&plain);
+    assert_eq!(
+        plain_doc
+            .schemas
+            .get("demo.Widget")
+            .unwrap()
+            .description
+            .as_deref(),
+        Some("Protocol Buffers message")
+    );
+}
+
+#[test]
+fn ref_field_comments_and_numbers_render_in_linked_and_inline_markdown() {
+    let doc = source(
+        r#"
+// Manages widget records.
+service WidgetService {
+  // Fetch a widget.
+  rpc GetWidget(Widget) returns (Widget);
+}
+
+// Owner metadata.
+message Owner {
+  // Owner display name.
+  string name = 1;
+}
+
+// Lifecycle status of a widget.
+enum Status {
+  STATUS_UNSPECIFIED = 0; // Default unset status.
+  // Active and serving traffic.
+  STATUS_ACTIVE = 1;
+}
+
+// A stored widget.
+message Widget {
+  // Primary owner metadata.
+  Owner owner = 1;
+  // Current lifecycle state.
+  Status status = 2;
+  // Arbitrary key-value labels.
+  map<string, string> labels = 3;
+}
+"#,
+    );
+    let api_doc = protobuf::documentation(&doc);
+
+    for inline in [false, true] {
+        let mut config = vimanam::DocConfig::unfiltered();
+        config.inline_schemas = inline;
+        let mut out = Vec::new();
+        vimanam::markdown::generate_markdown(&mut out, &api_doc, &config).unwrap();
+        let md = String::from_utf8(out).unwrap();
+
+        assert!(
+            md.contains("Primary owner metadata.") && md.contains("Field #1; JSON name `owner`"),
+            "missing singular message field docs (inline={inline}):\n{md}"
+        );
+        assert!(
+            md.contains("Current lifecycle state.") && md.contains("Field #2; JSON name `status`"),
+            "missing singular enum field docs (inline={inline}):\n{md}"
+        );
+        assert!(
+            md.contains("Arbitrary key-value labels.")
+                && md.contains("Field #3; JSON name `labels`"),
+            "missing map field docs (inline={inline}):\n{md}"
+        );
+        assert!(
+            md.contains("Active and serving traffic."),
+            "missing enum value comment (inline={inline}):\n{md}"
+        );
+        assert!(
+            md.contains("Owner display name."),
+            "missing nested message field comment (inline={inline}):\n{md}"
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn symlinked_proto_under_include_root_preserves_virtual_path_and_shadow_checks() {
+    use std::os::unix::fs::symlink;
+
+    let temp = tempfile::tempdir().unwrap();
+    let shared = temp.path().join("shared");
+    let proto = temp.path().join("proto");
+    fs::create_dir_all(&shared).unwrap();
+    fs::create_dir_all(proto.join("v1")).unwrap();
+
+    // 1. Direct symlink under -I: proto/api.proto -> ../shared/api.proto
+    fs::write(
+        shared.join("api.proto"),
+        "syntax = \"proto3\"; package demo; message Ping { string id = 1; }\n",
+    )
+    .unwrap();
+    symlink(shared.join("api.proto"), proto.join("api.proto")).unwrap();
+
+    let direct = Document::read(&proto.join("api.proto"), std::slice::from_ref(&proto)).unwrap();
+    assert!(
+        direct.pool.files().any(|f| f.name() == "api.proto"),
+        "expected virtual name api.proto, got {:?}",
+        direct
+            .pool
+            .files()
+            .map(|f| f.name().to_owned())
+            .collect::<Vec<_>>()
+    );
+
+    // 2. Subdirectory symlink under -I importing a sibling symlinked dependency.
+    let store = temp.path().join("store");
+    fs::create_dir_all(&store).unwrap();
+    fs::write(
+        store.join("dep.proto"),
+        "syntax = \"proto3\"; package demo.v1; message Dep { int32 count = 1; }\n",
+    )
+    .unwrap();
+    fs::write(
+        store.join("service.proto"),
+        "syntax = \"proto3\"; package demo.v1; import \"v1/dep.proto\"; message Resp { Dep dep = 1; }\n",
+    )
+    .unwrap();
+    symlink(store.join("dep.proto"), proto.join("v1/dep.proto")).unwrap();
+    symlink(store.join("service.proto"), proto.join("v1/service.proto")).unwrap();
+
+    let nested = Document::read(
+        &proto.join("v1/service.proto"),
+        std::slice::from_ref(&proto),
+    )
+    .unwrap();
+    let names: Vec<String> = nested.pool.files().map(|f| f.name().to_owned()).collect();
+    assert!(
+        names.iter().any(|n| n == "v1/service.proto"),
+        "got {names:?}"
+    );
+    assert!(names.iter().any(|n| n == "v1/dep.proto"), "got {names:?}");
+
+    // Canonicalized -I root with uncanonicalized path through a symlinked subdir also works.
+    let real_v2 = temp.path().join("real_v2");
+    fs::create_dir_all(&real_v2).unwrap();
+    symlink(store.join("dep.proto"), real_v2.join("dep.proto")).unwrap();
+    fs::write(
+        store.join("v2_service.proto"),
+        "syntax = \"proto3\"; package demo.v2; import \"v2/dep.proto\"; message Resp { demo.v1.Dep dep = 1; }\n",
+    )
+    .unwrap();
+    symlink(
+        store.join("v2_service.proto"),
+        real_v2.join("v2_service.proto"),
+    )
+    .unwrap();
+    symlink(&real_v2, proto.join("v2")).unwrap();
+
+    let canon_proto = proto.canonicalize().unwrap();
+    let symlinked_dir_doc =
+        Document::read(&proto.join("v2/v2_service.proto"), &[canon_proto]).unwrap();
+    let v2_names: Vec<String> = symlinked_dir_doc
+        .pool
+        .files()
+        .map(|f| f.name().to_owned())
+        .collect();
+    assert!(
+        v2_names.iter().any(|n| n == "v2/v2_service.proto"),
+        "got {v2_names:?}"
+    );
+    assert!(
+        v2_names.iter().any(|n| n == "v2/dep.proto"),
+        "got {v2_names:?}"
+    );
+
+    // 3. Real shadow with a symlinked entry in a later -I root still fails.
+    let v1 = temp.path().join("shadow_v1");
+    let v2 = temp.path().join("shadow_v2");
+    let other = temp.path().join("other");
+    fs::create_dir_all(&v1).unwrap();
+    fs::create_dir_all(&v2).unwrap();
+    fs::create_dir_all(&other).unwrap();
+    fs::write(
+        v1.join("api.proto"),
+        "syntax = \"proto3\"; package demo; message M { string a = 1; }\n",
+    )
+    .unwrap();
+    fs::write(
+        other.join("api.proto"),
+        "syntax = \"proto3\"; package demo; message M { string b = 1; }\n",
+    )
+    .unwrap();
+    symlink(other.join("api.proto"), v2.join("api.proto")).unwrap();
+
+    let err = Document::read(&v2.join("api.proto"), &[v1.clone(), v2.clone()])
+        .unwrap_err()
+        .to_string();
+    assert!(
+        err.contains("shadowed"),
+        "expected shadow error, got: {err}"
+    );
+
+    // Reversing -I order so v2 precedes v1 resolves cleanly.
+    let ok = Document::read(&v2.join("api.proto"), &[v2, v1]).unwrap();
+    assert!(ok.pool.files().any(|f| f.name() == "api.proto"));
+}

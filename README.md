@@ -25,9 +25,10 @@ Besides producing documentation for humans, Vimanam is built for **feeding API s
 
 ## Protobuf and gRPC
 
-Read proto2/proto3 source with **protoc on PATH**, or read a complete binary
-`FileDescriptorSet` without external tools. Editions currently return an explicit
-unsupported-syntax error. See [protobuf inputs, rules and Git imports](docs/protobuf.md).
+Read proto2/proto3 `.proto` source directly (compiled in pure Rust with no
+external `protoc` required), or read a complete binary `FileDescriptorSet`.
+Editions currently return an explicit unsupported-syntax error. See
+[protobuf inputs, rules and Git imports](docs/protobuf.md).
 
 ```sh
 vimanam api.proto -I proto --detail full --include-schemas
@@ -231,10 +232,10 @@ cargo fmt && cargo clippy
 
 Integration tests live in `tests/cli/`, `tests/split.rs` and `tests/library.rs` and run against `tests/fixtures/`. Use `cargo test --no-default-features` to exercise the core library without the CLI. `scripts/compare-baseline.sh` compares a fresh build with a released binary across the CLI matrix — stdout, stderr, exit code, and written files — so a refactor can be checked for byte-for-byte output parity. Setup and the case list are in [`scripts/README.md`](scripts/README.md).
 
-### Shell completions
+### Shell completions and manual pages
 
 `vimanam completions <SHELL>` prints a completion script for `bash`, `zsh`, `fish`,
-`powershell`, or `elvish`. Install it once and re-run after upgrading Vimanam:
+`nushell`, `powershell`, or `elvish`. Install it once and re-run after upgrading Vimanam:
 
 ```bash
 # Bash (relies on the bash-completion v2 package, which stock macOS bash 3.2
@@ -252,6 +253,11 @@ mkdir -p ~/.config/fish/completions
 vimanam completions fish > ~/.config/fish/completions/vimanam.fish
 ```
 
+```nu
+# Nushell: save and source from your config.nu
+vimanam completions nushell | save -f ~/.config/nushell/completions/vimanam.nu
+```
+
 ```elvish
 # Elvish: add this line to ~/.config/elvish/rc.elv
 eval (vimanam completions elvish | slurp)
@@ -261,6 +267,9 @@ eval (vimanam completions elvish | slurp)
 # PowerShell: add this line to $PROFILE
 vimanam completions powershell | Out-String | Invoke-Expression
 ```
+
+`vimanam man` prints the roff `vimanam(1)` manual page to stdout, or writes pages for
+`vimanam` and every subcommand to a directory with `vimanam man --out-dir DIR`.
 
 ## Usage
 
@@ -295,7 +304,7 @@ vimanam input.json --detail full --include-schemas --include-examples -o output.
 # Include server and authentication information
 vimanam input.json --include-auth -o output.md
 
-# Print a shell completion script (see "Shell completions" above)
+# Print a shell completion script (see "Shell completions and manual pages" above)
 vimanam completions zsh
 
 # Drop the spec hygiene report appended after the documentation
@@ -451,6 +460,7 @@ Usage: vimanam [OPTIONS] <FILE>
 
 Commands:
   completions  Generate shell completions and print them to stdout
+  man          Generate roff manual pages (stdout for vimanam(1), or --out-dir for all subcommands)
   diff         Compare two versions of a spec and report what changed, classified as breaking, non-breaking or needing review
   help         Print this message or the help of the given subcommand(s)
 

@@ -25,9 +25,9 @@ Real-world specs for manual testing may live at the repo root: `swagger.json` (s
 
 ## Architecture
 
-Pipeline in `main.rs`: CLI args → `config::build_config` → `parser::parse_openapi` → `markdown::generate_markdown` → `report::write_report` (unless `--no-report`). Three paths short-circuit before the pipeline: the `completions <SHELL>` subcommand (`Commands` enum in `config.rs`, rendered with `clap_complete`), the `diff <OLD> <NEW>` subcommand (`Commands::Diff(DiffArgs)`, handled by `main::run_diff`), and `--stats`, which computes `stats::compute` and prints a table instead of Markdown. `run()` returns `Result<ExitCode>`; `main` maps errors to exit 1.
+Pipeline in `cli::run` (called by `main.rs`): CLI args → `config::build_config` → `parser::parse_openapi` → `markdown::generate_markdown` → `report::write_report` (unless `--no-report`). Five paths short-circuit before the pipeline: the `completions <SHELL>` subcommand (`Commands` enum in `src/cli/config.rs`, rendered with `clap_complete` / `clap_complete_nushell`), the `man [--out-dir DIR]` subcommand (`Commands::Man`, rendered with `clap_mangen`), the `diff <OLD> <NEW>` subcommand (`Commands::Diff(Box<DiffArgs>)`, handled by `cli::run_diff`), `--stats`, which computes `stats::compute` and prints a table instead of Markdown, and `--costs`, which computes `costs::compute` and prints token-cost breakdowns. `cli::run` returns whether breaking changes need exit 3; `main` maps errors to exit 1. Default feature `cli` enables `clap`, `clap_complete`, `clap_complete_nushell`, `clap_mangen`, and `env_logger`; `cargo test --no-default-features` covers the core library without CLI dependencies.
 
-- `src/config.rs` — clap `Cli` struct and `*Arg` value enums, converted into the internal `DocConfig`. Grouping precedence in `build_config`: `--flat` > `--method` > `--group-by` > default (service). `input` is `Option<PathBuf>` marked `required = true` with `subcommand_negates_reqs` on the command, so `vimanam completions bash` needs no FILE while bare `vimanam` still errors; `args_conflicts_with_subcommands` rejects mixing conversion flags with a subcommand.
+- `src/cli/config.rs` — clap `Cli` struct and `*Arg` value enums, converted into the internal `DocConfig`. Grouping precedence in `build_config`: `--flat` > `--method` > `--group-by` > default (service). `input` is `Option<PathBuf>` marked `required = true` with `subcommand_negates_reqs` on the command, so `vimanam completions bash` needs no FILE while bare `vimanam` still errors; `args_conflicts_with_subcommands` rejects mixing conversion flags with a subcommand.
 - `src/models.rs` — two layers of types: serde structs mirroring the OpenAPI spec (`OpenApiSpec`, `Operation`, `Parameter`, ...) and the spec-version-agnostic intermediate representation (`ApiDocumentation`, `Endpoint`, `Service`, `DocConfig` enums). The IR is what the generator consumes.
 - `src/parser.rs` — deserializes the spec and flattens it into the IR. Handles both versions via serde alias (`swagger`/`openapi` field), derives "services" from tags (falling back to per-operation tags, then a default `"API"` service), merges path-level and operation-level parameters, represents an OpenAPI 3.0 `requestBody` as a synthetic `body` parameter, and resolves `$ref`s during extraction. On deserialize failure it re-parses as generic JSON to produce targeted error messages.
 - `src/markdown/` — markdown generation, split into submodules behind the `generate_markdown` entry point in `mod.rs` (which also holds the `--max-tokens` budget logic that re-renders at progressively lower detail). `views.rs` has one `generate_*` function per grouping mode plus shared preamble/filter/sort helpers; `endpoint.rs` renders a single endpoint, branching on `DetailLevel`; `schema.rs` renders schema field tables; `examples.rs` renders example blocks. Writes through a generic `W: Write` (file or stdout).
@@ -35,6 +35,7 @@ Pipeline in `main.rs`: CLI args → `config::build_config` → `parser::parse_op
 - `src/report.rs` — Spec Hygiene Report: `analyze(&ApiDocumentation, &DocConfig) -> HygieneReport` (counts plus lists, data-only so a future TUI can reuse it) and `write_report`. Analyzes the same filtered endpoint set the body rendered (`markdown::visible_endpoints`); service count is services with at least one visible endpoint. `Endpoint.untagged` is set by the parser when the default-service fallback fired, which is the only way to tell an untagged operation from one tagged with the default name.
 - `src/diff/` — `diff` subcommand: `diff(&old, &new) -> SpecDiff` (data-only `Vec<Change>`), `severity(&Change) -> Severity` (the whole breaking/non-breaking/review rule table lives in `mod.rs`, doc-commented and unit-tested row by row), `compute_deltas` for `--report`, and `write_diff` (in `render.rs`). The OpenAPI-agnostic JSON value differ (`diff_values`, `ValueChange`, `locate`) lives in `value.rs`; machine-readable `--format json` output lives in `json.rs`. Endpoints match on `(METHOD, path)`; `diff_with(.., EndpointMatching::Moves)` then pairs leftovers whose key is unique across each whole document (same method; operationId, then whole `v<digits>` segments; linear, HashMap-indexed) as `EndpointMoved`, attributing inner changes to the new endpoint. Parameters match on `(name, in)`, responses on status code. Bodies are compared as resolved schemas: `utils::resolve_schema_value` inlines every `$ref` (ref-stack cycle guard, depth cap 24, unresolvable refs kept literal), `utils::canonicalize_schema_value` sorts `required`/`enum`, strips `description`/`title`/`example(s)`/`deprecated`/`x-*` from schema objects (not from property names) and sorts keys, then the generic `diff_values` yields JSON-pointer `ValueChange`s. OAS2 non-body parameter types are rebuilt from `type`/`format`/`items`/`enum` in `Parameter.extensions`.
 - `src/stats.rs` — `--stats` dry-run: one row per visible service, `~TOKENS` = `markdown::estimate_tokens` of a real render narrowed to that service, `TOTAL` = one whole-document render (so rows need not sum to the total; multi-tag endpoints count once in TOTAL). Conflicts with `-o` and `--max-tokens`.
+- `src/costs.rs` — `--costs` dry-run (#47): per-endpoint slice costs, per-schema definition/use/amplification rows, and hotspots. Conflicts with `-o`, `--max-tokens`, `--stats`, split/Skill output, and schema selection; `--inline-schemas` is honored.
 - `src/selection.rs` — diagnostics for `--operation`/`--operation-id` (the `OperationSelector` in `DocConfig`, applied as one more filter in `views::passes_filters`): `unmatched_selectors` checks every value against the whole spec before rendering (exit 1, with a deterministic edit-distance hint), and `filtered_out_warnings` names the filters (`views::removing_filters`) that removed a selected operation. `--operation` paths match `Endpoint::path` byte for byte — the same string `diff` reports, without Swagger 2 `basePath`.
 - `src/utils.rs` — `$ref` resolution against `components`/`definitions`, server URL and security-scheme extraction, anchor-id cleaning, response content-type detection.
 
@@ -78,28 +79,33 @@ input/output direction, pagination evidence and future GraphQL/protobuf mappings
 
 ## Protobuf adapter
 
-`src/contract/protobuf.rs` compiles `.proto` with explicitly required protoc and
-Rust-decodes complete binary FileDescriptorSets. Proto2/proto3 only: reject
-Editions/unknown syntax before prost-reflect, which cannot safely decode their
-features. Preserve original descriptor bytes and custom options. Neutral field
-IDs use message FQN+number; enum label IDs add names to preserve aliases. Safe
-same-number renames break source/JSON only; reserved-identity reuse and type
-changes supply wire evidence. Enum reserved bounds use wide integers.
+`src/contract/protobuf.rs` compiles `.proto` sources in pure Rust with `protox`
+(including Google well-known imports and `source_code_info`, no external
+`protoc` required) and Rust-decodes complete binary FileDescriptorSets.
+Proto2/proto3 only: reject Editions/unknown syntax before prost-reflect, which
+cannot safely decode their features. Preserve original descriptor bytes and
+custom options. Neutral field IDs use message FQN+number; enum label IDs add
+names to preserve aliases. Safe same-number renames break source/JSON only;
+reserved-identity reuse and type changes supply wire evidence. Enum reserved
+bounds use wide integers.
 
 `--breaking` scopes protobuf failure gates only; `--contract 1` rejects protobuf
-before output creation. `cli::diff_inputs` materializes committed regular proto
-files in temp snapshots, using only ref-relative confined import roots. Do not
-read imports from current worktree during Git comparisons or extend OpenAPI
-candidate discovery implicitly. Renderer IR uses native RPC/result labels;
-existing budgets/schema selectors/Skill manifest protection apply. Tests in
-`tests/protobuf.rs` and `tests/protobuf_cli.rs` require protoc for source coverage;
-CI installs a pinned checksum-verified official compiler without system changes.
-See `docs/protobuf.md` and fixture provenance for limitations and native rules.
+before output creation. `cli::diff_inputs` resolves committed regular proto
+files directly from Git blobs in memory via a custom `protox` `FileResolver`,
+using only ref-relative confined import roots. Do not read imports from current
+worktree during Git comparisons or extend OpenAPI candidate discovery
+implicitly. Renderer IR uses native RPC/result labels; existing budgets/schema
+selectors/Skill manifest protection apply. Tests in `tests/protobuf.rs` and
+`tests/protobuf_cli.rs` cover pure-Rust source compilation, descriptor parity
+(CI installs a pinned checksum-verified `protoc` solely for the `protoc`
+descriptor parity test), and Git-ref resolution. See `docs/protobuf.md` and
+fixture provenance for limitations and native rules.
 
 ## GraphQL adapter
 
-`src/contract/graphql.rs` parses SDL with graphql-parser (multi-file merge,
-extensions applied after all definitions, duplicate/unknown types rejected)
+`src/contract/graphql.rs` parses SDL with apollo-parser (multi-file merge,
+schema and type extensions applied after all definitions, duplicate/unknown
+types rejected)
 and introspection JSON into one `Document`; built-in scalars and `__` types are
 excluded so both sources compare equal. Defaults are canonical GraphQL
 literals. `diff` owns the directional rule table and native rule names;

@@ -141,3 +141,228 @@ fn yaml_without_openapi_fields_fails() {
             "Missing 'swagger' or 'openapi' field",
         ));
 }
+
+// YAML 1.2 strict booleans keep unquoted Norway-problem literals (NO/yes/on/off)
+// and leading-zero/underscored scalars (007, 1_000) as strings in untyped JSON
+// values (enum, examples, extensions), while numeric HTTP status keys (200:, 404:)
+// coerce cleanly into response map keys.
+#[test]
+fn yaml_preserves_norway_strings_and_unquoted_status_codes() {
+    let dir = tempfile::tempdir().unwrap();
+    let yaml_path = dir.path().join("norway.yaml");
+    let json_path = dir.path().join("norway.json");
+    std::fs::write(
+        &yaml_path,
+        r#"openapi: 3.0.3
+info:
+  title: Country API
+  version: 1.0.0
+paths:
+  /countries:
+    get:
+      summary: List countries
+      responses:
+        200:
+          description: OK
+          content:
+            application/json:
+              example:
+                country: NO
+                enabled_label: yes
+                mode: on
+                fallback: off
+                zip: 007
+                batch: 1_000
+              schema:
+                type: object
+                properties:
+                  code:
+                    type: string
+                    enum:
+                      - NO
+                      - SE
+                      - yes
+                      - on
+                      - off
+        404:
+          description: Not found
+"#,
+    )
+    .unwrap();
+    std::fs::write(
+        &json_path,
+        serde_json::json!({
+            "openapi": "3.0.3",
+            "info": { "title": "Country API", "version": "1.0.0" },
+            "paths": {
+                "/countries": {
+                    "get": {
+                        "summary": "List countries",
+                        "responses": {
+                            "200": {
+                                "description": "OK",
+                                "content": {
+                                    "application/json": {
+                                        "example": {
+                                            "country": "NO",
+                                            "enabled_label": "yes",
+                                            "mode": "on",
+                                            "fallback": "off",
+                                            "zip": "007",
+                                            "batch": "1_000"
+                                        },
+                                        "schema": {
+                                            "type": "object",
+                                            "properties": {
+                                                "code": {
+                                                    "type": "string",
+                                                    "enum": ["NO", "SE", "yes", "on", "off"]
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            },
+                            "404": { "description": "Not found" }
+                        }
+                    }
+                }
+            }
+        })
+        .to_string(),
+    )
+    .unwrap();
+
+    let render = |p: &std::path::Path| {
+        String::from_utf8(
+            vimanam()
+                .arg(p)
+                .args([
+                    "--detail",
+                    "full",
+                    "--include-schemas",
+                    "--include-examples",
+                    "--no-report",
+                ])
+                .assert()
+                .success()
+                .get_output()
+                .stdout
+                .clone(),
+        )
+        .unwrap()
+    };
+    let yaml_md = render(&yaml_path);
+    let json_md = render(&json_path);
+    assert_eq!(yaml_md, json_md);
+    assert!(yaml_md.contains("| 200 |"));
+    assert!(yaml_md.contains("| 404 |"));
+    assert!(yaml_md.contains("\"country\": \"NO\""));
+    assert!(yaml_md.contains("\"zip\": \"007\""));
+    assert!(yaml_md.contains("\"batch\": \"1_000\""));
+
+    let diff_out = vimanam()
+        .arg("diff")
+        .arg(&json_path)
+        .arg(&yaml_path)
+        .args(["--format", "json"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let diff: serde_json::Value = serde_json::from_slice(&diff_out).unwrap();
+    assert_eq!(
+        diff["changes"],
+        serde_json::json!([]),
+        "YAML and JSON twins must have zero semantic diff: {diff}"
+    );
+}
+
+// YAML anchors and `<<:` merge keys expand cleanly into OpenAPI structures.
+#[test]
+fn yaml_merge_keys_expand_anchors() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("merge.yaml");
+    std::fs::write(
+        &path,
+        r#"openapi: 3.0.3
+info:
+  title: Merge API
+  version: 1.0.0
+x-shared-ok: &shared_ok
+  description: Shared OK response
+paths:
+  /ping:
+    get:
+      summary: Ping
+      responses:
+        200:
+          <<: *shared_ok
+"#,
+    )
+    .unwrap();
+
+    vimanam()
+        .arg(&path)
+        .args(["--detail", "full", "--no-report"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Shared OK response"));
+}
+
+// Duplicate YAML mapping keys are rejected instead of silently overwriting.
+#[test]
+fn yaml_duplicate_keys_are_rejected() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("dup.yaml");
+    std::fs::write(
+        &path,
+        r#"openapi: 3.0.3
+info:
+  title: First
+  title: Second
+  version: 1.0.0
+paths: {}
+"#,
+    )
+    .unwrap();
+
+    vimanam()
+        .arg(&path)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("duplicate"));
+}
+
+// Reusing one shared anchor via `<<:` across 120 endpoints must not trip
+// serde-saphyr's alias-to-anchor ratio heuristic while keeping alias-bomb
+// bounds active.
+#[test]
+fn yaml_high_alias_to_anchor_ratio_succeeds() {
+    use std::fmt::Write as _;
+
+    let mut yaml = String::from(
+        "openapi: 3.0.3\ninfo:\n  title: Shared Anchor API\n  version: 1.0.0\nx-shared-ok: &shared_ok\n  description: Shared OK response\npaths:\n",
+    );
+    for i in 0..120 {
+        writeln!(
+            yaml,
+            "  /items/{i}:\n    get:\n      summary: Item {i}\n      responses:\n        200:\n          <<: *shared_ok"
+        )
+        .unwrap();
+    }
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("many_aliases.yaml");
+    std::fs::write(&path, yaml).unwrap();
+
+    vimanam()
+        .arg(&path)
+        .args(["--detail", "full", "--no-report"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("/items/0"))
+        .stdout(predicate::str::contains("/items/119"))
+        .stdout(predicate::str::contains("Shared OK response"));
+}

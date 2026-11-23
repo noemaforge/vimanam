@@ -232,6 +232,8 @@ fn protobuf_native_markdown_budget_and_skill() {
         .clone();
     let text = String::from_utf8(out).unwrap();
     assert!(text.contains("server streaming"));
+    assert!(text.contains("Performs a watch for the serving status"));
+    assert!(text.contains("Used only by the Watch method."));
     assert!(text.contains("Field #1"));
     assert!(text.contains("#### Result"));
     assert!(!text.contains("| 200 |"));
@@ -490,4 +492,518 @@ fn unsupported_editions_source_leaves_output_untouched() {
         .failure()
         .stderr(predicates::str::contains("Editions are not yet supported"));
     assert!(!out.exists());
+
+    // Imported Editions file with leading comments is also rejected cleanly.
+    let imported = file(
+        &t,
+        "dep.proto",
+        "// leading comment\n/* block */\nedition = \"2023\";\nmessage Dep { string id = 1; }\n",
+    );
+    let _ = imported;
+    let main = file(
+        &t,
+        "main.proto",
+        "syntax = \"proto3\"; import \"dep.proto\"; message Main { Dep d = 1; }",
+    );
+    binary()
+        .arg(&main)
+        .arg("-o")
+        .arg(&out)
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains("Editions are not yet supported"));
+    assert!(!out.exists());
+}
+
+#[test]
+fn proto_source_compiles_without_protoc_on_path() {
+    let t = tempfile::tempdir().unwrap();
+    let a = file(
+        &t,
+        "old.proto",
+        r#"syntax = "proto3";
+package demo.v1;
+import "google/protobuf/timestamp.proto";
+// Sample message.
+message Event {
+  string id = 1;
+  google.protobuf.Timestamp created_at = 2;
+}
+service Events {
+  // Fetch an event.
+  rpc Get(Event) returns (Event);
+}
+"#,
+    );
+    let b = file(
+        &t,
+        "new.proto",
+        r#"syntax = "proto3";
+package demo.v1;
+import "google/protobuf/timestamp.proto";
+message Event {
+  string id = 1;
+  google.protobuf.Timestamp created_at = 2;
+  string label = 3;
+}
+service Events {
+  rpc Get(Event) returns (Event);
+}
+"#,
+    );
+    // Single-file Markdown rendering with empty PATH (no protoc binary available).
+    let rendered = binary()
+        .env("PATH", "")
+        .arg(&a)
+        .args(["--detail", "full", "--include-schemas", "--no-report"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let markdown = String::from_utf8(rendered).unwrap();
+    assert!(markdown.contains("Fetch an event."));
+    assert!(markdown.contains("Sample message."));
+
+    // Source-to-source diff with empty PATH (no protoc binary available).
+    let diff_out = binary()
+        .env("PATH", "")
+        .arg("diff")
+        .arg(&a)
+        .arg(&b)
+        .args(["--format", "json"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let json: Value = serde_json::from_slice(&diff_out).unwrap();
+    assert_eq!(json["schema_version"], 2);
+    assert_eq!(json["summary"]["breaking"], 0);
+    assert!(json["summary"]["non_breaking"].as_u64().unwrap() >= 1);
+}
+
+#[test]
+fn shadowed_proto_include_roots_fail_in_file_and_git_diff() {
+    let t = tempfile::tempdir().unwrap();
+    let v1 = t.path().join("v1");
+    let v2 = t.path().join("v2");
+    fs::create_dir_all(&v1).unwrap();
+    fs::create_dir_all(&v2).unwrap();
+    fs::write(
+        v1.join("api.proto"),
+        "syntax = \"proto3\";\npackage demo;\nmessage M { string old_name = 1; }\n",
+    )
+    .unwrap();
+    fs::write(
+        v2.join("api.proto"),
+        "syntax = \"proto3\";\npackage demo;\nmessage M { string new_name = 1; }\n",
+    )
+    .unwrap();
+
+    // File-pair diff rejects shadowed entry ahead of earlier -I root and leaves -o untouched.
+    let out = file(&t, "file_out.md", "keep existing");
+    binary()
+        .arg("diff")
+        .arg(v2.join("api.proto"))
+        .arg(v2.join("api.proto"))
+        .args(["-I"])
+        .arg(&v1)
+        .args(["-I"])
+        .arg(&v2)
+        .arg("-o")
+        .arg(&out)
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains("shadowed"));
+    assert_eq!(fs::read_to_string(&out).unwrap(), "keep existing");
+
+    // Reversing -I so v2 precedes v1 is not shadowed and succeeds.
+    binary()
+        .arg("diff")
+        .arg(v2.join("api.proto"))
+        .arg(v2.join("api.proto"))
+        .args(["-I"])
+        .arg(&v2)
+        .args(["-I"])
+        .arg(&v1)
+        .assert()
+        .success();
+
+    // Git-ref diff also rejects shadowed entry roots and leaves -o untouched.
+    git(t.path(), &["init", "-q"]);
+    git(t.path(), &["config", "user.name", "Public test"]);
+    git(t.path(), &["config", "user.email", "test@example.invalid"]);
+    git(t.path(), &["add", "v1/api.proto", "v2/api.proto"]);
+    git(t.path(), &["commit", "-qm", "old"]);
+    git(t.path(), &["tag", "old"]);
+    fs::write(
+        v2.join("api.proto"),
+        "syntax = \"proto3\";\npackage demo;\nmessage M { string new_name = 1; string extra = 2; }\n",
+    )
+    .unwrap();
+    git(t.path(), &["add", "v2/api.proto"]);
+    git(t.path(), &["commit", "-qm", "new"]);
+    git(t.path(), &["tag", "new"]);
+
+    let git_out = file(&t, "git_out.md", "keep git existing");
+    binary()
+        .current_dir(t.path())
+        .args([
+            "diff",
+            "--from-ref",
+            "old",
+            "--to-ref",
+            "new",
+            "--spec",
+            "v2/api.proto",
+            "-I",
+            "v1",
+            "-I",
+            "v2",
+            "-o",
+        ])
+        .arg(&git_out)
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains("shadowed"));
+    assert_eq!(fs::read_to_string(&git_out).unwrap(), "keep git existing");
+
+    // Non-shadowed Git-ref root order succeeds and diffs v2/api.proto.
+    let diff_out = binary()
+        .current_dir(t.path())
+        .args([
+            "diff",
+            "--from-ref",
+            "old",
+            "--to-ref",
+            "new",
+            "--spec",
+            "v2/api.proto",
+            "-I",
+            "v2",
+            "-I",
+            "v1",
+            "--format",
+            "json",
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let json: Value = serde_json::from_slice(&diff_out).unwrap();
+    assert_eq!(json["summary"]["breaking"], 0);
+    assert!(json["summary"]["non_breaking"].as_u64().unwrap() >= 1);
+}
+
+#[test]
+fn proto_ref_field_docs_render_in_linked_inline_split_and_skill_modes() {
+    let t = tempfile::tempdir().unwrap();
+    let spec = file(
+        &t,
+        "widgets.proto",
+        r#"syntax = "proto3";
+package demo.v1;
+
+// Manages widget records.
+service WidgetService {
+  // Fetch a widget.
+  rpc GetWidget(Widget) returns (Widget);
+}
+
+// Owner metadata.
+message Owner {
+  // Owner display name.
+  string name = 1;
+}
+
+// Lifecycle status.
+enum Status {
+  STATUS_UNSPECIFIED = 0;
+  // Active widget.
+  STATUS_ACTIVE = 1;
+}
+
+// A stored widget.
+message Widget {
+  // Primary owner metadata.
+  Owner owner = 1;
+  // Current lifecycle state.
+  Status status = 2;
+  // Arbitrary key-value labels.
+  map<string, string> labels = 3;
+}
+"#,
+    );
+
+    // Single-file default linked mode and --inline-schemas mode.
+    for extra in [vec![], vec!["--inline-schemas"]] {
+        let out = binary()
+            .arg(&spec)
+            .args(["--detail", "full", "--include-schemas", "--no-report"])
+            .args(&extra)
+            .assert()
+            .success()
+            .get_output()
+            .stdout
+            .clone();
+        let md = String::from_utf8(out).unwrap();
+        assert!(md.contains("Primary owner metadata."), "{extra:?}:\n{md}");
+        assert!(
+            md.contains("Field #1; JSON name `owner`"),
+            "{extra:?}:\n{md}"
+        );
+        assert!(md.contains("Current lifecycle state."), "{extra:?}:\n{md}");
+        assert!(
+            md.contains("Field #2; JSON name `status`"),
+            "{extra:?}:\n{md}"
+        );
+        assert!(
+            md.contains("Arbitrary key-value labels."),
+            "{extra:?}:\n{md}"
+        );
+        assert!(
+            md.contains("Field #3; JSON name `labels`"),
+            "{extra:?}:\n{md}"
+        );
+        assert!(md.contains("Active widget."), "{extra:?}:\n{md}");
+    }
+
+    // HealthCheckResponse.status singular enum field retains Field #1 in linked and inline modes.
+    for extra in [vec![], vec!["--inline-schemas"]] {
+        let out = binary()
+            .arg(fixture("health-v1.20.0.proto"))
+            .args(["--detail", "full", "--include-schemas", "--no-report"])
+            .args(&extra)
+            .assert()
+            .success()
+            .get_output()
+            .stdout
+            .clone();
+        let md = String::from_utf8(out).unwrap();
+        assert!(
+            md.contains("Field #1; JSON name `status`"),
+            "missing HealthCheckResponse.status field note ({extra:?}):\n{md}"
+        );
+        assert!(
+            md.contains("Used only by the Watch method."),
+            "missing ServingStatus enum value comment ({extra:?}):\n{md}"
+        );
+    }
+
+    // Split and Skill tree modes keep field comments on schema pages too.
+    for (name, flag, value) in [
+        ("split", "--split", "endpoint"),
+        ("skill", "--output-mode", "skill"),
+    ] {
+        let dir = t.path().canonicalize().unwrap().join(name);
+        binary()
+            .arg(&spec)
+            .args([flag, value, "--detail", "full", "--include-schemas", "-o"])
+            .arg(&dir)
+            .assert()
+            .success();
+        let schema_dir = dir.join("schemas");
+        let mut combined = String::new();
+        for entry in fs::read_dir(&schema_dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.extension().is_some_and(|e| e == "md") {
+                combined.push_str(&fs::read_to_string(path).unwrap());
+            }
+        }
+        assert!(
+            combined.contains("Primary owner metadata."),
+            "{name}:\n{combined}"
+        );
+        assert!(
+            combined.contains("Field #1; JSON name `owner`"),
+            "{name}:\n{combined}"
+        );
+        assert!(
+            combined.contains("Current lifecycle state."),
+            "{name}:\n{combined}"
+        );
+        assert!(
+            combined.contains("Field #2; JSON name `status`"),
+            "{name}:\n{combined}"
+        );
+        assert!(
+            combined.contains("Arbitrary key-value labels."),
+            "{name}:\n{combined}"
+        );
+        assert!(
+            combined.contains("Field #3; JSON name `labels`"),
+            "{name}:\n{combined}"
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn symlinked_protos_compile_diff_and_enforce_shadowing_identically() {
+    use std::os::unix::fs::symlink;
+
+    let t = tempfile::tempdir().unwrap();
+    let shared = t.path().join("shared");
+    let proto = t.path().join("proto");
+    fs::create_dir_all(&shared).unwrap();
+    fs::create_dir_all(proto.join("v1")).unwrap();
+
+    // 1. Direct symlink under -I: proto/api.proto -> ../shared/api.proto
+    fs::write(
+        shared.join("api.proto"),
+        "syntax = \"proto3\"; package demo; service Ping { rpc Check(Req) returns (Req); } message Req { string id = 1; }\n",
+    )
+    .unwrap();
+    symlink(shared.join("api.proto"), proto.join("api.proto")).unwrap();
+
+    binary()
+        .arg(proto.join("api.proto"))
+        .args(["-I"])
+        .arg(&proto)
+        .arg("--no-report")
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("demo.Ping.Check"));
+
+    binary()
+        .arg("diff")
+        .arg(proto.join("api.proto"))
+        .arg(proto.join("api.proto"))
+        .args(["-I"])
+        .arg(&proto)
+        .args(["--format", "json"])
+        .assert()
+        .success();
+
+    // 2. Subdirectory symlink under -I importing a symlinked dependency:
+    // both compile (conversion) and compile_bytes (diff) preserve `v1/api.proto`
+    // and produce identical neutral contracts.
+    let store = t.path().join("store");
+    fs::create_dir_all(&store).unwrap();
+    fs::write(
+        store.join("dep.proto"),
+        "syntax = \"proto3\"; package demo.v1; message Dep { string value = 1; }\n",
+    )
+    .unwrap();
+    fs::write(
+        store.join("api.proto"),
+        "syntax = \"proto3\"; package demo.v1; import \"v1/dep.proto\"; service S { rpc Get(Dep) returns (Dep); }\n",
+    )
+    .unwrap();
+    symlink(store.join("dep.proto"), proto.join("v1/dep.proto")).unwrap();
+    symlink(store.join("api.proto"), proto.join("v1/api.proto")).unwrap();
+
+    binary()
+        .arg(proto.join("v1/api.proto"))
+        .args(["-I"])
+        .arg(&proto)
+        .args(["--detail", "full", "--include-schemas", "--no-report"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("demo.v1.S.Get"));
+
+    let diff_out = binary()
+        .arg("diff")
+        .arg(proto.join("v1/api.proto"))
+        .arg(proto.join("v1/api.proto"))
+        .args(["-I"])
+        .arg(&proto)
+        .args(["--format", "json"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let json: Value = serde_json::from_slice(&diff_out).unwrap();
+    let doc = vimanam::contract::protobuf::Document::read(
+        &proto.join("v1/api.proto"),
+        std::slice::from_ref(&proto),
+    )
+    .unwrap();
+    let expected_contract = serde_json::to_value(vimanam::contract::protobuf::adapt(&doc)).unwrap();
+    assert_eq!(json["old"]["contract"], expected_contract);
+    assert_eq!(json["new"]["contract"], expected_contract);
+    let file_names: Vec<_> = json["old"]["contract"]["entities"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|e| e["attributes"]["kind"] == "file")
+        .filter_map(|e| e["name"].as_str())
+        .collect();
+    assert!(file_names.contains(&"v1/api.proto"), "{file_names:?}");
+    assert!(file_names.contains(&"v1/dep.proto"), "{file_names:?}");
+
+    // 3. Real shadow fails in both compile (single-file) and compile_bytes (diff),
+    // leaving -o untouched.
+    let v1 = t.path().join("v1");
+    let v2 = t.path().join("v2");
+    let other = t.path().join("other");
+    fs::create_dir_all(&v1).unwrap();
+    fs::create_dir_all(&v2).unwrap();
+    fs::create_dir_all(&other).unwrap();
+    fs::write(
+        v1.join("api.proto"),
+        "syntax = \"proto3\"; package demo; message M { string first = 1; }\n",
+    )
+    .unwrap();
+    fs::write(
+        other.join("api.proto"),
+        "syntax = \"proto3\"; package demo; message M { string second = 1; }\n",
+    )
+    .unwrap();
+    symlink(other.join("api.proto"), v2.join("api.proto")).unwrap();
+
+    let single_out = file(&t, "single_out.md", "keep single");
+    binary()
+        .arg(v2.join("api.proto"))
+        .args(["-I"])
+        .arg(&v1)
+        .args(["-I"])
+        .arg(&v2)
+        .arg("-o")
+        .arg(&single_out)
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains("shadowed"));
+    assert_eq!(fs::read_to_string(&single_out).unwrap(), "keep single");
+
+    let diff_file = file(&t, "diff_out.md", "keep diff");
+    binary()
+        .arg("diff")
+        .arg(v2.join("api.proto"))
+        .arg(v2.join("api.proto"))
+        .args(["-I"])
+        .arg(&v1)
+        .args(["-I"])
+        .arg(&v2)
+        .arg("-o")
+        .arg(&diff_file)
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains("shadowed"));
+    assert_eq!(fs::read_to_string(&diff_file).unwrap(), "keep diff");
+
+    // Reversing -I so v2 precedes v1 succeeds in both modes.
+    binary()
+        .arg(v2.join("api.proto"))
+        .args(["-I"])
+        .arg(&v2)
+        .args(["-I"])
+        .arg(&v1)
+        .arg("--no-report")
+        .assert()
+        .success();
+
+    binary()
+        .arg("diff")
+        .arg(v2.join("api.proto"))
+        .arg(v2.join("api.proto"))
+        .args(["-I"])
+        .arg(&v2)
+        .args(["-I"])
+        .arg(&v1)
+        .assert()
+        .success();
 }

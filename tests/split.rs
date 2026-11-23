@@ -157,7 +157,7 @@ fn skill_names_are_bounded_ascii_hyphen_case_and_metadata_round_trips() {
             .success();
         let contents = fs::read_to_string(directory.join("SKILL.md")).unwrap();
         let frontmatter = contents.split("---\n").nth(1).unwrap();
-        let metadata: serde_norway::Value = serde_norway::from_str(frontmatter).unwrap();
+        let metadata: serde_json::Value = serde_saphyr::from_str(frontmatter).unwrap();
         let name = metadata["name"].as_str().unwrap();
         assert!(!name.is_empty() && name.len() <= 64, "{title}: {name}");
         assert!(

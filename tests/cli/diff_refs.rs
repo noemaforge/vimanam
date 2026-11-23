@@ -169,7 +169,7 @@ fn refs_follow_rename_chain_before_major_rewrite_and_parse_historical_formats() 
     .unwrap();
     repo.write(
         "api/current.YAML",
-        serde_norway::to_string(&new).unwrap().as_bytes(),
+        serde_saphyr::to_string(&new).unwrap().as_bytes(),
     );
     repo.commit("new");
     let flags = ["--format", "json", "--report"];

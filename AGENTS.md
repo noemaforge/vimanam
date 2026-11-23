@@ -29,7 +29,7 @@ Real-world specs for manual testing may live at the repo root: `swagger.json` (s
 
 ## Architecture
 
-The executable in `main.rs` handles argument parsing, logging and exit codes; it delegates to the feature-gated `cli::run` adapter with a writer and notice callback. Core library modules never write to stdout/stderr. Pipeline in `cli::run`: CLI args → `config::build_config` → `parser::parse_openapi` → `markdown::generate_markdown` → `report::write_report` (unless `--no-report`). Three paths short-circuit before the pipeline: the `completions <SHELL>` subcommand (`Commands` enum in `config.rs`, rendered with `clap_complete`), the `diff <OLD> <NEW>` subcommand (`Commands::Diff(DiffArgs)`, handled by `cli::run_diff`), and `--stats`, which computes `stats::compute` and prints a table instead of Markdown. `cli::run` returns whether breaking changes need exit 3; `main` maps errors to exit 1. `src/lib.rs` deliberately reexports parsing, IR/config models, diff/JSON types, operation/schema validation and Markdown rendering. Default feature `cli` enables clap, clap_complete and env_logger; the binary and CLI integration harnesses require it. `cargo test --no-default-features` covers the core and public consumer tests.
+The executable in `main.rs` handles argument parsing, logging and exit codes; it delegates to the feature-gated `cli::run` adapter with a writer and notice callback. Core library modules never write to stdout/stderr. Pipeline in `cli::run`: CLI args → `config::build_config` → `parser::parse_openapi` → `markdown::generate_markdown` → `report::write_report` (unless `--no-report`). Five paths short-circuit before the pipeline: the `completions <SHELL>` subcommand (`Commands` enum in `config.rs`, rendered with `clap_complete` / `clap_complete_nushell`), the `man [--out-dir DIR]` subcommand (`Commands::Man`, rendered with `clap_mangen`), the `diff <OLD> <NEW>` subcommand (`Commands::Diff(Box<DiffArgs>)`, handled by `cli::run_diff`), `--stats`, which computes `stats::compute` and prints a table instead of Markdown, and `--costs`, which computes `costs::compute` and prints token-cost breakdowns. `cli::run` returns whether breaking changes need exit 3; `main` maps errors to exit 1. `src/lib.rs` deliberately reexports parsing, IR/config models, diff/JSON types, operation/schema validation and Markdown rendering. Default feature `cli` enables `clap`, `clap_complete`, `clap_complete_nushell`, `clap_mangen`, and `env_logger`; the binary and CLI integration harnesses require it. `cargo test --no-default-features` covers the core and public consumer tests.
 
 - `src/cli/config.rs` — clap `Cli` struct and `*Arg` value enums, converted into the internal `DocConfig`. Grouping precedence in `build_config`: `--flat` > `--method` > `--group-by` > default (service). `input` is `Option<PathBuf>` marked `required = true` with `subcommand_negates_reqs` on the command, so `vimanam completions bash` needs no FILE while bare `vimanam` still errors; `args_conflicts_with_subcommands` rejects mixing conversion flags with a subcommand.
 - `src/cli/diff_inputs.rs` — resolves file-pair or Git-ref diff inputs before output creation. `--spec` anchors a root-relative path at `--to-ref`; omission requires a unique candidate there, followed backward via `gitrefs::Repository::materialize_follow`. Paired `--from-spec`/`--to-spec` materialize literal per-ref paths for undetectable move+rewrite histories. Actual historical paths choose the parser, and the same bytes supply JSON hashes and the existing semantic diff pipeline. No candidate fallback when lineage fails.
@@ -78,28 +78,33 @@ input/output direction, pagination evidence and future GraphQL/protobuf mappings
 
 ## Protobuf adapter
 
-`src/contract/protobuf.rs` compiles `.proto` with explicitly required protoc and
-Rust-decodes complete binary FileDescriptorSets. Proto2/proto3 only: reject
-Editions/unknown syntax before prost-reflect, which cannot safely decode their
-features. Preserve original descriptor bytes and custom options. Neutral field
-IDs use message FQN+number; enum label IDs add names to preserve aliases. Safe
-same-number renames break source/JSON only; reserved-identity reuse and type
-changes supply wire evidence. Enum reserved bounds use wide integers.
+`src/contract/protobuf.rs` compiles `.proto` sources in pure Rust with `protox`
+(including Google well-known imports and `source_code_info`, no external
+`protoc` required) and Rust-decodes complete binary FileDescriptorSets.
+Proto2/proto3 only: reject Editions/unknown syntax before prost-reflect, which
+cannot safely decode their features. Preserve original descriptor bytes and
+custom options. Neutral field IDs use message FQN+number; enum label IDs add
+names to preserve aliases. Safe same-number renames break source/JSON only;
+reserved-identity reuse and type changes supply wire evidence. Enum reserved
+bounds use wide integers.
 
 `--breaking` scopes protobuf failure gates only; `--contract 1` rejects protobuf
-before output creation. `cli::diff_inputs` materializes committed regular proto
-files in temp snapshots, using only ref-relative confined import roots. Do not
-read imports from current worktree during Git comparisons or extend OpenAPI
-candidate discovery implicitly. Renderer IR uses native RPC/result labels;
-existing budgets/schema selectors/Skill manifest protection apply. Tests in
-`tests/protobuf.rs` and `tests/protobuf_cli.rs` require protoc for source coverage;
-CI installs a pinned checksum-verified official compiler without system changes.
-See `docs/protobuf.md` and fixture provenance for limitations and native rules.
+before output creation. `cli::diff_inputs` resolves committed regular proto
+files directly from Git blobs in memory via a custom `protox` `FileResolver`,
+using only ref-relative confined import roots. Do not read imports from current
+worktree during Git comparisons or extend OpenAPI candidate discovery
+implicitly. Renderer IR uses native RPC/result labels; existing budgets/schema
+selectors/Skill manifest protection apply. Tests in `tests/protobuf.rs` and
+`tests/protobuf_cli.rs` cover pure-Rust source compilation, descriptor parity
+(CI installs a pinned checksum-verified `protoc` solely for the `protoc`
+descriptor parity test), and Git-ref resolution. See `docs/protobuf.md` and
+fixture provenance for limitations and native rules.
 
 ## GraphQL adapter
 
-`src/contract/graphql.rs` parses SDL with graphql-parser (multi-file merge,
-extensions applied after all definitions, duplicate/unknown types rejected)
+`src/contract/graphql.rs` parses SDL with apollo-parser (multi-file merge,
+schema and type extensions applied after all definitions, duplicate/unknown
+types rejected)
 and introspection JSON into one `Document`; built-in scalars and `__` types are
 excluded so both sources compare equal. Defaults are canonical GraphQL
 literals. `diff` owns the directional rule table and native rule names;
