@@ -333,7 +333,7 @@ pub fn run<W: Write>(cli: &Cli, output: &mut W, notice: &mut dyn FnMut(&str)) ->
                     .with_context(|| format!("Failed to write man pages to {dir:?}"))?;
             } else {
                 let mut page = Vec::new();
-                clap_mangen::Man::new(Cli::command())
+                clap_mangen::Man::new(Cli::command().disable_help_subcommand(true))
                     .render(&mut page)
                     .context("Failed to render manual page")?;
                 output

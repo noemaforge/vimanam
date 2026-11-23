@@ -972,6 +972,28 @@ fn extend_schema_merges_roots_and_rejects_duplicates() {
         "{err}"
     );
 
+    // `extend schema` cannot override or duplicate an implicit Query root.
+    for (label, text) in [
+        (
+            "override.graphql",
+            "type Query { a: Int } type Other { b: Int } extend schema { query: Other }",
+        ),
+        (
+            "same.graphql",
+            "type Query { a: Int } extend schema { query: Query }",
+        ),
+    ] {
+        let err = Document::from_sdl(&[(label.into(), text.into())])
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains(&format!(
+                "Duplicate GraphQL query root operation in {label}"
+            )),
+            "{err}"
+        );
+    }
+
     // Executable operations are rejected in SDL inputs.
     let exec_err = Document::from_sdl(&[("q.graphql".into(), "query { viewer { id } }".into())])
         .unwrap_err()
@@ -1093,5 +1115,54 @@ fn symlinked_sdl_is_followed_once_and_loops_terminate() {
             .unwrap_err()
             .to_string()
             .contains("dangling.graphql")
+    );
+}
+
+#[test]
+fn braceless_or_empty_schema_definitions_are_rejected() {
+    for (label, text) in [
+        ("braceless.graphql", "schema\ntype Query { a: Int }"),
+        (
+            "directive_only.graphql",
+            "schema @dir\ntype Query { a: Int }",
+        ),
+        ("empty.graphql", "schema {}\ntype Query { a: Int }"),
+        ("empty_ext.graphql", "type Query { a: Int }\nextend schema"),
+        (
+            "empty_ext_braces.graphql",
+            "type Query { a: Int }\nextend schema {}",
+        ),
+        (
+            "empty_ext_dir_braces.graphql",
+            "type Query { a: Int }\nextend schema @dir {}",
+        ),
+    ] {
+        let err = Document::from_sdl(&[(label.into(), text.into())])
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains(label), "{label}: {err}");
+    }
+
+    // Directive-only `extend schema @dir` is valid per spec and keeps implicit Query.
+    let doc = Document::from_sdl(&[(
+        "dir_ext.graphql".into(),
+        "directive @dir on SCHEMA\ntype Query { a: Int }\nextend schema @dir".into(),
+    )])
+    .unwrap();
+    assert_eq!(doc.roots.get("query").map(String::as_str), Some("Query"));
+}
+
+#[test]
+fn canonical_literal_rejects_injections_and_allows_trailing_comments() {
+    for invalid in ["42 @deprecated", "42) { x } #", "42) { x }", "42, $x: Int"] {
+        assert!(
+            graphql::canonical_literal(invalid).is_err(),
+            "expected error for {invalid:?}"
+        );
+    }
+    assert_eq!(graphql::canonical_literal("42 # comment").unwrap(), "42");
+    assert_eq!(
+        graphql::canonical_literal("{ b: 2, a: 1 } # trailing").unwrap(),
+        "{a: 1, b: 2}"
     );
 }

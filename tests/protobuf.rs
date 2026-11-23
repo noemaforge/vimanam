@@ -771,3 +771,70 @@ message Widget {
         Some("Protocol Buffers message")
     );
 }
+
+#[test]
+fn ref_field_comments_and_numbers_render_in_linked_and_inline_markdown() {
+    let doc = source(
+        r#"
+// Manages widget records.
+service WidgetService {
+  // Fetch a widget.
+  rpc GetWidget(Widget) returns (Widget);
+}
+
+// Owner metadata.
+message Owner {
+  // Owner display name.
+  string name = 1;
+}
+
+// Lifecycle status of a widget.
+enum Status {
+  STATUS_UNSPECIFIED = 0; // Default unset status.
+  // Active and serving traffic.
+  STATUS_ACTIVE = 1;
+}
+
+// A stored widget.
+message Widget {
+  // Primary owner metadata.
+  Owner owner = 1;
+  // Current lifecycle state.
+  Status status = 2;
+  // Arbitrary key-value labels.
+  map<string, string> labels = 3;
+}
+"#,
+    );
+    let api_doc = protobuf::documentation(&doc);
+
+    for inline in [false, true] {
+        let mut config = vimanam::DocConfig::unfiltered();
+        config.inline_schemas = inline;
+        let mut out = Vec::new();
+        vimanam::markdown::generate_markdown(&mut out, &api_doc, &config).unwrap();
+        let md = String::from_utf8(out).unwrap();
+
+        assert!(
+            md.contains("Primary owner metadata.") && md.contains("Field #1; JSON name `owner`"),
+            "missing singular message field docs (inline={inline}):\n{md}"
+        );
+        assert!(
+            md.contains("Current lifecycle state.") && md.contains("Field #2; JSON name `status`"),
+            "missing singular enum field docs (inline={inline}):\n{md}"
+        );
+        assert!(
+            md.contains("Arbitrary key-value labels.")
+                && md.contains("Field #3; JSON name `labels`"),
+            "missing map field docs (inline={inline}):\n{md}"
+        );
+        assert!(
+            md.contains("Active and serving traffic."),
+            "missing enum value comment (inline={inline}):\n{md}"
+        );
+        assert!(
+            md.contains("Owner display name."),
+            "missing nested message field comment (inline={inline}):\n{md}"
+        );
+    }
+}

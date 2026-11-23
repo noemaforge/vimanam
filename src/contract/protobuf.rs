@@ -149,8 +149,13 @@ pub(crate) fn compile_bytes(path: &Path, bytes: &[u8], includes: &[PathBuf]) -> 
                 .with_context(|| format!("Invalid protobuf import root: {root:?}"))?,
         );
     }
+    let parent = canonical_path
+        .parent()
+        .context("Missing protobuf input directory")?
+        .to_path_buf();
     let virtual_path = canonical_roots
         .iter()
+        .chain(std::iter::once(&parent))
         .filter_map(|root| {
             canonical_path
                 .strip_prefix(root)
@@ -159,10 +164,36 @@ pub(crate) fn compile_bytes(path: &Path, bytes: &[u8], includes: &[PathBuf]) -> 
                 .map(Path::to_path_buf)
         })
         .next()
-        .or_else(|| canonical_path.file_name().map(PathBuf::from))
         .context("Missing protobuf input filename")?;
     let virtual_name = proto_virtual_name(&virtual_path)
         .with_context(|| format!("Invalid protobuf virtual path: {virtual_path:?}"))?;
+    // Match protoc / protox::Compiler::open_file shadowing semantics before
+    // serving the hashed entry bytes ahead of include roots.
+    for root in canonical_roots.iter().chain(std::iter::once(&parent)) {
+        let candidate = root.join(&virtual_path);
+        match candidate.canonicalize() {
+            Ok(resolved) => {
+                if resolved != canonical_path {
+                    anyhow::bail!(
+                        "Protobuf source {:?} ({virtual_name}) is shadowed by {:?} in import root {:?}",
+                        canonical_path,
+                        resolved,
+                        root
+                    );
+                }
+                break;
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(_) => {
+                anyhow::bail!(
+                    "Protobuf source {:?} ({virtual_name}) is shadowed by unreadable path {:?} in import root {:?}",
+                    canonical_path,
+                    candidate,
+                    root
+                );
+            }
+        }
+    }
     let source = std::str::from_utf8(bytes)
         .with_context(|| format!("Protobuf source is not valid UTF-8: {path:?}"))?
         .to_owned();
@@ -175,10 +206,6 @@ pub(crate) fn compile_bytes(path: &Path, bytes: &[u8], includes: &[PathBuf]) -> 
     for root in canonical_roots {
         resolver.add(EditionCheckingIncludeResolver::new(root));
     }
-    let parent = canonical_path
-        .parent()
-        .context("Missing protobuf input directory")?
-        .to_path_buf();
     resolver.add(EditionCheckingIncludeResolver::new(parent));
     resolver.add(GoogleFileResolver::new());
     compile_with_resolver(resolver, Path::new(&virtual_name))
@@ -1075,6 +1102,12 @@ pub fn documentation(doc: &Document) -> crate::ApiDocumentation {
                 );
                 schema.description =
                     annotate_inline(comments.get(f.parent_file().name(), f.path()), field_note);
+                if schema.reference.is_some() {
+                    schema.extensions.insert(
+                        crate::markdown::PREFER_REF_DESCRIPTION_EXT.into(),
+                        json!(true),
+                    );
+                }
                 (f.name().to_owned(), schema)
             })
             .collect();

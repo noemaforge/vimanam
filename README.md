@@ -304,7 +304,7 @@ vimanam input.json --detail full --include-schemas --include-examples -o output.
 # Include server and authentication information
 vimanam input.json --include-auth -o output.md
 
-# Print a shell completion script (see "Shell completions" above)
+# Print a shell completion script (see "Shell completions and manual pages" above)
 vimanam completions zsh
 
 # Drop the spec hygiene report appended after the documentation
@@ -460,6 +460,7 @@ Usage: vimanam [OPTIONS] <FILE>
 
 Commands:
   completions  Generate shell completions and print them to stdout
+  man          Generate roff manual pages (stdout for vimanam(1), or --out-dir for all subcommands)
   diff         Compare two versions of a spec and report what changed, classified as breaking, non-breaking or needing review
   help         Print this message or the help of the given subcommand(s)
 

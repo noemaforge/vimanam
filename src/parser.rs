@@ -154,6 +154,11 @@ where
 /// problem" so unquoted `NO`/`yes`/`on`/`off` remain strings), keeps leading-zero
 /// and underscored scalars as strings in untyped values to match JSON/OpenAPI
 /// semantics, and keeps anti-DoS budgets sized for large multi-MB OpenAPI specs.
+/// `enforce_alias_anchor_ratio` is disabled because real OpenAPI specs routinely
+/// reuse a handful of shared response/parameter anchors across 100+ endpoints;
+/// `AliasLimits::default()` plus `max_aliases`, `max_merge_keys`,
+/// `max_recorded_anchor_events`, `max_events`, `max_nodes`, and `max_depth`
+/// remain active to guard against alias bombs.
 pub(crate) fn yaml_options() -> serde_saphyr::Options {
     serde_saphyr::options! {
         strict_booleans: true,
@@ -161,8 +166,9 @@ pub(crate) fn yaml_options() -> serde_saphyr::Options {
         underscored_numbers_as_strings: true,
         budget: serde_saphyr::budget! {
             max_events: 5_000_000,
-            max_nodes: 1_000_000,
+            max_nodes: 2_500_000,
             max_depth: 128,
+            enforce_alias_anchor_ratio: false,
         },
     }
 }

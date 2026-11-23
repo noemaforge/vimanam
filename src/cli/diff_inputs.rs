@@ -186,6 +186,30 @@ impl Input {
             .unwrap_or_else(|| entry_path.clone());
         let entry_name = proto_virtual_name(&entry_virtual)
             .with_context(|| format!("Invalid protobuf path in Git snapshot: {:?}", self.path))?;
+        // Match protoc / protox::Compiler::open_file shadowing semantics before
+        // serving the entry source ahead of earlier include roots.
+        for root_prefix in &roots {
+            let candidate = if root_prefix.as_os_str().is_empty() {
+                entry_virtual.clone()
+            } else {
+                root_prefix.join(&entry_virtual)
+            };
+            if committed_protos.contains(&candidate) {
+                if candidate != entry_path {
+                    bail!(
+                        "Protobuf source {:?} ({entry_name}) is shadowed by {:?} in import root {:?}",
+                        entry_path,
+                        candidate,
+                        if root_prefix.as_os_str().is_empty() {
+                            Path::new(".")
+                        } else {
+                            root_prefix.as_path()
+                        }
+                    );
+                }
+                break;
+            }
+        }
         let entry_source = std::str::from_utf8(&self.bytes)
             .with_context(|| format!("Protobuf source is not valid UTF-8: {:?}", self.path))?
             .to_owned();

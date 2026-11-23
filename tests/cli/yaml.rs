@@ -334,3 +334,35 @@ paths: {}
         .failure()
         .stderr(predicate::str::contains("duplicate"));
 }
+
+// Reusing one shared anchor via `<<:` across 120 endpoints must not trip
+// serde-saphyr's alias-to-anchor ratio heuristic while keeping alias-bomb
+// bounds active.
+#[test]
+fn yaml_high_alias_to_anchor_ratio_succeeds() {
+    use std::fmt::Write as _;
+
+    let mut yaml = String::from(
+        "openapi: 3.0.3\ninfo:\n  title: Shared Anchor API\n  version: 1.0.0\nx-shared-ok: &shared_ok\n  description: Shared OK response\npaths:\n",
+    );
+    for i in 0..120 {
+        writeln!(
+            yaml,
+            "  /items/{i}:\n    get:\n      summary: Item {i}\n      responses:\n        200:\n          <<: *shared_ok"
+        )
+        .unwrap();
+    }
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("many_aliases.yaml");
+    std::fs::write(&path, yaml).unwrap();
+
+    vimanam()
+        .arg(&path)
+        .args(["--detail", "full", "--no-report"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("/items/0"))
+        .stdout(predicate::str::contains("/items/119"))
+        .stdout(predicate::str::contains("Shared OK response"));
+}

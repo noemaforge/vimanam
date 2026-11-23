@@ -748,6 +748,30 @@ fn push_cutoff_row(
     });
 }
 
+/// Internal schema extension flag requesting that a `$ref` row prefer its own
+/// field-level `description` over the referenced target's description (used by
+/// non-OpenAPI adapters such as Protobuf without altering OpenAPI rendering or
+/// breaking public struct literals).
+pub(crate) const PREFER_REF_DESCRIPTION_EXT: &str = "x-vimanam-prefer-ref-description";
+
+fn prefer_ref_description(schema: &Schema) -> bool {
+    schema
+        .extensions
+        .get(PREFER_REF_DESCRIPTION_EXT)
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false)
+}
+
+fn inlined_ref_description(schema: &Schema, resolved: &Schema) -> Option<String> {
+    let field_desc = schema.description.as_deref()?;
+    match resolved.description.as_deref() {
+        Some(target) if !target.is_empty() && target != "Protocol Buffers message" => {
+            Some(format!("{field_desc}\n\n{target}"))
+        }
+        _ => Some(field_desc.to_owned()),
+    }
+}
+
 fn composition_source_index(variant: &Schema, index: usize, selected: bool) -> usize {
     if selected {
         variant
@@ -794,11 +818,18 @@ fn collect_schema_rows(
     match &schema.reference {
         // Inline mode + cycle detected.
         Some(reference) if ctx.inline && ref_stack.contains(reference) => {
+            let description = if prefer_ref_description(schema)
+                && let Some(field_desc) = &schema.description
+            {
+                format!("{field_desc}; Cycle detected while expanding schema reference")
+            } else {
+                "Cycle detected while expanding schema reference".to_string()
+            };
             rows.push(SchemaRow {
                 field: field.to_string(),
                 type_name: format!("ref {}", short_schema_reference(reference)),
                 required: required_to_string(required).to_string(),
-                description: "Cycle detected while expanding schema reference".to_string(),
+                description,
             });
             return;
         }
@@ -812,7 +843,17 @@ fn collect_schema_rows(
                 let prior_schema = ctx
                     .current_schema
                     .replace(short_schema_reference(reference));
-                collect_schema_rows(resolved, field, required, rows, ref_stack, depth + 1, ctx);
+                let mut inlined;
+                let target = if prefer_ref_description(schema)
+                    && let Some(combined) = inlined_ref_description(schema, resolved)
+                {
+                    inlined = resolved.clone();
+                    inlined.description = Some(combined);
+                    &inlined
+                } else {
+                    resolved
+                };
+                collect_schema_rows(target, field, required, rows, ref_stack, depth + 1, ctx);
                 ctx.current_schema = prior_schema;
                 ref_stack.pop();
             } else {
@@ -830,7 +871,7 @@ fn collect_schema_rows(
         // Linked mode + resolvable: emit one row pointing at the shared definition.
         Some(reference) if let Some(resolved) = resolve_schema_reference(reference, ctx.doc) => {
             let name = short_schema_reference(reference);
-            let description = if ctx.selected {
+            let description = if ctx.selected || prefer_ref_description(schema) {
                 schema
                     .description
                     .clone()

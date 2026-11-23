@@ -625,3 +625,32 @@ fn byte_paths_survive_git_nul_delimited_output() {
         SPEC.as_bytes()
     );
 }
+
+#[test]
+fn candidates_sniff_high_alias_anchor_ratio_yaml() {
+    use std::fmt::Write as _;
+
+    let Some(repo) = Repo::new() else {
+        return;
+    };
+    let mut yaml = String::from(
+        "openapi: 3.0.3\ninfo:\n  title: Shared Anchor API\n  version: 1.0.0\nx-shared-ok: &shared_ok\n  description: Shared OK response\npaths:\n",
+    );
+    for i in 0..120 {
+        writeln!(
+            yaml,
+            "  /items/{i}:\n    get:\n      summary: Item {i}\n      responses:\n        200:\n          <<: *shared_ok"
+        )
+        .unwrap();
+    }
+    repo.write("api.yaml", &yaml);
+    let commit = repo.commit("yaml with 120 aliases to one anchor");
+    let api = repo.api();
+    assert_eq!(
+        api.candidates(&commit).unwrap(),
+        [PathBuf::from("api.yaml")]
+    );
+    let spec = api.materialize(&commit, "api.yaml").unwrap();
+    let doc = vimanam::parse_openapi_bytes(&spec.bytes, "yaml", Some(&spec.path)).unwrap();
+    assert_eq!(doc.endpoints.len(), 120);
+}

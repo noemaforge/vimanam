@@ -870,13 +870,21 @@ fn completions_rejects_unsupported_shell() {
 
 #[test]
 fn man_generates_stdout_and_subcommand_pages() {
-    vimanam()
+    let stdout = vimanam()
         .arg("man")
         .assert()
         .success()
         .stdout(predicate::str::contains(".TH vimanam 1"))
         .stdout(predicate::str::contains("diff"))
-        .stderr(predicate::str::is_empty());
+        .stderr(predicate::str::is_empty())
+        .get_output()
+        .stdout
+        .clone();
+    let stdout_text = String::from_utf8(stdout.clone()).unwrap();
+    assert!(
+        !stdout_text.contains(r"vimanam\-help"),
+        "man page must not reference nonexistent vimanam-help(1)"
+    );
 
     let dir = tempfile::tempdir().unwrap();
     let out_dir = dir.path().join("man1");
@@ -887,6 +895,12 @@ fn man_generates_stdout_and_subcommand_pages() {
         .success()
         .stdout(predicate::str::is_empty())
         .stderr(predicate::str::is_empty());
+
+    assert_eq!(
+        stdout,
+        std::fs::read(out_dir.join("vimanam.1")).unwrap(),
+        "`vimanam man` stdout must match `vimanam man --out-dir DIR` vimanam.1 byte-for-byte"
+    );
 
     for file in [
         "vimanam.1",

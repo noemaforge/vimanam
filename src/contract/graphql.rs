@@ -241,12 +241,35 @@ impl Document {
                         if let Some(previous) = &schema_seen {
                             bail!("Duplicate GraphQL schema definition in {label} and {previous}");
                         }
+                        if s.l_curly_token().is_none()
+                            || s.root_operation_type_definitions().next().is_none()
+                        {
+                            bail!(
+                                "Invalid GraphQL schema definition in {label}: expected '{{' with at least one root operation type"
+                            );
+                        }
                         schema_seen = Some((*label).to_owned());
                         for root in s.root_operation_type_definitions() {
                             insert_root_operation(&mut roots, &root, label)?;
                         }
                     }
                     cst::Definition::SchemaExtension(e) => {
+                        let has_braces = e.l_curly_token().is_some();
+                        let has_roots = e.root_operation_type_definitions().next().is_some();
+                        let has_directives = e
+                            .directives()
+                            .is_some_and(|d| d.directives().next().is_some());
+                        if has_braces {
+                            if !has_roots {
+                                bail!(
+                                    "Invalid GraphQL schema extension in {label}: expected at least one root operation type inside '{{ ... }}'"
+                                );
+                            }
+                        } else if !has_directives {
+                            bail!(
+                                "Invalid GraphQL schema extension in {label}: expected directives or '{{ ... }}'"
+                            );
+                        }
                         schema_extensions.push((*label, e));
                     }
                     cst::Definition::ScalarTypeDefinition(_)
@@ -285,6 +308,13 @@ impl Document {
                 }
             }
         }
+        if schema_seen.is_none() {
+            for (kind, name) in ROOTS.iter().zip(["Query", "Mutation", "Subscription"]) {
+                if types.contains_key(name) {
+                    roots.insert((*kind).to_owned(), name.to_owned());
+                }
+            }
+        }
         for (label, extension) in schema_extensions {
             for root in extension.root_operation_type_definitions() {
                 insert_root_operation(&mut roots, &root, label)?;
@@ -292,13 +322,6 @@ impl Document {
         }
         for (label, extension) in type_extensions {
             apply_extension(&mut types, label, &extension)?;
-        }
-        if schema_seen.is_none() {
-            for (kind, name) in ROOTS.iter().zip(["Query", "Mutation", "Subscription"]) {
-                if !roots.contains_key(*kind) && types.contains_key(name) {
-                    roots.insert((*kind).to_owned(), name.to_owned());
-                }
-            }
         }
         let document = Self {
             source: SourceKind::Sdl,
@@ -658,7 +681,8 @@ fn introspection_input(v: &Value) -> Result<InputValueDef> {
 /// Canonical printed form of a GraphQL literal (object keys sorted), so SDL
 /// and introspection defaults compare equal.
 pub fn canonical_literal(literal: &str) -> Result<String> {
-    let source = format!("query($v: V = {literal}) {{ v }}");
+    let prefix = "query($v: V = ";
+    let source = format!("{prefix}{literal}\n) {{ v }}");
     let tree = Parser::new(&source).parse();
     if let Some(err) = tree.errors().next() {
         bail!(
@@ -674,14 +698,20 @@ pub fn canonical_literal(literal: &str) -> Result<String> {
     if defs.next().is_some() {
         bail!("Invalid GraphQL default value {literal:?}");
     }
-    let mut vars = op
+    let var_defs = op
         .variable_definitions()
-        .with_context(|| format!("Invalid GraphQL default value {literal:?}"))?
-        .variable_definitions();
+        .with_context(|| format!("Invalid GraphQL default value {literal:?}"))?;
+    let r_paren = var_defs
+        .r_paren_token()
+        .with_context(|| format!("Invalid GraphQL default value {literal:?}"))?;
+    if usize::from(r_paren.text_range().start()) < prefix.len() + literal.len() {
+        bail!("Invalid GraphQL default value {literal:?}");
+    }
+    let mut vars = var_defs.variable_definitions();
     let var = vars
         .next()
         .with_context(|| format!("Invalid GraphQL default value {literal:?}"))?;
-    if vars.next().is_some() {
+    if vars.next().is_some() || var.directives().is_some() {
         bail!("Invalid GraphQL default value {literal:?}");
     }
     let value = var

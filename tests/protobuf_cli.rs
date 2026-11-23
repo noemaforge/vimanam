@@ -582,3 +582,259 @@ service Events {
     assert_eq!(json["summary"]["breaking"], 0);
     assert!(json["summary"]["non_breaking"].as_u64().unwrap() >= 1);
 }
+
+#[test]
+fn shadowed_proto_include_roots_fail_in_file_and_git_diff() {
+    let t = tempfile::tempdir().unwrap();
+    let v1 = t.path().join("v1");
+    let v2 = t.path().join("v2");
+    fs::create_dir_all(&v1).unwrap();
+    fs::create_dir_all(&v2).unwrap();
+    fs::write(
+        v1.join("api.proto"),
+        "syntax = \"proto3\";\npackage demo;\nmessage M { string old_name = 1; }\n",
+    )
+    .unwrap();
+    fs::write(
+        v2.join("api.proto"),
+        "syntax = \"proto3\";\npackage demo;\nmessage M { string new_name = 1; }\n",
+    )
+    .unwrap();
+
+    // File-pair diff rejects shadowed entry ahead of earlier -I root and leaves -o untouched.
+    let out = file(&t, "file_out.md", "keep existing");
+    binary()
+        .arg("diff")
+        .arg(v2.join("api.proto"))
+        .arg(v2.join("api.proto"))
+        .args(["-I"])
+        .arg(&v1)
+        .args(["-I"])
+        .arg(&v2)
+        .arg("-o")
+        .arg(&out)
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains("shadowed"));
+    assert_eq!(fs::read_to_string(&out).unwrap(), "keep existing");
+
+    // Reversing -I so v2 precedes v1 is not shadowed and succeeds.
+    binary()
+        .arg("diff")
+        .arg(v2.join("api.proto"))
+        .arg(v2.join("api.proto"))
+        .args(["-I"])
+        .arg(&v2)
+        .args(["-I"])
+        .arg(&v1)
+        .assert()
+        .success();
+
+    // Git-ref diff also rejects shadowed entry roots and leaves -o untouched.
+    git(t.path(), &["init", "-q"]);
+    git(t.path(), &["config", "user.name", "Public test"]);
+    git(t.path(), &["config", "user.email", "test@example.invalid"]);
+    git(t.path(), &["add", "v1/api.proto", "v2/api.proto"]);
+    git(t.path(), &["commit", "-qm", "old"]);
+    git(t.path(), &["tag", "old"]);
+    fs::write(
+        v2.join("api.proto"),
+        "syntax = \"proto3\";\npackage demo;\nmessage M { string new_name = 1; string extra = 2; }\n",
+    )
+    .unwrap();
+    git(t.path(), &["add", "v2/api.proto"]);
+    git(t.path(), &["commit", "-qm", "new"]);
+    git(t.path(), &["tag", "new"]);
+
+    let git_out = file(&t, "git_out.md", "keep git existing");
+    binary()
+        .current_dir(t.path())
+        .args([
+            "diff",
+            "--from-ref",
+            "old",
+            "--to-ref",
+            "new",
+            "--spec",
+            "v2/api.proto",
+            "-I",
+            "v1",
+            "-I",
+            "v2",
+            "-o",
+        ])
+        .arg(&git_out)
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains("shadowed"));
+    assert_eq!(fs::read_to_string(&git_out).unwrap(), "keep git existing");
+
+    // Non-shadowed Git-ref root order succeeds and diffs v2/api.proto.
+    let diff_out = binary()
+        .current_dir(t.path())
+        .args([
+            "diff",
+            "--from-ref",
+            "old",
+            "--to-ref",
+            "new",
+            "--spec",
+            "v2/api.proto",
+            "-I",
+            "v2",
+            "-I",
+            "v1",
+            "--format",
+            "json",
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let json: Value = serde_json::from_slice(&diff_out).unwrap();
+    assert_eq!(json["summary"]["breaking"], 0);
+    assert!(json["summary"]["non_breaking"].as_u64().unwrap() >= 1);
+}
+
+#[test]
+fn proto_ref_field_docs_render_in_linked_inline_split_and_skill_modes() {
+    let t = tempfile::tempdir().unwrap();
+    let spec = file(
+        &t,
+        "widgets.proto",
+        r#"syntax = "proto3";
+package demo.v1;
+
+// Manages widget records.
+service WidgetService {
+  // Fetch a widget.
+  rpc GetWidget(Widget) returns (Widget);
+}
+
+// Owner metadata.
+message Owner {
+  // Owner display name.
+  string name = 1;
+}
+
+// Lifecycle status.
+enum Status {
+  STATUS_UNSPECIFIED = 0;
+  // Active widget.
+  STATUS_ACTIVE = 1;
+}
+
+// A stored widget.
+message Widget {
+  // Primary owner metadata.
+  Owner owner = 1;
+  // Current lifecycle state.
+  Status status = 2;
+  // Arbitrary key-value labels.
+  map<string, string> labels = 3;
+}
+"#,
+    );
+
+    // Single-file default linked mode and --inline-schemas mode.
+    for extra in [vec![], vec!["--inline-schemas"]] {
+        let out = binary()
+            .arg(&spec)
+            .args(["--detail", "full", "--include-schemas", "--no-report"])
+            .args(&extra)
+            .assert()
+            .success()
+            .get_output()
+            .stdout
+            .clone();
+        let md = String::from_utf8(out).unwrap();
+        assert!(md.contains("Primary owner metadata."), "{extra:?}:\n{md}");
+        assert!(
+            md.contains("Field #1; JSON name `owner`"),
+            "{extra:?}:\n{md}"
+        );
+        assert!(md.contains("Current lifecycle state."), "{extra:?}:\n{md}");
+        assert!(
+            md.contains("Field #2; JSON name `status`"),
+            "{extra:?}:\n{md}"
+        );
+        assert!(
+            md.contains("Arbitrary key-value labels."),
+            "{extra:?}:\n{md}"
+        );
+        assert!(
+            md.contains("Field #3; JSON name `labels`"),
+            "{extra:?}:\n{md}"
+        );
+        assert!(md.contains("Active widget."), "{extra:?}:\n{md}");
+    }
+
+    // HealthCheckResponse.status singular enum field retains Field #1 in linked and inline modes.
+    for extra in [vec![], vec!["--inline-schemas"]] {
+        let out = binary()
+            .arg(fixture("health-v1.20.0.proto"))
+            .args(["--detail", "full", "--include-schemas", "--no-report"])
+            .args(&extra)
+            .assert()
+            .success()
+            .get_output()
+            .stdout
+            .clone();
+        let md = String::from_utf8(out).unwrap();
+        assert!(
+            md.contains("Field #1; JSON name `status`"),
+            "missing HealthCheckResponse.status field note ({extra:?}):\n{md}"
+        );
+        assert!(
+            md.contains("Used only by the Watch method."),
+            "missing ServingStatus enum value comment ({extra:?}):\n{md}"
+        );
+    }
+
+    // Split and Skill tree modes keep field comments on schema pages too.
+    for (name, flag, value) in [
+        ("split", "--split", "endpoint"),
+        ("skill", "--output-mode", "skill"),
+    ] {
+        let dir = t.path().canonicalize().unwrap().join(name);
+        binary()
+            .arg(&spec)
+            .args([flag, value, "--detail", "full", "--include-schemas", "-o"])
+            .arg(&dir)
+            .assert()
+            .success();
+        let schema_dir = dir.join("schemas");
+        let mut combined = String::new();
+        for entry in fs::read_dir(&schema_dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.extension().is_some_and(|e| e == "md") {
+                combined.push_str(&fs::read_to_string(path).unwrap());
+            }
+        }
+        assert!(
+            combined.contains("Primary owner metadata."),
+            "{name}:\n{combined}"
+        );
+        assert!(
+            combined.contains("Field #1; JSON name `owner`"),
+            "{name}:\n{combined}"
+        );
+        assert!(
+            combined.contains("Current lifecycle state."),
+            "{name}:\n{combined}"
+        );
+        assert!(
+            combined.contains("Field #2; JSON name `status`"),
+            "{name}:\n{combined}"
+        );
+        assert!(
+            combined.contains("Arbitrary key-value labels."),
+            "{name}:\n{combined}"
+        );
+        assert!(
+            combined.contains("Field #3; JSON name `labels`"),
+            "{name}:\n{combined}"
+        );
+    }
+}
