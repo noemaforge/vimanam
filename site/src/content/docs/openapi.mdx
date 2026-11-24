@@ -11,7 +11,7 @@ Vimanam parses OpenAPI 2.0 (Swagger), OpenAPI 3.0, and OpenAPI 3.1 specs in both
 
 Format detection checks the file extension (`.json`, `.yaml`, `.yml`, case-insensitively) and falls back to the alternate parser for extension-less or misnamed files.
 
-In `v2.2.0`, YAML parsing runs on pure-Rust `serde-saphyr` (`#![forbid(unsafe_code)]`) with the following OpenAPI-safe rules:
+In `v2.2.0`, YAML parsing runs on pure-Rust `serde-saphyr` (a crate built with `#![forbid(unsafe_code)]`, replacing C-ported `unsafe-libyaml-norway`) with the following OpenAPI-safe rules:
 
 - **YAML 1.2 Core booleans**: unquoted strings such as `NO`, `yes`, `on`, and `off` remain strings instead of turning into booleans in enums, examples, and extensions.
 - **JSON-aligned scalar handling**: leading-zero strings (`007`) and underscored scalars (`1_000`) stay strings in untyped JSON values, while unquoted numeric HTTP status keys (`200:`, `404:`) map cleanly to response codes.

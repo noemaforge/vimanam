@@ -4,12 +4,12 @@ version = "2.2.0"
 edition = "2024"
 rust-version = "1.96"
 authors = ["Narayan SS <nrynss@users.noreply.github.com>"]
-description = "OpenAPI/Swagger to Markdown documentation generator with grouping, filtering, and detail levels for docs and LLM context"
+description = "Turn OpenAPI, Protocol Buffers, and GraphQL contracts into focused Markdown, agent Skill trees, and breaking-change diffs"
 license = "Apache-2.0"
 readme = "README.md"
 repository = "https://github.com/noemaforge/vimanam"
-homepage = "https://github.com/noemaforge/vimanam"
-keywords = ["openapi", "swagger", "markdown", "documentation", "cli"]
+homepage = "https://noemaforge.github.io/vimanam/"
+keywords = ["openapi", "protobuf", "graphql", "markdown", "llm"]
 categories = ["command-line-utilities", "development-tools"]
 
 [lib]
