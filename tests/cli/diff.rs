@@ -518,3 +518,62 @@ fn diff_response_enum_narrowing_is_not_breaking() {
     assert_eq!(code, 3, "{stdout}");
     assert!(stdout.contains("## Breaking changes (1)"), "{stdout}");
 }
+
+// #175 review: a missing `enum` allows every value, so dropping the keyword is
+// not a series of member removals.
+#[test]
+fn diff_whole_enum_keyword_follows_direction() {
+    let drop_enum = |pointer: String| {
+        move |spec: &mut serde_json::Value| {
+            spec.pointer_mut(&pointer)
+                .unwrap()
+                .as_object_mut()
+                .unwrap()
+                .remove("enum");
+        }
+    };
+
+    // Response loses its enum: the server may now return anything -> review.
+    let (stdout, code) = type_array_diff(|_| {}, drop_enum(format!("{ITEM}/state")));
+    assert_eq!(code, 0, "{stdout}");
+    assert!(
+        stdout.contains("**Summary:** 0 endpoints added, 0 removed, 1 changed; 0 breaking, 0 non-breaking, 1 to review"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains(
+            "| Response schema changed | `POST /items` | 200 `/properties/state/enum` removed |"
+        ),
+        "{stdout}"
+    );
+
+    // Response gains an enum: narrower output -> non-breaking.
+    let (stdout, code) = type_array_diff(drop_enum(format!("{ITEM}/state")), |_| {});
+    assert_eq!(code, 0, "{stdout}");
+    assert!(
+        stdout.contains("0 breaking, 1 non-breaking, 0 to review"),
+        "{stdout}"
+    );
+
+    // Request loses its enum: accepts more input -> non-breaking.
+    let (stdout, code) = type_array_diff(|_| {}, drop_enum(format!("{ITEM_INPUT}/status")));
+    assert_eq!(code, 0, "{stdout}");
+    assert!(
+        stdout.contains("0 breaking, 1 non-breaking, 0 to review"),
+        "{stdout}"
+    );
+
+    // Request gains an enum: previously valid input now fails -> breaking.
+    let (stdout, code) = type_array_diff(drop_enum(format!("{ITEM_INPUT}/status")), |_| {});
+    assert_eq!(code, 3, "{stdout}");
+    assert!(
+        stdout.contains("1 breaking, 0 non-breaking, 0 to review"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains(
+            "| Request schema changed | `POST /items` | `/properties/status/enum` added |"
+        ),
+        "{stdout}"
+    );
+}

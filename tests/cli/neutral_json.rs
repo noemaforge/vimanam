@@ -235,3 +235,29 @@ fn v2_response_enum_value_removed_is_not_breaking() {
     assert_eq!(request[0].3, "breaking");
     assert_eq!(code, Some(3));
 }
+
+#[test]
+fn v2_whole_enum_keyword_follows_direction() {
+    let drop = |schema: &'static str, field: &'static str| {
+        move |spec: &mut Value| {
+            spec["components"]["schemas"][schema]["properties"][field]
+                .as_object_mut()
+                .unwrap()
+                .remove("enum");
+        }
+    };
+
+    let (changes, code) = type_array_changes(drop("Item", "state"));
+    let response = operation_change(&changes, "response_schema_changed");
+    assert_eq!(response.len(), 1, "{changes:?}");
+    assert_eq!(response[0].2, "/properties/state/enum");
+    assert_eq!(response[0].3, "review");
+    assert_eq!(code, Some(0));
+
+    let (changes, code) = type_array_changes(drop("ItemInput", "status"));
+    let request = operation_change(&changes, "request_schema_changed");
+    assert_eq!(request.len(), 1, "{changes:?}");
+    assert_eq!(request[0].2, "/properties/status/enum");
+    assert_eq!(request[0].3, "non_breaking");
+    assert_eq!(code, Some(0));
+}

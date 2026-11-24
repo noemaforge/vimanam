@@ -330,6 +330,8 @@ impl SpecDiff {
 /// | property added | Non-breaking |
 /// | `enum` member removed | Breaking |
 /// | `enum` member added | Non-breaking |
+/// | `enum` keyword added where none existed (narrows accepted values) | Breaking |
+/// | `enum` keyword removed entirely (accepts any value) | Non-breaking |
 /// | `additionalProperties` became `false` | Breaking |
 /// | `nullable` became `true` | Non-breaking |
 /// | `nullable` became `false` (clients sending `null` now fail) | Breaking |
@@ -345,6 +347,8 @@ impl SpecDiff {
 /// | `type` changed at any pointer | Breaking |
 /// | `enum` member removed (the server returns a subset of what clients already handle) | Non-breaking |
 /// | `enum` member added (strictly typed clients reject unknown values) | Review |
+/// | `enum` keyword added where none existed (narrows what the server returns) | Non-breaking |
+/// | `enum` keyword removed entirely (the server may return any value) | Review |
 /// | member removed from `required` (consumers relied on it) | Breaking |
 /// | member added to `required` | Non-breaking |
 /// | `nullable` became `true` | Breaking |
@@ -412,6 +416,8 @@ fn request_schema_severity(change: &ValueChange) -> Severity {
         (Location::Property, Added(_)) => Severity::NonBreaking,
         (Location::EnumElement, Removed(_)) => Severity::Breaking,
         (Location::EnumElement, Added(_)) => Severity::NonBreaking,
+        (Location::Enum, Added(_)) => Severity::Breaking,
+        (Location::Enum, Removed(_)) => Severity::NonBreaking,
         (Location::AdditionalProperties, kind) if became(kind, false) => Severity::Breaking,
         (Location::Nullable, kind) if became(kind, true) => Severity::NonBreaking,
         (Location::Nullable, kind) if became(kind, false) => Severity::Breaking,
@@ -440,6 +446,10 @@ fn response_schema_severity(change: &ValueChange) -> Severity {
         // removal as breaking.
         (Location::EnumElement, Removed(_)) => Severity::NonBreaking,
         (Location::EnumElement, Added(_)) => Severity::Review,
+        // Dropping the whole restriction widens the response like adding a
+        // member does; adding one narrows it.
+        (Location::Enum, Removed(_)) => Severity::Review,
+        (Location::Enum, Added(_)) => Severity::NonBreaking,
         (Location::RequiredElement, Removed(_)) => Severity::Breaking,
         (Location::RequiredElement, Added(_)) => Severity::NonBreaking,
         (Location::Nullable, kind) if became(kind, true) => Severity::Breaking,
@@ -1402,6 +1412,11 @@ mod tests {
 
     #[test]
     fn severity_request_schema_breaking_rows() {
+        // An `enum` restriction appeared: values accepted before now fail.
+        assert_eq!(
+            request(added("/properties/s/enum", json!(["a"]))),
+            Severity::Breaking
+        );
         assert_eq!(
             request(added("/required/x", json!("x"))),
             Severity::Breaking
@@ -1453,6 +1468,11 @@ mod tests {
 
     #[test]
     fn severity_request_schema_non_breaking_rows() {
+        // The `enum` restriction went away: every value is accepted.
+        assert_eq!(
+            request(removed("/properties/s/enum", json!(["a", "b"]))),
+            Severity::NonBreaking
+        );
         assert_eq!(
             request(added("/properties/x", json!({"type": "string"}))),
             Severity::NonBreaking
@@ -1545,6 +1565,11 @@ mod tests {
 
     #[test]
     fn severity_response_schema_non_breaking_rows() {
+        // A new `enum` restriction narrows what the server returns.
+        assert_eq!(
+            response(added("/properties/s/enum", json!(["a"]))),
+            Severity::NonBreaking
+        );
         assert_eq!(
             response(added("/properties/pricing", json!({"type": "object"}))),
             Severity::NonBreaking
@@ -1575,6 +1600,11 @@ mod tests {
 
     #[test]
     fn severity_response_schema_review_rows() {
+        // Dropping the restriction widens the response like a new member.
+        assert_eq!(
+            response(removed("/properties/s/enum", json!(["a", "b"]))),
+            Severity::Review
+        );
         assert_eq!(
             response(changed("/format", json!("float"), json!("double"))),
             Severity::Review

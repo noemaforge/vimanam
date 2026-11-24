@@ -15,8 +15,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   breaking, so a narrowed enum on a component shared by a request and a
   response is still caught. The change is intentional in every output:
   Markdown, v2 JSON (`enum_value_removed` on a result) and `--contract 1`
-  verdicts. On the OpenAI `a01e367..373f26a` diff, breaking findings drop
-  from 62 to 13.
+  verdicts.
+- `diff` reports an `enum` keyword present on only one side as one `/enum`
+  change instead of per-member additions or removals, because a missing
+  `enum` allows every value. Dropping a response `enum` is Review (the
+  response widens); dropping a request `enum` is non-breaking (previously a
+  false breaking); adding an `enum` where none existed is breaking on a
+  request and non-breaking on a response. In v2/v1 JSON the change has
+  target `other` at the `/enum` pointer. With both fixes, the OpenAI
+  `a01e367..373f26a` diff drops from 62 breaking findings to 4, all genuine.
 - OpenAPI 3.1 `type` arrays keep `"null"` (#166): `["string", "null"]` now
   reads as `string` with `nullable: true`, so it renders `string | null` and
   `diff` classifies `"string"` ↔ `["string", "null"]` exactly like OAS 3.0
