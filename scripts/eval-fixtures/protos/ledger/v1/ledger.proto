@@ -1,0 +1,44 @@
+syntax = "proto3";
+
+package ledger.v1;
+
+import "ledger/v1/common.proto";
+
+// Subscribes to clearing state transitions for a single settlement desk.
+message WatchSettlementsRequest {
+  // Desk identifier (e.g. "eu-core-04").
+  string desk_id = 1 [json_name = "deskId"];
+  // Optional window filter.
+  ClearingWindow window = 2;
+  // Emit a heartbeat frame when idle.
+  bool include_heartbeats = 3 [json_name = "includeHeartbeats"];
+}
+
+// One state transition frame emitted by WatchSettlements.
+message SettlementFrame {
+  // Monotonic sequence number within the desk stream.
+  uint64 sequence_no = 1 [json_name = "sequenceNo"];
+  // Current clearing state for the batch.
+  ClearingState clearing_state = 4 [json_name = "clearingState"];
+  // Minor-unit net imbalance carried forward.
+  sint64 net_delta_minor = 5 [json_name = "netDeltaMinor"];
+}
+
+// Lookup request for a single clearing batch.
+message GetBatchStatusRequest {
+  string batch_ref = 1 [json_name = "batchRef"];
+}
+
+// Unary response for GetBatchStatus.
+message GetBatchStatusResponse {
+  string batch_ref = 1 [json_name = "batchRef"];
+  ClearingState clearing_state = 2 [json_name = "clearingState"];
+}
+
+// Real-time settlement status service for clearing desks.
+service SettlementStream {
+  // Unary point lookup for one batch.
+  rpc GetBatchStatus(GetBatchStatusRequest) returns (GetBatchStatusResponse);
+  // Streams clearing state updates until the client cancels.
+  rpc WatchSettlements(WatchSettlementsRequest) returns (stream SettlementFrame);
+}

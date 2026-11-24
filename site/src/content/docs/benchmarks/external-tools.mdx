@@ -1,0 +1,119 @@
+---
+title: "v2.2.0 vs external tools"
+description: "Head-to-head speed, compatibility smoke tests, and finding reconciliations comparing vimanam 2.2.0 against oasdiff, buf breaking, graphql-inspector, and protoc-gen-doc."
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+All four format-specific external baselines (`oasdiff 1.39.0`, `buf 1.75.0`, `graphql-inspector 7.0.8`, and `protoc-gen-doc 1.5.1`) ran on the same Apple Silicon machine against pinned public revision pairs plus targeted compatibility smoke matrices. Raw JSON outputs live in [`scripts/benchmark-v22-results.json`](https://github.com/noemaforge/vimanam/blob/main/scripts/benchmark-v22-results.json).
+
+---
+
+## 1. OpenAPI: `vimanam diff` vs `oasdiff 1.39.0`
+
+### Revision diff speed on OpenAI `4.9 MB` `openapi.json` (`a01e367 -> 373f26a`, 5 runs)
+
+| Command | Median wall time | IQR (Q1–Q3) | Output size | Findings reported |
+|---|---:|---:|---:|---|
+| **`vimanam diff`** *(Markdown)* | **`271.5 ms`** | `271.0–273.6 ms` | `20.6 KB` | `37` endpoints changed |
+| **`vimanam diff --format json --contract 1`** | **`274.5 ms`** | `274.0–276.2 ms` | `98.5 KB` | v1 JSON diff |
+| **`oasdiff changelog --format json`** | `1,025.9 ms` | `1,022.6–1,028.6 ms` | `56.8 KB` | `128` changelog entries |
+| **`oasdiff breaking --format json`** | `1,031.0 ms` | `1,024.2–1,038.2 ms` | `8.2 KB` | `20` breaking entries |
+| **`vimanam diff --format json --contract 2`** | `1,616.6 ms` | `1,615.5–1,630.0 ms` | **`37.1 MB`** | `62` breaking · `12` non-breaking · `134` review *([#152](https://github.com/noemaforge/vimanam/issues/152), [#159](https://github.com/noemaforge/vimanam/issues/159))* |
+
+### Reconciling the `62` vs `20` breaking-change gap on OpenAI `a01e367..373f26a`
+
+Inspecting every single breaking finding emitted by both tools accounts for **100% of all `62` Vimanam findings and all `20` `oasdiff` findings**. The gap exposes a real JSON Schema 2020-12 false-positive bug in **both** tools alongside one deliberate policy difference:
+
+OpenAI commit `2a24dea` (*"Replace enum with const for multiple string properties in API schemas"*) refactored single-value `{"type": "string", "enum": ["list"]}` properties to `{"type": "string", "const": "list"}`, which is a **semantic no-op** in JSON Schema 2020-12. Commit `5532232` made the only real structural breaking change in the range (simplifying `notification_channel` on two spend-limit endpoints).
+
+| Finding group (`a01e367..373f26a`) | `vimanam 2.2.0` (`62` breaking) | `oasdiff 1.39.0` (`20` breaking, `128` changelog) | Explanation |
+|---|---:|---:|---|
+| **Response `enum: [v] -> const: v` refactor** (`2a24dea`) | **`49` breaking** (`result:enum_value_removed`) | **`0` breaking** (`50` level-1 `INFO` enum-removed + `50` level-1 `INFO` const-added) | **Both** tools fail to normalize 1-element `enum` ↔ `const` ([#167](https://github.com/noemaforge/vimanam/issues/167)). Vimanam classifies response enum narrowing as breaking (`src/diff/mod.rs:346`), whereas `oasdiff` classifies it as non-breaking `INFO`. |
+| **Request `enum: [v] -> const: v` refactor** (`2a24dea`) | **`9` breaking** (`argument:enum_value_removed`; `const` additions logged as `review`) | **`18` breaking** (`9` `request-property-enum-value-removed` + `9` `request-property-const-added`) | Both tools emit false positives on request bodies; `oasdiff` double-counts each property as both an enum removal and a const addition. |
+| **Real `spend_limit` `notification_channel` `anyOf` edit** (`5532232`) | **`4` breaking** (`2` `field_required_changed` + `2` `argument_type_changed` on `/anyOf/0`) | **`2` breaking** (`2` `request-property-any-of-removed`) | Same 2 endpoints (`POST /organization/spend_limit` and project variant); Vimanam diffs `anyOf[0]` element-wise. |
+| **Total breaking** | **`62`** (`58` false positives + `4` real) | **`20`** (`18` false positives + `2` real) | Normalizing `{"const": v}` ↔ `{"enum": [v]}` ([#167](https://github.com/noemaforge/vimanam/issues/167)) removes all `58` Vimanam false positives. |
+
+### Known scaling failure on cyclic `7.9 MB` Stripe `spec3.json` (`2f8d147 -> 5237fa0`, 15 s cap)
+
+| Tool | Result | Details |
+|---|---|---|
+| **`oasdiff breaking`** | **`1,145.6 ms`** *(completed)* | Handles deeply interconnected `$ref` graphs cleanly |
+| **`vimanam diff`** *(Markdown & v2 JSON)* | **Timed out (`>15 s`)** | `utils::resolve_schema_value` (`src/utils.rs:154-213`) eagerly inlines cyclic `$ref` branches without cross-branch memoization — tracked in **[#152](https://github.com/noemaforge/vimanam/issues/152)** |
+
+### Targeted 6-case OpenAPI 3.0 smoke test (`--fail-on-breaking` vs `oasdiff breaking --fail-on ERR`)
+
+| OpenAPI mutation case | `vimanam diff` (v2.2.0) | `oasdiff breaking` (1.39.0) | Notes |
+|---|---|---|---|
+| Endpoint removed (`POST /v1/items`) | Breaking (`operation_removed`) | Breaking (`api-removed-without-deprecation`) | Exact agreement |
+| Required query parameter added | Breaking (`argument_added`) | Breaking (`new-required-request-parameter`) | Exact agreement |
+| Request body property made required | Breaking (`field_required_changed`) | Breaking (`request-property-became-required`) | Exact agreement |
+| Optional response property removed | **Breaking** (`field_removed`) | **Non-breaking** *(not ERR)* | `oasdiff` flags required-property removals as ERR and optional ones as WARN; Vimanam treats any response field removal as breaking |
+| Optional response property added | Non-breaking (`field_added`) | Non-breaking | Exact agreement |
+| Versioned path moved (`/v1/items -> /v2/items`) | Breaking (`operation_moved`) | Breaking (`api-path-removed-without-deprecation`) | Vimanam pairs the move and attributes inner changes; `oasdiff` reports separate path removal |
+
+<Aside type="caution" title="Media-type scope difference (#154)">
+  `vimanam diff` currently compares only the **first** media type in each request body or response `content` map, whereas `oasdiff` compares every media type ([#154](https://github.com/noemaforge/vimanam/issues/154)).
+</Aside>
+
+---
+
+## 2. Protobuf: `vimanam diff` vs `buf breaking 1.75.0`
+
+### Multi-file OpenTelemetry Proto Git-ref comparison (`40cb2e5 -> d31f7ac`, 6 runs)
+
+Using Git-ref mode isolates import roots per commit cleanly for both tools (local file-to-file `.proto` diff currently shares one `-I` list across both sides — tracked in [#162](https://github.com/noemaforge/vimanam/issues/162)):
+
+| Tool & scope | Median wall time | IQR (Q1–Q3) | Architecture note |
+|---|---:|---:|---|
+| **`buf breaking`** *(all 11 `.proto` files)* | **`299.1 ms`** | `293.4–302.8 ms` | Reads Git objects in-process (`go-git`) across the full module |
+| **`vimanam diff --from-ref 40cb2e5 --to-ref d31f7ac`** *(`trace_service.proto` + 3 imports)* | `1,012.4 ms` | `994.2–1,046.4 ms` | Spawns separate `git` subprocesses for lineage checks and per-blob reads ([#164](https://github.com/noemaforge/vimanam/issues/164)) |
+
+### Targeted 8-case Protobuf compatibility smoke test (`--breaking wire`/`source` vs `buf WIRE`/`FILE`)
+
+| Protobuf mutation case | Vimanam `wire` / `buf WIRE` | Vimanam `source` / `buf FILE` | Notes |
+|---|---|---|---|
+| Field type changed (`int32 -> string`) | Breaking / Breaking | Breaking / Breaking | `FIELD_SAME_TYPE` (match) |
+| Field removed without reserving number | Breaking / Breaking | Breaking / Breaking | `FIELD_NO_DELETE*` (match) |
+| Field removed with `reserved 2` | Pass / Pass | Breaking / Breaking | `FIELD_NO_DELETE` (match) |
+| Same-number field rename (`quantity -> qty`) | Pass / Pass | Breaking / Breaking | `FIELD_SAME_NAME`, `FIELD_SAME_JSON_NAME` (match) |
+| `json_name` override changed | Pass / Pass | Breaking / Breaking | `FIELD_SAME_JSON_NAME` (match) |
+| Enum value removed without reserving number | Breaking / Breaking | Breaking / Breaking | `ENUM_VALUE_NO_DELETE*` (match) |
+| RPC changed unary → server streaming | **Pass** / **Breaking** | Breaking / Breaking | **Known bug ([#153](https://github.com/noemaforge/vimanam/issues/153))**: `vimanam 2.2.0` omits streaming changes from `--breaking wire` (they still fail default `--breaking all` and `--breaking source`) |
+| Optional field added | Pass / Pass | Pass / Pass | Non-breaking (match) |
+
+---
+
+## 3. GraphQL: `vimanam diff` vs `graphql-inspector 7.0.8`
+
+### Real-spec diff speed and parity
+
+| Comparison | `graphql-inspector 7.0.8` | `vimanam diff` (Markdown) | `vimanam diff --format json` (v2) | Findings & caveats |
+|---|---:|---:|---:|---|
+| **SpaceX Land SDL** (`12 KB`, `0a482d1 -> 64a7fa9`, 8 runs) | `257.1 ms` *(IQR `254.6–261.0`)* | — | **`29.0 ms`** *(IQR `25.7–33.7`)* | Exact match: `9` changes (`8` breaking, `1` non-breaking). Note: `graphql-inspector`'s `257 ms` on a `12 KB` file is mostly Node.js startup, so `8.86×` reflects runtime startup rather than parser throughput. |
+| **GitHub Introspection JSON** (`5.0 MB`, `a6de3c1 -> 597478f`, 5 runs) | `386.3 ms` *(IQR `383.0–390.4`)* | **`236.6 ms`** *(IQR `232.7–237.6`, **1.63× faster**)* | `512.2 ms` *(IQR `511.9–533.8`, **`17.1 MB`** JSON)* | Exact match: `1` non-breaking change, `0` breaking. The `17.1 MB` JSON payload comes from embedding full `old`/`new` surfaces ([#159](https://github.com/noemaforge/vimanam/issues/159)). |
+| **GitHub SDL** (`1.2 MB`, `a6de3c1 -> 597478f`, probe) | **Rejected (`exit 1`)** *(duplicate `EnterpriseOwnerInfo.repositoryDeployKeySetting`)* | `165.9 ms` *(`53.1 KB` MD)* | `389.5 ms` *(`17.4 MB` JSON)* | **Known Vimanam validation bug ([#163](https://github.com/noemaforge/vimanam/issues/163))**: the duplicate field in GitHub's SDL is real (lines `15003` and `15153`). `graphql-inspector` was right to reject it; Vimanam checks duplicates on `extend type` but currently accepts them inside a single `type` block. |
+
+### Targeted 8-case GraphQL compatibility smoke test (`8 / 8` verdict match)
+
+| GraphQL mutation case | `vimanam diff` (v2.2.0) | `graphql-inspector 7.0.8` | Agreement |
+|---|---|---|---|
+| Output field removed (`User.name`) | Breaking | Breaking | Match |
+| Output field made nullable (`User.name`) | Breaking | Breaking | Match |
+| Required argument added (`Query.user`) | Breaking | Breaking | Match |
+| Optional argument added (`Query.user`) | Non-breaking | Non-breaking | Match |
+| Input field made non-null without default | Breaking | Breaking | Match |
+| Output enum value added (`Role.AUDITOR`) | Review (`exit 0`) | Dangerous (`⚠`, `exit 0`) | Match |
+| Input default value changed (`10 -> 20`) | Review (`exit 0`) | Dangerous (`⚠`, `exit 0`) | Match |
+| List field converted to Relay connection | Breaking | Breaking | Match |
+
+---
+
+## 4. Protobuf Markdown generation: `vimanam` vs `protoc + protoc-gen-doc 1.5.1`
+
+Both tools generated full Markdown documentation from the same `.proto` inputs (`10` runs, warmup `2`):
+
+| Target | `protoc 36.2 + protoc-gen-doc 1.5.1` | `vimanam 2.2.0` *(pure Rust, no `protoc`)* | Median speedup | Output size (`o200k_base` BPE) |
+|---|---:|---:|---:|---|
+| **gRPC Health v1.20.0** (`.proto`) | `49.58 ms` *(IQR `48.2–52.1`)* | **`6.77 ms`** *(IQR `6.5–10.3`)* | **`7.32×`** | `1,409` vs `1,126` BPE |
+| **OTel TraceService** (`+ 3` transitive `.proto` files) | `49.92 ms` *(IQR `48.6–53.4`)* | **`7.98 ms`** *(IQR `7.5–8.8`)* | **`6.26×`** | `8,215` vs `9,369` BPE |

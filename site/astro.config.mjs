@@ -97,10 +97,16 @@ export default defineConfig({
           ],
         },
         {
-          label: 'Reference & benchmarks',
+          label: 'Reference',
+          items: [{ label: 'CLI reference', slug: 'cli-reference' }],
+        },
+        {
+          label: 'Benchmarks',
           items: [
-            { label: 'CLI reference', slug: 'cli-reference' },
-            { label: 'Benchmarks & v2.2 analysis', slug: 'benchmarks' },
+            { label: 'Overview & methodology', slug: 'benchmarks' },
+            { label: 'v2.2 standalone & LLM eval', slug: 'benchmarks/v2-2' },
+            { label: 'v2.2 vs v2.1 upgrade', slug: 'benchmarks/v2-2-vs-v2-1' },
+            { label: 'v2.2 vs external tools', slug: 'benchmarks/external-tools' },
           ],
         },
       ],

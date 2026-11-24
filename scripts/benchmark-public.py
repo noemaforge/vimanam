@@ -1,14 +1,17 @@
 #!/usr/bin/env python3
 """Reproducible public benchmark and external-baseline suite for Vimanam.
 
-Improvements over initial capture:
-- Reports robust medians, min-max ranges, IQRs, and full per-run sample lists
-  rather than relying on outlier-sensitive means or loose |Δmean| <= σa + σb checks.
-- Adds real large-scale external baselines:
-  * oasdiff 1.39.0 vs vimanam diff (Markdown, --contract 1, --contract 2) on two
-    real consecutive 7.9 MB Stripe OpenAPI 3.0 revisions (HEAD~5 vs HEAD).
-  * buf breaking 1.75.0 vs vimanam diff on real multi-file OpenTelemetry Proto
-    revisions (all 11 .proto files) in addition to the targeted smoke matrices.
+- Reports robust medians, min-max ranges, Q1-Q3 IQRs, disjoint-IQR checks, and
+  full per-run sample lists (samples_ms).
+- Pins exact public commit SHAs (with fallback only when a local clone omits them)
+  so diff comparisons remain reproducible as upstream repos advance.
+- Covers all 4 external baselines:
+  * oasdiff 1.39.0 on OpenAI 4.9 MB (a01e367..373f26a) + full breaking-change
+    reconciliation + bounded 15s probe on Stripe 7.9 MB (2f8d147..5237fa0).
+  * buf breaking 1.75.0 on multi-file OpenTelemetry Proto Git-ref (40cb2e5..d31f7ac).
+  * graphql-inspector 7.0.8 on SpaceX Land, GitHub 5.0 MB Introspection JSON
+    (a6de3c1..597478f), and GitHub 1.2 MB SDL duplicate-field probe.
+  * protoc-gen-doc 1.5.1 on gRPC Health and OpenTelemetry TraceService.
 - Uses tiktoken (o200k_base) alongside chars/4; Claude API token calibration is
   measured directly in scripts/eval-context-accuracy.py.
 """
@@ -16,6 +19,7 @@ Improvements over initial capture:
 from __future__ import annotations
 
 import argparse
+from collections import Counter
 import hashlib
 import json
 import os
@@ -33,6 +37,29 @@ import tiktoken
 
 REPO = Path(__file__).resolve().parent.parent
 ENC = tiktoken.get_encoding("o200k_base")
+
+# Pinned upstream SHAs so diff benchmarks reproduce exact revisions later
+PINNED_REVS = {
+    "openai_old": "a01e367",
+    "openai_new": "373f26a",
+    "stripe_old": "2f8d147",
+    "stripe_new": "5237fa0",
+    "otel_old": "40cb2e5",
+    "otel_new": "d31f7ac",
+    "octo_old": "a6de3c1",
+    "octo_new": "597478f",
+}
+
+
+def resolve_rev(repo: Path, pinned: str, fallback: str) -> str:
+    """Return pinned commit SHA when present in repo, else fall back to relative ref."""
+    p = subprocess.run(
+        ["git", "-C", str(repo), "rev-parse", "--verify", "--quiet", f"{pinned}^{{commit}}"],
+        capture_output=True,
+        text=True,
+    )
+    ref = pinned if p.returncode == 0 else fallback
+    return subprocess.check_output(["git", "-C", str(repo), "rev-parse", "--short", ref], text=True).strip()
 
 
 def sh_quote(parts) -> str:
@@ -182,13 +209,13 @@ def run_oasdiff_comparison(v22: str, openai_repo: Path, stripe_repo: Path, tmpdi
     """Compare vimanam diff vs oasdiff 1.39.0 at 4.9 MB OpenAI scale, 7.9 MB Stripe probe, and 6-case smoke matrix."""
     out: dict = {"oasdiff_version": subprocess.check_output(["oasdiff", "--version"], text=True).strip()}
 
-    # 1. Real 4.9 MB OpenAI OpenAPI 3.0 diff (HEAD~5 vs HEAD)
+    # 1. Real 4.9 MB OpenAI OpenAPI 3.0 diff (pinned a01e367..373f26a)
     oa_old = tmpdir / "openai_old.json"
     oa_new = tmpdir / "openai_new.json"
-    oa_old_sha = subprocess.check_output(["git", "-C", str(openai_repo), "rev-parse", "--short", "HEAD~5"], text=True).strip()
-    oa_new_sha = subprocess.check_output(["git", "-C", str(openai_repo), "rev-parse", "--short", "HEAD"], text=True).strip()
-    oa_old.write_bytes(subprocess.check_output(["git", "-C", str(openai_repo), "show", "HEAD~5:openapi.json"]))
-    oa_new.write_bytes(subprocess.check_output(["git", "-C", str(openai_repo), "show", "HEAD:openapi.json"]))
+    oa_old_sha = resolve_rev(openai_repo, PINNED_REVS["openai_old"], "HEAD~5")
+    oa_new_sha = resolve_rev(openai_repo, PINNED_REVS["openai_new"], "HEAD")
+    oa_old.write_bytes(subprocess.check_output(["git", "-C", str(openai_repo), "show", f"{oa_old_sha}:openapi.json"]))
+    oa_new.write_bytes(subprocess.check_output(["git", "-C", str(openai_repo), "show", f"{oa_new_sha}:openapi.json"]))
 
     vmd_rc, vmd_out, _, _ = run_cmd([v22, "diff", str(oa_old), str(oa_new)])
     vv1_rc, vv1_out, _, _ = run_cmd([v22, "diff", str(oa_old), str(oa_new), "--format", "json", "--contract", "1"])
@@ -199,6 +226,24 @@ def run_oasdiff_comparison(v22: str, openai_repo: Path, stripe_repo: Path, tmpdi
     vj2 = json.loads(vv2_out) if vv2_rc == 0 else None
     oj_b = json.loads(ob_out) if (ob_rc == 0 and ob_out.strip()) else []
     oj_c = json.loads(oc_out) if (oc_rc == 0 and oc_out.strip()) else []
+
+    reconciliation = {}
+    if isinstance(vj2, dict):
+        ents = {e["id"]: e for e in vj2["old"]["contract"]["entities"]}
+        ents.update({e["id"]: e for e in vj2["new"]["contract"]["entities"]})
+        v_brk = [c for c in vj2["changes"] if c["severity"] == "breaking"]
+        reconciliation = {
+            "vimanam_breaking_by_category": {
+                f"{ents.get(c['subject'], {}).get('kind')}:{c['kind']}": n
+                for (k, n) in Counter((ents.get(c["subject"], {}).get("kind"), c["kind"]) for c in v_brk).most_common()
+                for c in [next(x for x in v_brk if (ents.get(x["subject"], {}).get("kind"), x["kind"]) == k)]
+            },
+            "oasdiff_breaking_by_id": dict(Counter(x.get("id", "") for x in oj_b if isinstance(x, dict)).most_common()),
+            "oasdiff_changelog_by_level_and_id": {
+                f"level_{lvl}:{cid}": n
+                for ((lvl, cid), n) in Counter((x.get("level"), x.get("id", "")) for x in oj_c if isinstance(x, dict)).most_common()
+            },
+        }
 
     out["openai_4_9mb_diff"] = {
         "old_commit": oa_old_sha,
@@ -212,6 +257,7 @@ def run_oasdiff_comparison(v22: str, openai_repo: Path, stripe_repo: Path, tmpdi
         "vimanam_v2_summary": vj2.get("summary") if isinstance(vj2, dict) else None,
         "oasdiff_breaking_count": len(oj_b) if isinstance(oj_b, list) else None,
         "oasdiff_changelog_count": len(oj_c) if isinstance(oj_c, list) else None,
+        "breaking_reconciliation": reconciliation,
         "hyperfine": hyperfine_multi(
             [
                 ("oasdiff_breaking", sh_quote(["oasdiff", "breaking", str(oa_old), str(oa_new), "--format", "json"])),
@@ -226,13 +272,13 @@ def run_oasdiff_comparison(v22: str, openai_repo: Path, stripe_repo: Path, tmpdi
         ),
     }
 
-    # 2. Bounded 15-second probe on 7.9 MB Stripe OpenAPI diff (documents #152 cyclic $ref timeout honestly)
+    # 2. Bounded 15-second probe on 7.9 MB Stripe OpenAPI diff (pinned 2f8d147..5237fa0)
     s_old = tmpdir / "stripe_old.json"
     s_new = tmpdir / "stripe_new.json"
-    s_old_sha = subprocess.check_output(["git", "-C", str(stripe_repo), "rev-parse", "--short", "HEAD~5"], text=True).strip()
-    s_new_sha = subprocess.check_output(["git", "-C", str(stripe_repo), "rev-parse", "--short", "HEAD"], text=True).strip()
-    s_old.write_bytes(subprocess.check_output(["git", "-C", str(stripe_repo), "show", "HEAD~5:openapi/spec3.json"]))
-    s_new.write_bytes(subprocess.check_output(["git", "-C", str(stripe_repo), "show", "HEAD:openapi/spec3.json"]))
+    s_old_sha = resolve_rev(stripe_repo, PINNED_REVS["stripe_old"], "HEAD~5")
+    s_new_sha = resolve_rev(stripe_repo, PINNED_REVS["stripe_new"], "HEAD")
+    s_old.write_bytes(subprocess.check_output(["git", "-C", str(stripe_repo), "show", f"{s_old_sha}:openapi/spec3.json"]))
+    s_new.write_bytes(subprocess.check_output(["git", "-C", str(stripe_repo), "show", f"{s_new_sha}:openapi/spec3.json"]))
 
     stripe_probe: dict = {
         "old_commit": s_old_sha,
@@ -345,18 +391,18 @@ def run_buf_comparison(v22: str, otel_repo: Path, tmpdir: Path) -> dict:
     """Compare vimanam diff vs buf breaking 1.75.0 on real multi-file OTel Git-ref + 8-case smoke matrix."""
     out: dict = {"buf_version": subprocess.check_output(["buf", "--version"], text=True).strip()}
 
-    # 1. Real multi-file OpenTelemetry Proto Git-ref comparison (HEAD~5 vs HEAD)
+    # 1. Real multi-file OpenTelemetry Proto Git-ref comparison (pinned 40cb2e5..d31f7ac)
     # Using Git-ref mode isolates -I roots per commit accurately for both tools.
-    old_sha = subprocess.check_output(["git", "-C", str(otel_repo), "rev-parse", "--short", "HEAD~5"], text=True).strip()
-    new_sha = subprocess.check_output(["git", "-C", str(otel_repo), "rev-parse", "--short", "HEAD"], text=True).strip()
+    old_sha = resolve_rev(otel_repo, PINNED_REVS["otel_old"], "HEAD~5")
+    new_sha = resolve_rev(otel_repo, PINNED_REVS["otel_new"], "HEAD")
     out["otel_git_ref_comparison"] = {
         "old_commit": old_sha,
         "new_commit": new_sha,
         "scope_note": "buf breaking checks all 11 .proto files in the OTel module using go-git in-process; vimanam diff checks trace_service.proto plus its 3 transitive imports (4 files) via git subprocess blob resolution.",
         "hyperfine": hyperfine_multi(
             [
-                ("buf_breaking_git", sh_quote(["buf", "breaking", "--against", ".git#ref=HEAD~5"])),
-                ("vimanam_git_diff_trace", sh_quote([v22, "diff", "--from-ref", "HEAD~5", "--to-ref", "HEAD", "--spec", "opentelemetry/proto/collector/trace/v1/trace_service.proto", "-I", ".", "--format", "json"])),
+                ("buf_breaking_git", sh_quote(["buf", "breaking", f".git#ref={new_sha}", "--against", f".git#ref={old_sha}"])),
+                ("vimanam_git_diff_trace", sh_quote([v22, "diff", "--from-ref", old_sha, "--to-ref", new_sha, "--spec", "opentelemetry/proto/collector/trace/v1/trace_service.proto", "-I", ".", "--format", "json"])),
             ],
             runs=6,
             warmup=1,
@@ -459,18 +505,14 @@ def run_graphql_inspector_comparison(v22: str, octo_repo: Path, tmpdir: Path) ->
         ),
     }
 
-    # Real GitHub GraphQL schema update commit (find latest commit modifying schema.json)
-    gql_commit = subprocess.check_output(
-        ["git", "-C", str(octo_repo), "log", "-n", "1", "--format=%h", "--", "schema.json"],
-        text=True,
-    ).strip()
-    old_sha = subprocess.check_output(["git", "-C", str(octo_repo), "rev-parse", "--short", f"{gql_commit}~1"], text=True).strip()
-    new_sha = gql_commit
+    # Real GitHub GraphQL schema update commit (pinned a6de3c1..597478f)
+    old_sha = resolve_rev(octo_repo, PINNED_REVS["octo_old"], "HEAD~1")
+    new_sha = resolve_rev(octo_repo, PINNED_REVS["octo_new"], "HEAD")
 
     gh_old_json = tmpdir / "gh_old.json"
     gh_new_json = tmpdir / "gh_new.json"
-    gh_old_json.write_bytes(subprocess.check_output(["git", "-C", str(octo_repo), "show", f"{gql_commit}~1:schema.json"]))
-    gh_new_json.write_bytes(subprocess.check_output(["git", "-C", str(octo_repo), "show", f"{gql_commit}:schema.json"]))
+    gh_old_json.write_bytes(subprocess.check_output(["git", "-C", str(octo_repo), "show", f"{old_sha}:schema.json"]))
+    gh_new_json.write_bytes(subprocess.check_output(["git", "-C", str(octo_repo), "show", f"{new_sha}:schema.json"]))
 
     vmd_rc, vmd_out, _, _ = run_cmd([v22, "diff", str(gh_old_json), str(gh_new_json)])
     v_rc, v_out, _, _ = run_cmd([v22, "diff", str(gh_old_json), str(gh_new_json), "--format", "json"])
@@ -506,8 +548,8 @@ def run_graphql_inspector_comparison(v22: str, octo_repo: Path, tmpdir: Path) ->
     # Probe 1.2 MB GitHub SDL too (documents graphql-inspector duplicate-field rejection honestly)
     gh_old_sdl = tmpdir / "gh_old.graphql"
     gh_new_sdl = tmpdir / "gh_new.graphql"
-    gh_old_sdl.write_bytes(subprocess.check_output(["git", "-C", str(octo_repo), "show", f"{gql_commit}~1:schema.graphql"]))
-    gh_new_sdl.write_bytes(subprocess.check_output(["git", "-C", str(octo_repo), "show", f"{gql_commit}:schema.graphql"]))
+    gh_old_sdl.write_bytes(subprocess.check_output(["git", "-C", str(octo_repo), "show", f"{old_sha}:schema.graphql"]))
+    gh_new_sdl.write_bytes(subprocess.check_output(["git", "-C", str(octo_repo), "show", f"{new_sha}:schema.graphql"]))
     gs_rc, gs_out, gs_err, gs_ms = run_cmd(["graphql-inspector", "diff", str(gh_old_sdl), str(gh_new_sdl)])
     vs_rc, vs_out, _, vs_ms = run_cmd([v22, "diff", str(gh_old_sdl), str(gh_new_sdl)])
     vsj_rc, vsj_out, _, vsj_ms = run_cmd([v22, "diff", str(gh_old_sdl), str(gh_new_sdl), "--format", "json"])
@@ -753,14 +795,12 @@ def main():
         })
         print(f"  {name}: med_v21={hf['v2_1']['median_ms']} med_v22={hf['v2_2']['median_ms']} iqrs_disjoint={hf['iqrs_disjoint']}", flush=True)
 
-    gql_schema_commit = subprocess.check_output(
-        ["git", "-C", str(octo), "log", "-n", "1", "--format=%h", "--", "schema.json"],
-        text=True,
-    ).strip()
+    gql_old_sha = resolve_rev(octo, PINNED_REVS["octo_old"], "HEAD~1")
+    gql_new_sha = resolve_rev(octo, PINNED_REVS["octo_new"], "HEAD")
     for label, dflags, cwd, runs in [
         ("SpaceX Land SDL diff (0a482d1 -> 64a7fa9)", ["diff", str(REPO / "tests/fixtures/graphql/spacex-land-0a482d1.graphql"), str(REPO / "tests/fixtures/graphql/spacex-land-64a7fa9.graphql"), "--format", "json"], None, args.runs),
-        (f"GitHub GraphQL SDL Git-ref diff ({gql_schema_commit}~1 -> {gql_schema_commit})", ["diff", "--from-ref", f"{gql_schema_commit}~1", "--to-ref", gql_schema_commit, "--spec", "schema.graphql", "--format", "json"], str(octo), 5),
-        (f"GitHub GraphQL Introspection Git-ref diff ({gql_schema_commit}~1 -> {gql_schema_commit})", ["diff", "--from-ref", f"{gql_schema_commit}~1", "--to-ref", gql_schema_commit, "--spec", "schema.json", "--format", "json"], str(octo), 5),
+        (f"GitHub GraphQL SDL Git-ref diff ({gql_old_sha} -> {gql_new_sha})", ["diff", "--from-ref", gql_old_sha, "--to-ref", gql_new_sha, "--spec", "schema.graphql", "--format", "json"], str(octo), 5),
+        (f"GitHub GraphQL Introspection Git-ref diff ({gql_old_sha} -> {gql_new_sha})", ["diff", "--from-ref", gql_old_sha, "--to-ref", gql_new_sha, "--spec", "schema.json", "--format", "json"], str(octo), 5),
     ]:
         _, d21, _, _ = run_cmd([v21, *dflags], cwd=cwd)
         _, d22, _, _ = run_cmd([v22, *dflags], cwd=cwd)

@@ -1,0 +1,48 @@
+syntax = "proto3";
+
+package fleet.v2;
+
+import "fleet/v2/common.proto";
+import "fleet/v2/routing.proto";
+import "fleet/v2/telemetry.proto";
+
+// Submits a batch of stops and current vehicle snapshots to the route planner.
+message AssignBatchRequest {
+  // Region shard handling the dispatch batch.
+  string depot_region = 1 [json_name = "depotRegion"];
+  // Stops requested for assignment in this wave.
+  repeated WaypointStop requested_stops = 2 [json_name = "requestedStops"];
+  // Latest telemetry snapshots for candidate vehicles.
+  repeated TelemetryEnvelope fleet_state = 3 [json_name = "fleetState"];
+  // Planning horizon window.
+  TimeSpan planning_window = 4 [json_name = "planningWindow"];
+}
+
+// Result of an AssignBatch planning run.
+message AssignBatchResponse {
+  // Unique planning run receipt ID.
+  string plan_receipt_id = 1 [json_name = "planReceiptId"];
+  // Aggregated scheduling outcome and rejected stop diagnostics.
+  AssignmentOutcome outcome = 2;
+  // Solver wall time in milliseconds.
+  uint32 solver_elapsed_ms = 3 [json_name = "solverElapsedMs"];
+}
+
+// Cancels a previously scheduled plan receipt.
+message CancelPlanRequest {
+  string plan_receipt_id = 1 [json_name = "planReceiptId"];
+  string operator_note = 2 [json_name = "operatorNote"];
+}
+
+// Confirmation returned by CancelPlan.
+message CancelPlanResponse {
+  bool cancelled = 1;
+}
+
+// Fleet dispatch and route-assignment RPC service.
+service DispatchService {
+  // Computes a dispatch batch assignment for candidate vehicles.
+  rpc AssignBatch(AssignBatchRequest) returns (AssignBatchResponse);
+  // Cancels an active dispatch plan.
+  rpc CancelPlan(CancelPlanRequest) returns (CancelPlanResponse);
+}

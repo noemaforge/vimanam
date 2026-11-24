@@ -1,0 +1,28 @@
+syntax = "proto3";
+
+package fleet.v2;
+
+import "fleet/v2/common.proto";
+
+// Live sensor snapshot reported by an autonomous courier vehicle.
+message VehicleSnapshot {
+  string vehicle_code = 1 [json_name = "vehicleCode"];
+  GeoPoint position = 2;
+  uint32 battery_pct = 3 [json_name = "batteryPct"];
+  float payload_kg = 4 [json_name = "payloadKg"];
+  int64 sampled_unix_sec = 5 [json_name = "sampledUnixSec"];
+}
+
+// Health metrics attached to a telemetry heartbeat.
+message SubsystemMetric {
+  string subsystem_key = 1 [json_name = "subsystemKey"];
+  double reading_value = 2 [json_name = "readingValue"];
+  bool within_nominal = 3 [json_name = "withinNominal"];
+}
+
+// Aggregated vehicle diagnostic bundle.
+message TelemetryEnvelope {
+  VehicleSnapshot snapshot = 1;
+  repeated SubsystemMetric metrics = 2;
+  string firmware_tag = 3 [json_name = "firmwareTag"];
+}

@@ -1,0 +1,148 @@
+---
+title: "v2.2.0 standalone benchmarks & LLM eval"
+description: "Standalone v2.2.0 render medians/IQRs, 3-trial serial routed LLM evaluation with synthetic zero-memorization Protobuf specs, Claude tokenizer calibration, and tracked limits."
+---
+
+import { Aside } from '@astrojs/starlight/components';
+import BenchmarkChart from '../../../components/BenchmarkChart.astro';
+
+All numbers on this page are backed by checked-in raw captures:
+
+- [`scripts/eval-context-accuracy-results.json`](https://github.com/noemaforge/vimanam/blob/main/scripts/eval-context-accuracy-results.json) (`138` serial LLM trials, `--workers 1`)
+- [`scripts/benchmark-v22-results.json`](https://github.com/noemaforge/vimanam/blob/main/scripts/benchmark-v22-results.json) (`hyperfine 2.0.0`, `10` runs per target)
+- [`scripts/eval-fixtures/protos/`](https://github.com/noemaforge/vimanam/tree/main/scripts/eval-fixtures/protos) (synthetic multi-file `.proto` fixtures for zero-memorization evaluation)
+
+---
+
+## Task-accuracy evaluation: end-to-end routed workflow vs fixed slice vs raw spec
+
+Extracting one operation out of 612 is selection, not compression. To measure whether an LLM using Vimanam answers exact contract questions accurately without oracle hints or training-data memorization, ten contract tasks ran serially (`--workers 1`) under five conditions on `claude-haiku-5-5` (zero tools, isolated system prompt, `3` trials per cell; `1` trial on >100k-token `raw_spec`):
+
+1. **`no_spec`** *(memorization control, 3 trials/task)*: question only, no contract context.
+2. **`summary`** *(3 trials/task)*: `vimanam --detail summary --no-report`.
+3. **`routed_e2e`** *(real workflow, 3 trials/task)*: Turn 1 reads `vimanam --detail summary` and chooses `--operation-id` / `--operation` and optional `--schema` names. The harness runs `vimanam` with a uniform `--schema-depth 2` on **both** operation and `--schema` calls. Turn 2 answers from the retrieved slice or returns `{"fetch_schemas": [...]}` for one follow-up `--schema ... --schema-depth 2` call before answering on Turn 3. Totals sum **all turns' Claude API input tokens, wall latency, and USD cost**.
+4. **`fixed_slice`** *(3 trials/task)*: uniform single-turn `vimanam --operation ... --detail full --include-schemas --schema-depth 2 --no-report` with no extra `--schema` flags (not an oracle upper bound).
+5. **`raw_spec`** *(3 trials on small specs; 1 trial on >100k-token specs)*: raw YAML, raw JSON, concatenated `.proto` + transitive imports, or raw `.graphql` SDL — executed on all 10 tasks, including both Stripe `7.9 MB` JSON tasks, which returned `exit 1`, `"terminal_reason": "blocking_limit"`, and `"Prompt is too long"`.
+
+The three Protobuf tasks use checked-in synthetic multi-file services (`ledger/v1`, `fleet/v2`, and `vault/v1` in [`scripts/eval-fixtures/protos/`](https://github.com/noemaforge/vimanam/tree/main/scripts/eval-fixtures/protos)) so public-spec memorization cannot inflate `no_spec` or `summary`, and `fleet/v2` + `vault/v1` place requested sub-messages beyond depth 2 to actively exercise the Turn-3 `fetch_schemas` follow-up path.
+
+Every response was graded deterministically on strict JSON assertions (`49` assertions across `10` tasks; `138` total serial trials; no LLM judge).
+
+### All 10 tasks combined (`49` assertions)
+
+| Condition | Completed tasks | Mean exact task pass rate | Mean assertions passed | Sum of median Claude API input tokens | Mean observed API cost (USD) | Sum of median API latency |
+|---|---:|---:|---:|---:|---:|---:|
+| **`no_spec`** *(memorization control)* | `10 / 10` | `0.0%` | `0.0 / 49` (`0.0%`) | `12,775` | `$0.0024` | `22.3 s` |
+| **`summary`** | `10 / 10` | `0.0%` | `5.33 / 49` (`10.9%`) | `45,149` | `$0.0054` | `27.8 s` |
+| **`fixed_slice`** *(single-turn depth 2)* | `10 / 10` | `30.0%` | `30.0 / 49` (`61.2%`) | `57,142` | `$0.0064` | `25.1 s` |
+| **`routed_e2e`** *(2–3 turn end-to-end)* | **`10 / 10`** | **`83.3%`** | **`47.33 / 49` (`96.6%`)** | **`129,810`** | **`$0.0179`** | `55.9 s` |
+| **`raw_spec`** *(single-turn)* | `8 / 10` *(`2` `Prompt is too long`)* | `80.0%` | `41.0 / 49` (`83.7%`) | `1,718,622` *(8 fitting)* | `$1.7055` *(8 fitting)* | `14.2 s` *(8 fitting)* |
+
+### Subset A: 8 tasks that fit in raw context (`41` assertions, apples-to-apples)
+
+| Condition | Mean exact task pass rate | Mean assertions passed | Sum of median Claude API input tokens | Mean observed API cost (USD) | Sum of median API latency |
+|---|---:|---:|---:|---:|---:|
+| **`no_spec`** | `0.0%` | `0.0 / 41` (`0.0%`) | `10,258` | `$0.0018` | `16.3 s` |
+| **`summary`** | `0.0%` | `3.33 / 41` (`8.1%`) | `21,092` | `$0.0032` | `21.8 s` |
+| **`fixed_slice`** *(single-turn depth 2)* | `16.7%` | `22.33 / 41` (`54.5%`) | `23,246` | `$0.0035` | `20.6 s` |
+| **`routed_e2e`** *(2–3 turns; `2.25` avg)* | **`87.5%`** | **`40.0 / 41` (`97.6%`)** | **`65,721`** *(26.1× fewer)* | **`$0.0106`** *(160.9× lower)* | `40.5 s` *(2.84× slower)* |
+| **`raw_spec`** *(single-turn)* | `100.0%` | `41.0 / 41` (`100.0%`) | `1,718,622` | `$1.7055` | `14.2 s` |
+
+### Subset B: 2 Stripe `7.9 MB` tasks (`8` assertions; `raw_spec` rejected with `Prompt is too long`)
+
+| Condition | Mean exact task pass rate | Mean assertions passed | Sum of median Claude API input tokens | Mean observed API cost (USD) | Sum of median API latency |
+|---|---:|---:|---:|---:|---:|
+| **`no_spec`** | `0.0%` | `0.0 / 8` (`0.0%`) | `2,517` | `$0.0006` | `6.0 s` |
+| **`summary`** | `0.0%` | `2.0 / 8` (`25.0%`) | `24,057` | `$0.0023` | `6.0 s` |
+| **`fixed_slice`** *(`--schema-depth 2`)* | **`83.4%`** | **`7.67 / 8` (`95.9%`)** | **`33,896`** | **`$0.0029`** | **`4.5 s`** |
+| **`routed_e2e`** *(`--schema-depth 2` on all calls)* | `66.6%` | `7.33 / 8` (`91.6%`) | `64,089` | `$0.0073` | `15.4 s` |
+| **`raw_spec`** *(7.9 MB JSON)* | `0.0%` | **`0.0 / 8`** *(`Prompt is too long`)* | `0` *(`exit 1`, `blocking_limit`)* | `$0.0000` | `0 ms` API |
+
+### Per-task breakdown (`3` serial trials per cell; `1` trial on large `raw_spec`)
+
+| Task | Format & size | `no_spec` | `summary` | `routed_e2e` (score · pass · turns · Claude tokens) | `fixed_slice` (score · tokens) | `raw_spec` (score · tokens) |
+|---|---|---:|---:|---|---|---|
+| `oa_embeddings` (`POST /embeddings`) | OpenAPI YAML (`1.3 MB`) | `0/5` | `1/5` | **`5/5`** · `3/3` · `2t` · `8,641` | `4.33/5` · `2,921` | `5/5` · `408,004` |
+| `oa_batches` (`POST /batches`) | OpenAPI YAML (`1.3 MB`) | `0/5` | `1/5` | `4/5` · `0/3` · `2t` · `8,504` *([#156](https://github.com/noemaforge/vimanam/issues/156))* | `3/5` · `3,546` | `5/5` · `407,998` |
+| `oa_files` (`POST /files`) | OpenAPI YAML (`1.3 MB`) | `0/4` | `1.33/4` | **`4/4`** · `3/3` · `2t` · `7,381` | `3/4` · `2,834` | `4/4` · `407,986` |
+| `oa_stripe_customers` (`POST /v1/customers`) | OpenAPI JSON (`7.9 MB`) | `0/4` | `1/4` | **`4/4`** · `3/3` · `2t` · `24,940` | `4/4` · `7,234` | **`0/4`** · `Prompt is too long` |
+| `oa_stripe_payment_intents` (`POST /v1/payment_intents`) | OpenAPI JSON (`7.9 MB`) | `0/4` | `1/4` | `3.33/4` · `1/3` · `2t` · `39,149` *([#156](https://github.com/noemaforge/vimanam/issues/156))* | `3.67/4` · `26,662` | **`0/4`** · `Prompt is too long` |
+| `pb_ledger_stream` (`WatchSettlements`) | Synthetic `.proto` (`2.3 KB`) | `0/6` | `0/6` | **`6/6`** · `3/3` · `2t` · `4,995` | `6/6` · `3,120` | `6/6` · `2,349` |
+| `pb_fleet_dispatch` (`AssignBatch`) | Synthetic `.proto` (`4.5 KB`) | `0/6` | `0/6` | **`6/6`** · `3/3` · **`3t`** *(`fu=1.0`)* · `9,933` | `2/6` · `3,457` | `6/6` · `3,382` |
+| `pb_vault_audit` (`ExportBundle`) | Synthetic `.proto` (`4.1 KB`) | `0/5` | `0/5` | **`5/5`** · `3/3` · **`3t`** *(`fu=1.0`)* · `10,541` | `0/5` · `3,231` | `5/5` · `3,095` |
+| `gql_spacex_launches` (`Query.launchesPastResult`) | GraphQL SDL (`12 KB`) | `0/5` | `0/5` | **`5/5`** · `3/3` · `2t` · `6,110` | `2/5` · `2,115` | `5/5` · `6,906` |
+| `gql_github_create_issue` (`Mutation.createIssue`) | GraphQL SDL (`1.2 MB`) | `0/5` | `0/5` | **`5/5`** · `3/3` · `2t` · `9,616` | `2/5` · `2,022` | `5/5` · `478,902` |
+
+### Key findings from the serial evaluation
+
+1. **Zero memorization contamination and verified target routing (`30 / 30`)**: `no_spec` scored `0 / 49` (`0.0%`) across all 30 control trials. In `routed_e2e`, Turn 1 selected the **exact expected target operation** (`route_target_matched = 1.0`) and exited `0` (`routed_cmd_ok = 1.0`) in **`30 / 30` trials**.
+2. **Turn-3 `fetch_schemas` follow-up loop works end to end (`6 / 6` on depth-3 tasks, `0 / 24` spurious)**: on `pb_fleet_dispatch` and `pb_vault_audit`, single-turn `fixed_slice` at `--schema-depth 2` scored `2/6` and `0/5` because `fleet.v2.AssignmentOutcome`, `vault.v1.ExportPolicy`, and `vault.v1.BundleSummary` sat beyond depth 2. In `routed_e2e`, the model read Vimanam's printed `--schema` hints, triggered `fetch_schemas` in **`3/3` trials on both tasks**, and reached **`6/6` (`3/3`)** and **`5/5` (`3/3`)** on Turn 3 (`mean_turns = 2.20`, overall `followup_rate = 0.20`).
+3. **Small-spec vs. large-spec crossover (and latency trade-off)**:
+   - **Small specs (`<15 KB` / `<10k` Claude tokens)**: passing raw `.proto` or SpaceX SDL in one turn uses fewer tokens and lower latency (`1.3–2.3 s` vs `4.0–6.7 s`) than 2–3 turn routing.
+   - **Large specs (`>1 MB` / `>400k` Claude tokens)**: `routed_e2e` cuts Claude API input tokens by **47×–55×** (`8,641`, `8,504`, `7,381`, `9,616` vs `408k–479k`), cutting observed API cost across the 8 fitting tasks by **160.9×** (`$0.0106` vs `$1.7055`) at **2.84×** higher wall latency (`40.5 s` vs `14.2 s`) for 2–3 sequential turns.
+4. **Product default hazard — unbounded `--schema` on cyclic OpenAPI specs ([#160](https://github.com/noemaforge/vimanam/issues/160))**: an earlier harness run invoked `vimanam spec3.json --schema customer --no-report` without `--schema-depth`, which expanded Stripe's transitive component graph into `1,427,889` chars (`559,554` Claude tokens, `$0.551` uncached). Passing `--schema-depth 2` on `--schema` calls reduced `--schema customer` by `102×` to `13,992` chars and brought `oa_stripe_customers` `routed_e2e` to **`24,940` Claude tokens (`$0.0037`, `3/3` pass)**. Because Vimanam's own depth-cutoff retrieval hints currently omit `--schema-depth`, bounding standalone `--schema` hints is tracked in [#160](https://github.com/noemaforge/vimanam/issues/160).
+5. **Real product UX bug — synthetic `request.` prefix on inline OpenAPI request schemas ([#156](https://github.com/noemaforge/vimanam/issues/156))**: the only remaining failures across all 30 `routed_e2e` trials occurred on `required_fields` for `oa_batches` (`0/3`) and `oa_stripe_payment_intents` (`2/3` failed), both of which define inline (non-`$ref`) request bodies whose Markdown field rows carry a synthetic `request.` prefix.
+
+---
+
+## Tokenizer calibration: Claude API tokens vs `o200k_base` vs `chars / 4`
+
+Vimanam's `--max-tokens`, `--stats`, and `--costs` use a fast `chars / 4` heuristic (`estimate_tokens` in `src/markdown/mod.rs`). Measuring net Claude API context tokens (`api_input_tokens_median - no_spec_baseline`) on `claude-haiku-5-5` alongside `tiktoken` (`o200k_base`) across payloads `>= 1,000` chars shows a consistent vendor gap (note: this calibration reflects one Claude model with `2–3` samples per raw format and `16` Markdown samples):
+
+| Content format | Samples (`>=1 KB`) | Median chars / `o200k_base` | Median chars / Claude token | Median Claude / `o200k_base` ratio | Implication for `--max-tokens` (`chars / 4`) |
+|---|---:|---:|---:|---:|---|
+| **Vimanam Markdown** | `16` | `4.01` | `2.24` | **`1.65×`** | `chars / 4` tracks `o200k_base` closely, but **undercounts Claude tokens by ~1.65×–1.79×** (`--max-tokens 1600` ≈ `2,650–2,850` Claude tokens; tracked in [#165](https://github.com/noemaforge/vimanam/issues/165)) |
+| **GraphQL SDL** | `2` | `3.83` | `2.38` | **`1.60×`** | Dense punctuation inflates Claude tokens ~1.68× above `chars / 4` |
+| **Protobuf / gRPC** | `3` | `4.23` | `2.20` | **`1.90×`** | Compact synthetic `.proto` identifiers inflate Claude tokens relative to `o200k_base` |
+| **OpenAPI YAML** | `3` | `4.89` | `3.38` | **`1.45×`** | Indentation compresses well in `o200k_base` (`4.89` chars/tok) and moderately in Claude (`3.38` chars/tok) |
+
+Full-spec `o200k_base` BPE sizes versus full Markdown and single-operation slices:
+
+| Public specification | Raw `o200k_base` BPE | Raw `chars / 4` (chars/BPE) | Full Markdown `o200k_base` BPE | Full MD `chars / 4` (chars/BPE) | Focused slice `o200k_base` BPE | Selection ratio (BPE) |
+|---|---:|---:|---:|---:|---:|---:|
+| **Stripe OpenAPI 3.0** (`7.9 MB` JSON) | `1,418,244` | `2,079,211` (`5.86`) | `1,095,911` | `1,147,353` (`4.19`) | `3,825` (`POST /v1/customers`) | `99.7%` fewer |
+| **OpenAI OpenAPI 3.0** (`1.3 MB` YAML) | `281,146` | `343,997` (`4.89`) | `151,987` | `154,266` (`4.06`) | `1,286` (`POST /chat/completions`) | `99.5%` fewer |
+| **GitHub GraphQL API** (`1.2 MB` SDL) | `286,673` | `305,959` (`4.27`) | `414,860` | `427,790` (`4.12`) | `9,902` (`Query.repository`) | `96.5%` fewer |
+| **SpaceX Land GraphQL** (`12 KB` SDL) | `3,672` | `3,110` (`3.39`) | `15,129` | `13,556` (`3.58`) | `510` (`Query.launchesPastResult`) | `86.1%` fewer |
+| **OTel TraceService** (4 `.proto` files) | `6,696` | `7,036` (`4.20`) | `9,369` | `9,359` (`4.00`) | `1,393` (`TraceService.Export`, d=3) | `79.2%` fewer |
+
+---
+
+## Standalone v2.2.0 render latency (median and IQR)
+
+Measurements below `10 ms` are dominated by macOS process startup (~`5–6 ms`).
+
+<BenchmarkChart
+  title="Vimanam v2.2.0 standalone full-detail render latency across public API specs"
+  unit="ms"
+  xAxisLabel="Median wall time across 10 runs, lower is better"
+  primaryLabel="vimanam 2.2.0"
+  caption="hyperfine 2.0.0 · 10 runs, warmup 2 · --detail full --include-schemas --no-report (median, IQR, and raw samples in scripts/benchmark-v22-results.json)"
+  items={[
+    { label: 'gRPC Health v1.20.0 (.proto, no protoc)', primary: 7.65, note: 'IQR 6.9–8.2 ms · 5.9 MB RSS' },
+    { label: 'Petstore OAS3 (2.6 KB JSON)', primary: 7.78, note: 'IQR 7.2–8.2 ms · 4.1 MB RSS' },
+    { label: 'OTel Collector TraceService (.proto, no protoc)', primary: 8.20, note: 'IQR 7.5–10.3 ms · 7.3 MB RSS' },
+    { label: 'OTel Collector LogsService (.proto, no protoc)', primary: 8.86, note: 'IQR 7.8–10.0 ms · 7.2 MB RSS' },
+    { label: 'OTel Collector MetricsService (.proto, no protoc)', primary: 9.48, note: 'IQR 8.5–10.9 ms · 7.9 MB RSS' },
+    { label: 'SpaceX Land GraphQL (12 KB SDL)', primary: 10.86, note: 'IQR 9.2–12.2 ms · 5.1 MB RSS' },
+    { label: 'OpenAI OpenAPI 3.0 (1.3 MB YAML)', primary: 45.33, note: 'IQR 44.0–46.2 ms · 23.5 MB RSS' },
+    { label: 'GitHub GraphQL API (1.2 MB SDL)', primary: 64.85, note: 'IQR 63.5–65.3 ms · 24.1 MB RSS' },
+    { label: 'GitHub GraphQL API (4.7 MB Introspection JSON)', primary: 93.34, note: 'IQR 91.5–94.5 ms · 44.2 MB RSS' },
+    { label: 'Stripe OpenAPI 3.0 (7.9 MB JSON)', primary: 111.00, note: 'IQR 109.6–111.6 ms · 124.0 MB RSS' },
+    { label: 'Stripe OpenAPI 3.0 (6.3 MB YAML)', primary: 206.67, note: 'IQR 205.5–207.7 ms · 121.9 MB RSS' },
+  ]}
+/>
+
+---
+
+## Trade-offs and tracked issues in v2.2.0
+
+<Aside type="caution" title="Measured limits and open tracking issues">
+  - **OpenAPI `diff` scaling & contract v2 JSON size ([#152](https://github.com/noemaforge/vimanam/issues/152), [#159](https://github.com/noemaforge/vimanam/issues/159))**: unmemoized recursive `$ref` expansion times out past `15 s` on Stripe's cyclic `7.9 MB` spec, and v2 JSON unconditionally embeds both full `old`/`new` surfaces (`37.1 MB` on OpenAI `4.9 MB`; `17.1 MB` for a 1-change GitHub GraphQL diff).
+  - **OpenAPI 3.1 gaps ([#166](https://github.com/noemaforge/vimanam/issues/166), [#167](https://github.com/noemaforge/vimanam/issues/167))**: `type: ["T", "null"]` drops `"null"` during deserialization (missing `| null` and nullability diffs), and single-value `enum: ["x"]` ↔ `const: "x"` refactors emit false breaking findings.
+  - **OpenAPI `diff` media-type scope ([#154](https://github.com/noemaforge/vimanam/issues/154))**: `vimanam diff` currently compares only the first media type in each request body or response `content` map.
+  - **Inline OpenAPI `request.` prefix ([#156](https://github.com/noemaforge/vimanam/issues/156))**, **unbounded `--schema` hints ([#160](https://github.com/noemaforge/vimanam/issues/160))**, and **per-field stderr truncation spam ([#161](https://github.com/noemaforge/vimanam/issues/161))**.
+  - **Protobuf gaps**: streaming changes omitted from `--breaking wire` ([#153](https://github.com/noemaforge/vimanam/issues/153)), mixed `.pb` vs `.proto` `descriptor.proto` drift ([#155](https://github.com/noemaforge/vimanam/issues/155)), Protobuf Editions tracking ([#157](https://github.com/noemaforge/vimanam/issues/157)), per-side `-I` roots for file-to-file diff ([#162](https://github.com/noemaforge/vimanam/issues/162)), and Git blob batching ([#164](https://github.com/noemaforge/vimanam/issues/164)).
+  - **GraphQL SDL duplicate field validation ([#163](https://github.com/noemaforge/vimanam/issues/163))**: duplicates are rejected in `extend type` but silently accepted inside a single `type` block.
+  - **Token estimator offset for Claude ([#165](https://github.com/noemaforge/vimanam/issues/165))**: `chars / 4` undercounts Claude tokens by ~`1.65×` on Vimanam Markdown.
+</Aside>

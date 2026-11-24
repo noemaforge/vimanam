@@ -1,22 +1,29 @@
 #!/usr/bin/env python3
-"""End-to-end routed and oracle task-accuracy evaluation on the same LLM
-(claude-haiku-5-5, zero tools, isolated system prompt, repeated trials).
+"""End-to-end routed and fixed-slice task-accuracy evaluation on the same LLM
+(claude-haiku-5-5, zero tools, isolated system prompt, repeated serial trials).
 
 Conditions:
   1. no_spec      — memorization control (question only, N trials)
   2. summary      — vimanam --detail summary --no-report (N trials)
   3. routed_e2e   — real workflow: summary -> model selects vimanam operation/schema
-                    flags -> harness runs vimanam -> optional 1 follow-up --schema
-                    call when truncated or missing a referenced type -> answer (N trials)
-  4. oracle_slice — single-turn harness-selected slice (N trials; separates routing
-                    from slice readability)
+                    flags -> harness runs vimanam at uniform --schema-depth 2 (on both
+                    --operation/--operation-id and --schema calls) -> optional 1
+                    follow-up {"fetch_schemas": [...]} turn at --schema-depth 2 -> answer
+  4. fixed_slice  — single-turn uniform slice (--operation ... --detail full
+                    --include-schemas --schema-depth 2 --no-report; NOT an oracle)
   5. raw_spec     — raw contract bytes (N trials on small specs, 1 trial on >100k-token
                     specs; executed on all 10 tasks including 7.9 MB Stripe JSON, which
                     returns exit 1 / terminal_reason="blocking_limit" / "Prompt is too long")
 
+The three Protobuf tasks use checked-in synthetic multi-file specs under
+scripts/eval-fixtures/protos/ so no_spec memorization cannot contaminate context value,
+and two of them place requested sub-messages beyond depth 2 so the Turn-3 fetch_schemas
+follow-up path is actively exercised.
+
 Every task is graded deterministically on strict JSON assertions (no LLM judge).
-Also records Claude API context tokens (api_input_tokens minus no_spec baseline)
-alongside tiktoken o200k_base BPE tokens and chars/4 estimates.
+Also records exact target-operation routing accuracy (route_target_matched), follow-up
+invocation rate (followup_rate), and Claude API context tokens alongside tiktoken
+o200k_base BPE tokens and chars/4 estimates.
 """
 
 from __future__ import annotations
@@ -51,8 +58,10 @@ FOLLOWUP_OR_ANSWER_SYSTEM_PROMPT = (
     "You are an API contract assistant reading focused `vimanam` Markdown output. "
     "Answer strictly from the provided context. If any required field or nested schema was omitted "
     "(for example at a schema-depth cutoff or a referenced input/output type not expanded yet), "
-    'you may request up to 3 named schemas by returning ONLY {"fetch_schemas": ["SchemaName", ...]}. '
-    "Otherwise return ONLY the final JSON answer matching the exact requested schema, with no code fences."
+    'you MUST request up to 3 exact schema names from the text by returning ONLY '
+    '{"fetch_schemas": ["ExactSchemaName", ...]}. '
+    "Do not guess omitted fields. Otherwise return ONLY the final JSON answer matching the "
+    "exact requested schema, with no code fences."
 )
 
 
@@ -157,33 +166,38 @@ def build_tasks(v22: str, corpus: Path) -> list[dict]:
     stripe_json = corpus / "stripe-openapi/openapi/spec3.json"
     octo_gql = corpus / "octokit-graphql/schema.graphql"
     spacex_gql = REPO / "tests/fixtures/graphql/spacex-land-64a7fa9.graphql"
-    health_proto = REPO / "tests/fixtures/protobuf/health-v1.20.0.proto"
-    otel_root = corpus / "otel-proto"
-    otel_trace = otel_root / "opentelemetry/proto/collector/trace/v1/trace_service.proto"
-    otel_metrics = otel_root / "opentelemetry/proto/collector/metrics/v1/metrics_service.proto"
+
+    proto_root = REPO / "scripts/eval-fixtures/protos"
+    ledger_proto = proto_root / "ledger/v1/ledger.proto"
+    fleet_proto = proto_root / "fleet/v2/dispatch.proto"
+    vault_proto = proto_root / "vault/v1/audit.proto"
 
     def concat_protos(paths: list[Path]) -> str:
         return "\n\n".join(f"// === {p.name} ===\n{p.read_text()}" for p in paths)
 
-    otel_trace_raw = concat_protos([
-        otel_trace,
-        otel_root / "opentelemetry/proto/trace/v1/trace.proto",
-        otel_root / "opentelemetry/proto/resource/v1/resource.proto",
-        otel_root / "opentelemetry/proto/common/v1/common.proto",
+    ledger_raw = concat_protos([
+        ledger_proto,
+        proto_root / "ledger/v1/common.proto",
     ])
-    otel_metrics_raw = concat_protos([
-        otel_metrics,
-        otel_root / "opentelemetry/proto/metrics/v1/metrics.proto",
-        otel_root / "opentelemetry/proto/resource/v1/resource.proto",
-        otel_root / "opentelemetry/proto/common/v1/common.proto",
+    fleet_raw = concat_protos([
+        fleet_proto,
+        proto_root / "fleet/v2/routing.proto",
+        proto_root / "fleet/v2/telemetry.proto",
+        proto_root / "fleet/v2/common.proto",
+    ])
+    vault_raw = concat_protos([
+        vault_proto,
+        proto_root / "vault/v1/policy.proto",
+        proto_root / "vault/v1/record.proto",
+        proto_root / "vault/v1/common.proto",
     ])
 
     stripe_raw = stripe_json.read_text()
     openai_summary = vimanam_out(v22, [str(openai_yaml), "--detail", "summary", "--no-report"])
     stripe_summary = vimanam_out(v22, [str(stripe_json), "--detail", "summary", "--no-report"])
-    health_summary = vimanam_out(v22, [str(health_proto), "--detail", "summary", "--no-report"])
-    otel_trace_summary = vimanam_out(v22, [str(otel_trace), "-I", str(otel_root), "--detail", "summary", "--no-report"])
-    otel_metrics_summary = vimanam_out(v22, [str(otel_metrics), "-I", str(otel_root), "--detail", "summary", "--no-report"])
+    ledger_summary = vimanam_out(v22, [str(ledger_proto), "-I", str(proto_root), "--detail", "summary", "--no-report"])
+    fleet_summary = vimanam_out(v22, [str(fleet_proto), "-I", str(proto_root), "--detail", "summary", "--no-report"])
+    vault_summary = vimanam_out(v22, [str(vault_proto), "-I", str(proto_root), "--detail", "summary", "--no-report"])
     spacex_summary = vimanam_out(v22, [str(spacex_gql), "--detail", "summary", "--no-report"])
     octo_summary = vimanam_out(v22, [str(octo_gql), "--detail", "summary", "--no-report"])
 
@@ -195,6 +209,8 @@ def build_tasks(v22: str, corpus: Path) -> list[dict]:
             "spec_path": openai_yaml,
             "extra_args": [],
             "raw_large": True,
+            "expected_operation_id": "createEmbedding",
+            "expected_operation": "POST /embeddings",
             "question": (
                 'For the operation that creates an embedding vector (`POST /embeddings`), return JSON:\n'
                 '{"operation_id": string, "required_fields": [string], "encoding_format_enum": [string], '
@@ -202,7 +218,7 @@ def build_tasks(v22: str, corpus: Path) -> list[dict]:
             ),
             "summary": openai_summary,
             "raw_spec": openai_yaml.read_text(),
-            "oracle_slice": vimanam_out(v22, [str(openai_yaml), "--operation", "POST /embeddings", "--detail", "full", "--include-schemas", "--schema-depth", "2", "--no-report"]),
+            "fixed_slice": vimanam_out(v22, [str(openai_yaml), "--operation", "POST /embeddings", "--detail", "full", "--include-schemas", "--schema-depth", "2", "--no-report"]),
             "grade": lambda d: {
                 "operation_id": d.get("operation_id") == "createEmbedding",
                 "required_fields": norm_set(d.get("required_fields")) == {"input", "model"},
@@ -218,6 +234,8 @@ def build_tasks(v22: str, corpus: Path) -> list[dict]:
             "spec_path": openai_yaml,
             "extra_args": [],
             "raw_large": True,
+            "expected_operation_id": "createBatch",
+            "expected_operation": "POST /batches",
             "question": (
                 'For the operation that creates a batch (`POST /batches`), return JSON:\n'
                 '{"operation_id": string, "required_fields": [string], "completion_window_value": string, '
@@ -225,7 +243,7 @@ def build_tasks(v22: str, corpus: Path) -> list[dict]:
             ),
             "summary": openai_summary,
             "raw_spec": openai_yaml.read_text(),
-            "oracle_slice": vimanam_out(v22, [str(openai_yaml), "--operation", "POST /batches", "--detail", "full", "--include-schemas", "--schema-depth", "2", "--no-report"]),
+            "fixed_slice": vimanam_out(v22, [str(openai_yaml), "--operation", "POST /batches", "--detail", "full", "--include-schemas", "--schema-depth", "2", "--no-report"]),
             "grade": lambda d: {
                 "operation_id": d.get("operation_id") == "createBatch",
                 "required_fields": norm_set(d.get("required_fields")) == {"input_file_id", "endpoint", "completion_window"},
@@ -241,6 +259,8 @@ def build_tasks(v22: str, corpus: Path) -> list[dict]:
             "spec_path": openai_yaml,
             "extra_args": [],
             "raw_large": True,
+            "expected_operation_id": "createFile",
+            "expected_operation": "POST /files",
             "question": (
                 'For the operation that uploads a file (`POST /files`), return JSON:\n'
                 '{"operation_id": string, "required_fields": [string], "purpose_enum": [string], '
@@ -248,7 +268,7 @@ def build_tasks(v22: str, corpus: Path) -> list[dict]:
             ),
             "summary": openai_summary,
             "raw_spec": openai_yaml.read_text(),
-            "oracle_slice": vimanam_out(v22, [str(openai_yaml), "--operation", "POST /files", "--detail", "full", "--include-schemas", "--schema-depth", "2", "--no-report"]),
+            "fixed_slice": vimanam_out(v22, [str(openai_yaml), "--operation", "POST /files", "--detail", "full", "--include-schemas", "--schema-depth", "2", "--no-report"]),
             "grade": lambda d: {
                 "operation_id": d.get("operation_id") == "createFile",
                 "required_fields": norm_set(d.get("required_fields")) == {"file", "purpose"},
@@ -263,6 +283,9 @@ def build_tasks(v22: str, corpus: Path) -> list[dict]:
             "spec_path": stripe_json,
             "extra_args": [],
             "raw_large": True,
+            "stripe_7_9mb": True,
+            "expected_operation_id": "PostCustomers",
+            "expected_operation": "POST /v1/customers",
             "question": (
                 'For creating a customer (`POST /v1/customers`), return JSON:\n'
                 '{"operation_id": string, "tax_exempt_enum": [string], "invoice_prefix_max_len": integer, '
@@ -270,8 +293,7 @@ def build_tasks(v22: str, corpus: Path) -> list[dict]:
             ),
             "summary": stripe_summary,
             "raw_spec": stripe_raw,
-            "stripe_7_9mb": True,
-            "oracle_slice": vimanam_out(v22, [str(stripe_json), "--operation", "POST /v1/customers", "--detail", "full", "--include-schemas", "--schema-depth", "2", "--no-report"]),
+            "fixed_slice": vimanam_out(v22, [str(stripe_json), "--operation", "POST /v1/customers", "--detail", "full", "--include-schemas", "--schema-depth", "2", "--no-report"]),
             "grade": lambda d: {
                 "operation_id": d.get("operation_id") == "PostCustomers",
                 "tax_exempt_enum": norm_set(d.get("tax_exempt_enum")) == {"none", "exempt", "reverse"},
@@ -286,6 +308,9 @@ def build_tasks(v22: str, corpus: Path) -> list[dict]:
             "spec_path": stripe_json,
             "extra_args": [],
             "raw_large": True,
+            "stripe_7_9mb": True,
+            "expected_operation_id": "PostPaymentIntents",
+            "expected_operation": "POST /v1/payment_intents",
             "question": (
                 'For creating a PaymentIntent (`POST /v1/payment_intents`), return JSON:\n'
                 '{"operation_id": string, "required_fields": [string], "amount_max_digits": integer, '
@@ -293,8 +318,7 @@ def build_tasks(v22: str, corpus: Path) -> list[dict]:
             ),
             "summary": stripe_summary,
             "raw_spec": stripe_raw,
-            "stripe_7_9mb": True,
-            "oracle_slice": vimanam_out(v22, [str(stripe_json), "--operation", "POST /v1/payment_intents", "--detail", "full", "--include-schemas", "--schema-depth", "2", "--no-report"]),
+            "fixed_slice": vimanam_out(v22, [str(stripe_json), "--operation", "POST /v1/payment_intents", "--detail", "full", "--include-schemas", "--schema-depth", "2", "--no-report"]),
             "grade": lambda d: {
                 "operation_id": d.get("operation_id") == "PostPaymentIntents",
                 "required_fields": norm_set(d.get("required_fields")) == {"amount", "currency"},
@@ -303,77 +327,88 @@ def build_tasks(v22: str, corpus: Path) -> list[dict]:
             },
         },
         {
-            "id": "pb_health_watch",
+            "id": "pb_ledger_stream",
             "format": "Protobuf / gRPC",
-            "spec": "grpc/grpc health-v1.20.0.proto",
-            "spec_path": health_proto,
-            "extra_args": [],
+            "spec": "Synthetic ledger/v1 (2 .proto files)",
+            "spec_path": ledger_proto,
+            "extra_args": ["-I", str(proto_root)],
             "raw_large": False,
+            "expected_operation_id": "ledger.v1.SettlementStream.WatchSettlements",
+            "expected_operation": "RPC ledger.v1.SettlementStream.WatchSettlements",
             "question": (
-                'For RPC `grpc.health.v1.Health.Watch`, return JSON:\n'
+                'For RPC `ledger.v1.SettlementStream.WatchSettlements`, return JSON:\n'
                 '{"streaming_mode": string, "request_message": string, "response_message": string, '
-                '"status_field_number": integer, "watch_only_enum_name": string, "watch_only_enum_number": integer}'
+                '"clearing_state_field_number": integer, "clearing_state_json_name": string, '
+                '"net_delta_type": string}'
             ),
-            "summary": health_summary,
-            "raw_spec": health_proto.read_text(),
-            "oracle_slice": vimanam_out(v22, [str(health_proto), "--operation", "RPC grpc.health.v1.Health.Watch", "--detail", "full", "--include-schemas", "--no-report"]),
+            "summary": ledger_summary,
+            "raw_spec": ledger_raw,
+            "fixed_slice": vimanam_out(v22, [str(ledger_proto), "-I", str(proto_root), "--operation", "RPC ledger.v1.SettlementStream.WatchSettlements", "--detail", "full", "--include-schemas", "--schema-depth", "2", "--no-report"]),
             "grade": lambda d: {
                 "streaming_mode": "server" in str(d.get("streaming_mode", "")).lower(),
-                "request_message": str(d.get("request_message", "")).endswith("HealthCheckRequest"),
-                "response_message": str(d.get("response_message", "")).endswith("HealthCheckResponse"),
-                "status_field_number": d.get("status_field_number") == 1,
-                "watch_only_enum_name": d.get("watch_only_enum_name") == "SERVICE_UNKNOWN",
-                "watch_only_enum_number": d.get("watch_only_enum_number") == 3,
+                "request_message": str(d.get("request_message", "")).endswith("WatchSettlementsRequest"),
+                "response_message": str(d.get("response_message", "")).endswith("SettlementFrame"),
+                "clearing_state_field_number": d.get("clearing_state_field_number") == 4,
+                "clearing_state_json_name": d.get("clearing_state_json_name") == "clearingState",
+                "net_delta_type": d.get("net_delta_type") == "sint64",
             },
         },
         {
-            "id": "pb_otel_trace",
+            "id": "pb_fleet_dispatch",
             "format": "Protobuf / gRPC",
-            "spec": "OpenTelemetry trace_service.proto (+ imports)",
-            "spec_path": otel_trace,
-            "extra_args": ["-I", str(otel_root)],
+            "spec": "Synthetic fleet/v2 (4 .proto files, depth-3 follow-up)",
+            "spec_path": fleet_proto,
+            "extra_args": ["-I", str(proto_root)],
             "raw_large": False,
+            "expected_operation_id": "fleet.v2.DispatchService.AssignBatch",
+            "expected_operation": "RPC fleet.v2.DispatchService.AssignBatch",
             "question": (
-                'For RPC `opentelemetry.proto.collector.trace.v1.TraceService.Export`, return JSON:\n'
-                '{"streaming_mode": string, "request_field_1_name": string, "request_field_1_json_name": string, '
-                '"partial_success_field_1_name": string, "partial_success_field_1_type": string, '
-                '"partial_success_field_2_name": string, "partial_success_field_2_number": integer}'
+                'For RPC `fleet.v2.DispatchService.AssignBatch` and its nested response `outcome` message, return JSON:\n'
+                '{"streaming_mode": string, "request_field_1_name": string, "outcome_scheduled_stops_type": string, '
+                '"outcome_rejected_field_number": integer, "outcome_rejected_json_name": string, '
+                '"severity_enum_values": [string]}'
             ),
-            "summary": otel_trace_summary,
-            "raw_spec": otel_trace_raw,
-            "oracle_slice": vimanam_out(v22, [str(otel_trace), "-I", str(otel_root), "--operation", "RPC opentelemetry.proto.collector.trace.v1.TraceService.Export", "--detail", "full", "--include-schemas", "--schema-depth", "3", "--no-report"]),
+            "summary": fleet_summary,
+            "raw_spec": fleet_raw,
+            "fixed_slice": vimanam_out(v22, [str(fleet_proto), "-I", str(proto_root), "--operation", "RPC fleet.v2.DispatchService.AssignBatch", "--detail", "full", "--include-schemas", "--schema-depth", "2", "--no-report"]),
             "grade": lambda d: {
                 "streaming_mode": "unary" in str(d.get("streaming_mode", "")).lower(),
-                "request_field_1_name": d.get("request_field_1_name") == "resource_spans",
-                "request_field_1_json_name": d.get("request_field_1_json_name") == "resourceSpans",
-                "partial_success_field_1_name": d.get("partial_success_field_1_name") == "rejected_spans",
-                "partial_success_field_1_type": d.get("partial_success_field_1_type") == "int64",
-                "partial_success_field_2_name": d.get("partial_success_field_2_name") == "error_message",
-                "partial_success_field_2_number": d.get("partial_success_field_2_number") == 2,
+                "request_field_1_name": d.get("request_field_1_name") == "depot_region",
+                "outcome_scheduled_stops_type": d.get("outcome_scheduled_stops_type") == "uint32",
+                "outcome_rejected_field_number": d.get("outcome_rejected_field_number") == 2,
+                "outcome_rejected_json_name": d.get("outcome_rejected_json_name") == "rejectedWaypoints",
+                "severity_enum_values": norm_set(d.get("severity_enum_values")) == {
+                    "CONSTRAINT_SEVERITY_UNSPECIFIED",
+                    "CONSTRAINT_SEVERITY_ADVISORY",
+                    "CONSTRAINT_SEVERITY_HARD_BLOCK",
+                },
             },
         },
         {
-            "id": "pb_otel_metrics",
+            "id": "pb_vault_audit",
             "format": "Protobuf / gRPC",
-            "spec": "OpenTelemetry metrics_service.proto (+ imports)",
-            "spec_path": otel_metrics,
-            "extra_args": ["-I", str(otel_root)],
+            "spec": "Synthetic vault/v1 (4 .proto files, depth-3 follow-up)",
+            "spec_path": vault_proto,
+            "extra_args": ["-I", str(proto_root)],
             "raw_large": False,
+            "expected_operation_id": "vault.v1.AuditExportService.ExportBundle",
+            "expected_operation": "RPC vault.v1.AuditExportService.ExportBundle",
             "question": (
-                'For RPC `opentelemetry.proto.collector.metrics.v1.MetricsService.Export`, return JSON:\n'
-                '{"request_field_1_name": string, "request_field_1_json_name": string, '
-                '"partial_success_field_1_name": string, "partial_success_field_1_json_name": string, '
-                '"partial_success_field_2_name": string}'
+                'For RPC `vault.v1.AuditExportService.ExportBundle`, its nested request `export_policy` message, '
+                'and its nested response `summary` message, return JSON:\n'
+                '{"policy_slug_json_name": string, "policy_signed_manifest_field_number": integer, '
+                '"summary_exported_count_type": string, "summary_partial_failure_field_number": integer, '
+                '"summary_partial_failure_json_name": string}'
             ),
-            "summary": otel_metrics_summary,
-            "raw_spec": otel_metrics_raw,
-            "oracle_slice": vimanam_out(v22, [str(otel_metrics), "-I", str(otel_root), "--operation", "RPC opentelemetry.proto.collector.metrics.v1.MetricsService.Export", "--detail", "full", "--include-schemas", "--schema-depth", "3", "--no-report"]),
+            "summary": vault_summary,
+            "raw_spec": vault_raw,
+            "fixed_slice": vimanam_out(v22, [str(vault_proto), "-I", str(proto_root), "--operation", "RPC vault.v1.AuditExportService.ExportBundle", "--detail", "full", "--include-schemas", "--schema-depth", "2", "--no-report"]),
             "grade": lambda d: {
-                "request_field_1_name": d.get("request_field_1_name") == "resource_metrics",
-                "request_field_1_json_name": d.get("request_field_1_json_name") == "resourceMetrics",
-                "partial_success_field_1_name": d.get("partial_success_field_1_name") == "rejected_data_points",
-                "partial_success_field_1_json_name": d.get("partial_success_field_1_json_name") == "rejectedDataPoints",
-                "partial_success_field_2_name": d.get("partial_success_field_2_name") == "error_message",
+                "policy_slug_json_name": d.get("policy_slug_json_name") == "policySlug",
+                "policy_signed_manifest_field_number": d.get("policy_signed_manifest_field_number") == 4,
+                "summary_exported_count_type": d.get("summary_exported_count_type") == "int64",
+                "summary_partial_failure_field_number": d.get("summary_partial_failure_field_number") == 3,
+                "summary_partial_failure_json_name": d.get("summary_partial_failure_json_name") == "partialFailure",
             },
         },
         {
@@ -383,6 +418,8 @@ def build_tasks(v22: str, corpus: Path) -> list[dict]:
             "spec_path": spacex_gql,
             "extra_args": [],
             "raw_large": False,
+            "expected_operation_id": "Query.launchesPastResult",
+            "expected_operation": "QUERY Query.launchesPastResult",
             "question": (
                 'For GraphQL field `Query.launchesPastResult` and its `LaunchFind` input object, return JSON:\n'
                 '{"argument_names": [string], "return_type": string, "apoapsis_km_type": string, '
@@ -390,11 +427,7 @@ def build_tasks(v22: str, corpus: Path) -> list[dict]:
             ),
             "summary": spacex_summary,
             "raw_spec": spacex_gql.read_text(),
-            "oracle_slice": (
-                vimanam_out(v22, [str(spacex_gql), "--operation", "QUERY Query.launchesPastResult", "--detail", "full", "--include-schemas", "--schema-depth", "2", "--no-report"])
-                + "\n"
-                + vimanam_out(v22, [str(spacex_gql), "--schema", "LaunchFind", "--no-report"])
-            ),
+            "fixed_slice": vimanam_out(v22, [str(spacex_gql), "--operation", "QUERY Query.launchesPastResult", "--detail", "full", "--include-schemas", "--schema-depth", "2", "--no-report"]),
             "grade": lambda d: {
                 "argument_names": norm_set(d.get("argument_names")) == {"find", "limit", "offset", "order", "sort"},
                 "return_type": d.get("return_type") == "LaunchesPastResult",
@@ -410,6 +443,8 @@ def build_tasks(v22: str, corpus: Path) -> list[dict]:
             "spec_path": octo_gql,
             "extra_args": [],
             "raw_large": True,
+            "expected_operation_id": "Mutation.createIssue",
+            "expected_operation": "MUTATION Mutation.createIssue",
             "question": (
                 'For GraphQL mutation `Mutation.createIssue` and its `CreateIssueInput` input object, return JSON:\n'
                 '{"argument_name": string, "return_type": string, "required_input_fields": [string], '
@@ -417,11 +452,7 @@ def build_tasks(v22: str, corpus: Path) -> list[dict]:
             ),
             "summary": octo_summary,
             "raw_spec": octo_gql.read_text(),
-            "oracle_slice": (
-                vimanam_out(v22, [str(octo_gql), "--operation", "MUTATION Mutation.createIssue", "--detail", "full", "--include-schemas", "--schema-depth", "2", "--no-report"])
-                + "\n"
-                + vimanam_out(v22, [str(octo_gql), "--schema", "CreateIssueInput", "--no-report"])
-            ),
+            "fixed_slice": vimanam_out(v22, [str(octo_gql), "--operation", "MUTATION Mutation.createIssue", "--detail", "full", "--include-schemas", "--schema-depth", "2", "--no-report"]),
             "grade": lambda d: {
                 "argument_name": d.get("argument_name") == "input",
                 "return_type": d.get("return_type") == "CreateIssuePayload",
@@ -468,6 +499,7 @@ def run_single_turn_trial(model: str, task: dict, ctx: str) -> dict:
         "api_input_tokens": res["api_input_tokens"],
         "api_output_tokens": res["api_output_tokens"],
         "duration_api_ms": res["duration_api_ms"],
+        "wall_ms": res["wall_ms"],
         "cost_usd": res["cost_usd"],
         "task_passed": (passed == total),
         "assertions_passed": passed,
@@ -476,12 +508,20 @@ def run_single_turn_trial(model: str, task: dict, ctx: str) -> dict:
     }
 
 
+def matches_expected_target(plan: dict, task: dict) -> bool:
+    exp_id = (task.get("expected_operation_id") or "").strip()
+    exp_op = (task.get("expected_operation") or "").strip()
+    got_id = str(plan.get("operation_id") or "").strip()
+    got_op = str(plan.get("operation") or "").strip()
+    return (bool(exp_id) and got_id == exp_id) or (bool(exp_op) and got_op == exp_op)
+
+
 def run_routed_e2e_trial(v22: str, model: str, task: dict) -> dict:
-    """Real end-to-end workflow with no oracle selection:
-    Turn 1: summary -> model selects --operation / --operation-id / --schemas.
-    Harness executes vimanam (fixed uniform default --schema-depth 2).
+    """Real end-to-end workflow with uniform --schema-depth 2 on EVERY vimanam call:
+    Turn 1: summary -> model selects --operation / --operation-id / optional --schema names.
+    Harness executes vimanam with uniform --schema-depth 2 on both operation and schema calls.
     Turn 2: model sees retrieved slice and either answers directly OR returns
-            {"fetch_schemas": [...]} for one follow-up vimanam --schema call.
+            {"fetch_schemas": [...]} for one follow-up vimanam --schema --schema-depth 2 call.
     Turn 3 (optional): model answers with retrieved slice + follow-up schemas.
     """
     spec_path = str(task["spec_path"])
@@ -489,10 +529,12 @@ def run_routed_e2e_trial(v22: str, model: str, task: dict) -> dict:
     total_in = 0
     total_out = 0
     total_ms = 0
+    total_wall_ms = 0
     total_cost = 0.0
     total_ctx_bpe = count_bpe(task["summary"])
     turns = 0
     followup_used = False
+    followup_schemas: list[str] = []
     routed_cmd_ok = False
     model_seen = model
 
@@ -505,7 +547,7 @@ def run_routed_e2e_trial(v22: str, model: str, task: dict) -> dict:
         '{"operation_id": string or null, "operation": string or null, "schemas": [string]}\n'
         "Notes:\n"
         "- For OpenAPI, set `operation_id` to the operation name shown in the summary OR `operation` to `METHOD /path` (e.g. `POST /embeddings`).\n"
-        "- For Protobuf/gRPC, set `operation_id` to the full RPC name (e.g. `grpc.health.v1.Health.Watch`).\n"
+        "- For Protobuf/gRPC, set `operation_id` to the full RPC name shown in the summary (e.g. `ledger.v1.SettlementStream.WatchSettlements`).\n"
         "- For GraphQL, set `operation_id` to the root coordinate (e.g. `Mutation.createIssue`) and optionally list any named input schema mentioned in the question under `schemas`.\n"
     )
     r1 = call_claude(model, route_prompt, ROUTE_SYSTEM_PROMPT)
@@ -517,14 +559,16 @@ def run_routed_e2e_trial(v22: str, model: str, task: dict) -> dict:
     total_in += r1["api_input_tokens"]
     total_out += r1["api_output_tokens"]
     total_ms += r1["duration_api_ms"]
+    total_wall_ms += r1["wall_ms"]
     total_cost += r1["cost_usd"]
 
     plan = extract_json(r1["result"]) or {}
     op_id = plan.get("operation_id")
     op_str = plan.get("operation")
     schemas = [str(s) for s in (plan.get("schemas") or []) if s][:3]
+    route_target_matched = matches_expected_target(plan, task)
 
-    # Execute vimanam with the model's chosen selector (uniform depth 2 across all tasks!)
+    # Execute vimanam with uniform --schema-depth 2 on BOTH operation and schema selectors
     chunks: list[str] = []
     if op_id:
         rc, out, _ = vimanam_run(v22, [spec_path, *extra, "--operation-id", str(op_id), "--detail", "full", "--include-schemas", "--schema-depth", "2", "--no-report"])
@@ -537,13 +581,12 @@ def run_routed_e2e_trial(v22: str, model: str, task: dict) -> dict:
             chunks.append(out)
             routed_cmd_ok = True
     for s in schemas:
-        rc, out, _ = vimanam_run(v22, [spec_path, *extra, "--schema", s, "--no-report"])
+        rc, out, _ = vimanam_run(v22, [spec_path, *extra, "--schema", s, "--schema-depth", "2", "--no-report"])
         if rc == 0:
             chunks.append(out)
 
     retrieved = "\n\n".join(chunks)
     if not retrieved:
-        # Routing failed completely; fall back to summary so model still produces a graded turn
         retrieved = task["summary"]
     total_ctx_bpe += count_bpe(retrieved)
 
@@ -562,15 +605,17 @@ def run_routed_e2e_trial(v22: str, model: str, task: dict) -> dict:
     total_in += r2["api_input_tokens"]
     total_out += r2["api_output_tokens"]
     total_ms += r2["duration_api_ms"]
+    total_wall_ms += r2["wall_ms"]
     total_cost += r2["cost_usd"]
 
     parsed = extract_json(r2["result"]) or {}
     # Optional Turn 3 if the model explicitly requested follow-up schemas
     if isinstance(parsed.get("fetch_schemas"), list) and parsed["fetch_schemas"]:
         followup_used = True
+        followup_schemas = [str(x) for x in parsed["fetch_schemas"] if x][:3]
         extra_chunks: list[str] = []
-        for s in [str(x) for x in parsed["fetch_schemas"] if x][:3]:
-            rc, out, _ = vimanam_run(v22, [spec_path, *extra, "--schema", s, "--no-report"])
+        for s in followup_schemas:
+            rc, out, _ = vimanam_run(v22, [spec_path, *extra, "--schema", s, "--schema-depth", "2", "--no-report"])
             if rc == 0:
                 extra_chunks.append(out)
         followup_text = "\n\n".join(extra_chunks)
@@ -583,6 +628,7 @@ def run_routed_e2e_trial(v22: str, model: str, task: dict) -> dict:
             total_in += r3["api_input_tokens"]
             total_out += r3["api_output_tokens"]
             total_ms += r3["duration_api_ms"]
+            total_wall_ms += r3["wall_ms"]
             total_cost += r3["cost_usd"]
             parsed = extract_json(r3["result"]) or {}
         else:
@@ -596,12 +642,15 @@ def run_routed_e2e_trial(v22: str, model: str, task: dict) -> dict:
         "model": model_seen,
         "turns": turns,
         "routed_cmd_ok": routed_cmd_ok,
+        "route_target_matched": route_target_matched,
         "followup_used": followup_used,
+        "followup_schemas": followup_schemas,
         "route_choice": plan,
         "total_context_bpe_o200k": total_ctx_bpe,
         "api_input_tokens": total_in,
         "api_output_tokens": total_out,
         "duration_api_ms": total_ms,
+        "wall_ms": total_wall_ms,
         "cost_usd": round(total_cost, 6),
         "task_passed": (passed == total),
         "assertions_passed": passed,
@@ -643,6 +692,7 @@ def aggregate_trials(trials: list[dict], context_bpe: int | None = None, context
         out["turns_mean"] = round(statistics.mean(t["turns"] for t in trials), 2)
         out["followup_rate"] = round(sum(1 for t in trials if t.get("followup_used")) / n, 3)
         out["route_cmd_ok_rate"] = round(sum(1 for t in trials if t.get("routed_cmd_ok")) / n, 3)
+        out["route_target_match_rate"] = round(sum(1 for t in trials if t.get("route_target_matched")) / n, 3)
     return out
 
 
@@ -652,16 +702,15 @@ def main():
     ap.add_argument("--corpus", required=True)
     ap.add_argument("--model", default="haiku")
     ap.add_argument("--trials", type=int, default=3)
-    ap.add_argument("--workers", type=int, default=4)
+    ap.add_argument("--workers", type=int, default=1)
     ap.add_argument("--output", required=True)
     args = ap.parse_args()
 
     v22 = str(Path(args.v22).resolve())
     corpus = Path(args.corpus).resolve()
     tasks = build_tasks(v22, corpus)
-    conditions = ["no_spec", "summary", "routed_e2e", "oracle_slice", "raw_spec"]
+    conditions = ["no_spec", "summary", "routed_e2e", "fixed_slice", "raw_spec"]
 
-    # Build flat list of trial jobs so we can execute with bounded parallelism
     jobs = []
     for t_idx, task in enumerate(tasks):
         for cond in conditions:
@@ -680,8 +729,8 @@ def main():
             r = run_single_turn_trial(args.model, task, "")
         elif cond == "summary":
             r = run_single_turn_trial(args.model, task, task["summary"])
-        elif cond == "oracle_slice":
-            r = run_single_turn_trial(args.model, task, task["oracle_slice"])
+        elif cond == "fixed_slice":
+            r = run_single_turn_trial(args.model, task, task["fixed_slice"])
         elif cond == "raw_spec":
             r = run_single_turn_trial(args.model, task, task["raw_spec"])
         elif cond == "routed_e2e":
@@ -691,19 +740,34 @@ def main():
         return (t_idx, cond, trial_idx, r)
 
     done = 0
-    with concurrent.futures.ThreadPoolExecutor(max_workers=args.workers) as pool:
-        for t_idx, cond, trial_idx, r in pool.map(exec_job, jobs):
+    if args.workers <= 1:
+        for job in jobs:
+            t_idx, cond, trial_idx, r = exec_job(job)
             results_map.setdefault((t_idx, cond), []).append(r)
             done += 1
             if done % 10 == 0 or done == len(jobs):
                 print(f"  completed {done}/{len(jobs)} trials", flush=True)
+    else:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=args.workers) as pool:
+            for t_idx, cond, trial_idx, r in pool.map(exec_job, jobs):
+                results_map.setdefault((t_idx, cond), []).append(r)
+                done += 1
+                if done % 10 == 0 or done == len(jobs):
+                    print(f"  completed {done}/{len(jobs)} trials", flush=True)
 
     model_seen = args.model
     task_records = []
     tokenizer_calibration = []
 
     for t_idx, task in enumerate(tasks):
-        rec = {"id": task["id"], "format": task["format"], "spec": task["spec"], "conditions": {}}
+        rec = {
+            "id": task["id"],
+            "format": task["format"],
+            "spec": task["spec"],
+            "expected_operation_id": task["expected_operation_id"],
+            "expected_operation": task["expected_operation"],
+            "conditions": {},
+        }
         no_spec_trials = results_map[(t_idx, "no_spec")]
         no_spec_base_in = round(statistics.median(t.get("api_input_tokens", 0) for t in no_spec_trials))
         for t in no_spec_trials:
@@ -716,16 +780,15 @@ def main():
                 agg = aggregate_trials(trials, context_bpe=0, context_chars=0)
             elif cond == "summary":
                 agg = aggregate_trials(trials, context_bpe=count_bpe(task["summary"]), context_chars=len(task["summary"]))
-            elif cond == "oracle_slice":
-                agg = aggregate_trials(trials, context_bpe=count_bpe(task["oracle_slice"]), context_chars=len(task["oracle_slice"]))
+            elif cond == "fixed_slice":
+                agg = aggregate_trials(trials, context_bpe=count_bpe(task["fixed_slice"]), context_chars=len(task["fixed_slice"]))
             elif cond == "raw_spec":
                 agg = aggregate_trials(trials, context_bpe=count_bpe(task["raw_spec"]), context_chars=len(task["raw_spec"]))
             elif cond == "routed_e2e":
                 agg = aggregate_trials(trials)
                 agg["total_context_bpe_o200k_median"] = round(statistics.median(t.get("total_context_bpe_o200k", 0) for t in trials))
 
-            # Record Claude API context tokens (net of no_spec system/question overhead)
-            if cond in {"summary", "oracle_slice", "raw_spec"} and agg["status"] == "ok" and agg.get("context_bpe_o200k", 0) > 0:
+            if cond in {"summary", "fixed_slice", "raw_spec"} and agg["status"] == "ok" and agg.get("context_bpe_o200k", 0) > 0:
                 net_claude = max(1, agg["api_input_tokens_median"] - no_spec_base_in)
                 agg["claude_context_tokens_est"] = net_claude
                 agg["claude_vs_o200k_ratio"] = round(net_claude / agg["context_bpe_o200k"], 2)
@@ -750,8 +813,10 @@ def main():
             f"  {task['id']:25s} | no_spec={rec['conditions']['no_spec']['assertions_mean']}/{rec['conditions']['no_spec']['assertions_total']} "
             f"| summary={rec['conditions']['summary']['assertions_mean']}/{rec['conditions']['summary']['assertions_total']} "
             f"| routed_e2e={rec['conditions']['routed_e2e']['assertions_mean']}/{rec['conditions']['routed_e2e']['assertions_total']} "
-            f"(pass {rec['conditions']['routed_e2e']['tasks_passed']}/{rec['conditions']['routed_e2e']['trials']}, ${rec['conditions']['routed_e2e']['cost_usd_mean']:.4f}) "
-            f"| oracle={rec['conditions']['oracle_slice']['assertions_mean']}/{rec['conditions']['oracle_slice']['assertions_total']} "
+            f"(pass {rec['conditions']['routed_e2e']['tasks_passed']}/{rec['conditions']['routed_e2e']['trials']}, "
+            f"match {rec['conditions']['routed_e2e']['route_target_match_rate']}, "
+            f"fu {rec['conditions']['routed_e2e']['followup_rate']}, ${rec['conditions']['routed_e2e']['cost_usd_mean']:.4f}) "
+            f"| fixed={rec['conditions']['fixed_slice']['assertions_mean']}/{rec['conditions']['fixed_slice']['assertions_total']} "
             f"| raw={rec['conditions']['raw_spec'].get('status')}:{rec['conditions']['raw_spec']['assertions_mean']}/{rec['conditions']['raw_spec']['assertions_total']}",
             flush=True,
         )
@@ -778,13 +843,13 @@ def main():
                 out[cond]["mean_turns"] = round(statistics.mean(c["turns_mean"] for c in ok_recs), 2)
                 out[cond]["mean_followup_rate"] = round(statistics.mean(c["followup_rate"] for c in ok_recs), 3)
                 out[cond]["mean_route_cmd_ok_rate"] = round(statistics.mean(c["route_cmd_ok_rate"] for c in ok_recs), 3)
+                out[cond]["mean_route_target_match_rate"] = round(statistics.mean(c["route_target_match_rate"] for c in ok_recs), 3)
         return out
 
     all_ids = {t["id"] for t in tasks}
     stripe_ids = {t["id"] for t in tasks if t.get("stripe_7_9mb")}
     fitting_ids = all_ids - stripe_ids
 
-    # Summarize Claude vs o200k calibration by format
     cal_summary = {}
     for fmt in sorted({c["format"] for c in tokenizer_calibration}):
         rows = [c for c in tokenizer_calibration if c["format"] == fmt and c["chars"] >= 1000]
@@ -802,15 +867,18 @@ def main():
             "vimanam_version": subprocess.check_output([v22, "--version"], text=True).strip(),
             "trials_per_cell": args.trials,
             "raw_large_spec_trials": 1,
+            "workers": args.workers,
             "task_count": len(tasks),
             "fitting_task_count": len(fitting_ids),
             "stripe_prompt_too_long_count": len(stripe_ids),
+            "protobuf_fixtures": "synthetic non-memorizable multi-file protos under scripts/eval-fixtures/protos/",
+            "schema_depth_policy": "uniform --schema-depth 2 on all routed_e2e operation and --schema calls (and fixed_slice)",
             "grading": "deterministic programmatic JSON assertions (no LLM judge)",
             "isolation": "claude -p --tools '' --strict-mcp-config --setting-sources ''",
         },
+        "summary_all_10_tasks": summarize(all_ids),
         "summary_8_fitting_tasks_apples_to_apples": summarize(fitting_ids),
         "summary_2_stripe_7_9mb_tasks": summarize(stripe_ids),
-        "summary_all_10_tasks": summarize(all_ids),
         "claude_vs_o200k_calibration_summary": cal_summary,
         "claude_vs_o200k_calibration_rows": tokenizer_calibration,
         "tasks": task_records,

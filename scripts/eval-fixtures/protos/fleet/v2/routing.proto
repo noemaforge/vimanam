@@ -1,0 +1,31 @@
+syntax = "proto3";
+
+package fleet.v2;
+
+import "fleet/v2/common.proto";
+
+// A single stop requested on a dispatch manifest.
+message WaypointStop {
+  string stop_token = 1 [json_name = "stopToken"];
+  GeoPoint target = 2;
+  TimeSpan delivery_window = 3 [json_name = "deliveryWindow"];
+  uint32 priority_tier = 4 [json_name = "priorityTier"];
+}
+
+// Detailed diagnostics explaining why a specific waypoint could not be scheduled.
+message RejectedWaypoint {
+  // Opaque stop identifier copied from WaypointStop.stop_token.
+  string rejected_stop_code = 3 [json_name = "rejectedStopCode"];
+  // Distance shortfall in meters when range constraints caused rejection.
+  int32 range_deficit_meters = 6 [json_name = "rangeDeficitMeters"];
+  // Human-readable dispatcher note.
+  string exclusion_reason = 9 [json_name = "exclusionReason"];
+}
+
+// Assignment summary returned for a single dispatch wave.
+message AssignmentOutcome {
+  uint32 scheduled_stops = 1 [json_name = "scheduledStops"];
+  // Per-stop rejection entries when partial assignment occurred.
+  repeated RejectedWaypoint rejected_waypoints = 2 [json_name = "rejectedWaypoints"];
+  ConstraintSeverity highest_severity = 3 [json_name = "highestSeverity"];
+}
