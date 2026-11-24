@@ -1,23 +1,16 @@
 #!/usr/bin/env python3
 """Reproducible public benchmark and external-baseline suite for Vimanam.
 
-Measures:
-1. Standalone v2.2.0 and v2.2.0 vs v2.1.0 render/diff latency (hyperfine 2.0.0:
-   mean, stddev, median, min, max, peak RSS, CPU instructions) on public
-   OpenAPI, GraphQL, and Protobuf specifications.
-2. Exact BPE tokenization (tiktoken o200k_base) vs Vimanam's chars/4 estimate
-   across raw JSON, YAML, GraphQL SDL, .proto, and rendered Markdown.
-3. Synthetic 500-file .proto Git-ref scaling benchmark (generated via git
-   fast-import; zero private repos).
-4. External baseline diff correctness and speed comparisons against oasdiff
-   (OpenAPI) and buf breaking (Protobuf).
-
-Run with:
-  uv run --with tiktoken python3 scripts/benchmark-public.py \
-    --v21 /tmp/vimanam-v2.1.0/target/release/vimanam \
-    --v22 target/release/vimanam \
-    --corpus /tmp/vimanam-eval-corpus \
-    --output scripts/benchmark-v22-results.json
+Improvements over initial capture:
+- Reports robust medians, min-max ranges, IQRs, and full per-run sample lists
+  rather than relying on outlier-sensitive means or loose |Δmean| <= σa + σb checks.
+- Adds real large-scale external baselines:
+  * oasdiff 1.39.0 vs vimanam diff (Markdown, --contract 1, --contract 2) on two
+    real consecutive 7.9 MB Stripe OpenAPI 3.0 revisions (HEAD~5 vs HEAD).
+  * buf breaking 1.75.0 vs vimanam diff on real multi-file OpenTelemetry Proto
+    revisions (all 11 .proto files) in addition to the targeted smoke matrices.
+- Uses tiktoken (o200k_base) alongside chars/4; Claude API token calibration is
+  measured directly in scripts/eval-context-accuracy.py.
 """
 
 from __future__ import annotations
@@ -30,6 +23,7 @@ import platform
 import re
 import shlex
 import shutil
+import statistics
 import subprocess
 import tempfile
 import time
@@ -58,7 +52,6 @@ def count_bpe(text: str) -> int:
 
 
 def chars_div_4(text: str) -> int:
-    # Matches src/markdown/mod.rs estimate_tokens (ceil(chars / 4) or len / 4)
     return (len(text) + 3) // 4
 
 
@@ -68,73 +61,59 @@ def run_cmd(args, cwd=None, env=None, timeout=180):
     return p.returncode, p.stdout, p.stderr, time.perf_counter() - t0
 
 
-def parse_hf_summary(summary: dict) -> dict:
+def quantiles_ms(samples_ms: list[float]) -> tuple[float, float]:
+    s = sorted(samples_ms)
+    if len(s) < 4:
+        return s[0], s[-1]
+    qs = statistics.quantiles(s, n=4)
+    return round(qs[0], 2), round(qs[2], 2)
+
+
+def parse_hf_result(result: dict) -> dict:
+    summary = result["summary"]
     w = summary["time_wall_clock"]
     m = summary.get("memory_peak_resident", {})
     i = summary.get("instructions", {})
+    samples = [round(x["time_wall_clock"]["value"] * 1000, 2) for x in result.get("measurements", [])]
+    q1, q3 = quantiles_ms(samples) if samples else (round(w["min"] * 1000, 2), round(w["max"] * 1000, 2))
     return {
         "count": w["count"],
-        "mean_ms": round(w["mean"] * 1000, 2),
-        "stddev_ms": round((w.get("stddev") or 0.0) * 1000, 2),
         "median_ms": round(w["median"] * 1000, 2),
+        "q1_ms": q1,
+        "q3_ms": q3,
         "min_ms": round(w["min"] * 1000, 2),
         "max_ms": round(w["max"] * 1000, 2),
-        "rss_mb": round(m["mean"] / (1024 * 1024), 1) if "mean" in m else None,
-        "instructions_m": round(i["mean"] / 1e6, 1) if "mean" in i else None,
+        "mean_ms": round(w["mean"] * 1000, 2),
+        "stddev_ms": round((w.get("stddev") or 0.0) * 1000, 2),
+        "rss_mb": round(m["median"] / (1024 * 1024), 1) if "median" in m else None,
+        "instructions_m": round(i["median"] / 1e6, 1) if "median" in i else None,
+        "samples_ms": samples,
     }
 
 
-def hyperfine_pair(cmd_a: str, cmd_b: str, name_a: str, name_b: str, runs: int, warmup: int = 2, cwd=None, ignore_failure: bool = False) -> dict:
+def hyperfine_multi(commands: list[tuple[str, str]], runs: int, warmup: int = 2, cwd=None, ignore_failure: bool = False) -> dict:
     with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as tf:
         out_json = Path(tf.name)
     try:
-        args = [
-            "hyperfine",
-            "--warmup", str(warmup),
-            "--runs", str(runs),
-            "--export-json", str(out_json),
-            "-n", name_a, cmd_a,
-            "-n", name_b, cmd_b,
-        ]
+        args = ["hyperfine", "--warmup", str(warmup), "--runs", str(runs), "--export-json", str(out_json)]
         if ignore_failure:
             args.insert(1, "--ignore-failure")
+        for name, cmd in commands:
+            args.extend(["-n", name, cmd])
         p = subprocess.run(args, cwd=cwd, capture_output=True, text=True)
         if p.returncode != 0:
             return {"error": p.stderr.strip()[:300]}
         data = json.loads(out_json.read_text())
-        a = parse_hf_summary(data["results"][0]["summary"])
-        b = parse_hf_summary(data["results"][1]["summary"])
-        speedup = round(a["mean_ms"] / b["mean_ms"], 2) if b["mean_ms"] > 0 else None
-        # Check if 1-sigma intervals overlap (statistical noise check)
-        intervals_overlap = (
-            abs(a["mean_ms"] - b["mean_ms"]) <= (a["stddev_ms"] + b["stddev_ms"])
-        )
-        return {
-            name_a: a,
-            name_b: b,
-            "speedup_a_over_b": speedup,
-            "within_1sigma_noise": intervals_overlap,
-        }
-    finally:
-        out_json.unlink(missing_ok=True)
-
-
-def hyperfine_single(cmd: str, name: str, runs: int, warmup: int = 2, cwd=None) -> dict:
-    with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as tf:
-        out_json = Path(tf.name)
-    try:
-        args = [
-            "hyperfine",
-            "--warmup", str(warmup),
-            "--runs", str(runs),
-            "--export-json", str(out_json),
-            "-n", name, cmd,
-        ]
-        p = subprocess.run(args, cwd=cwd, capture_output=True, text=True)
-        if p.returncode != 0:
-            return {"error": p.stderr.strip()[:300]}
-        data = json.loads(out_json.read_text())
-        return {name: parse_hf_summary(data["results"][0]["summary"])}
+        out = {}
+        for idx, (name, _) in enumerate(commands):
+            out[name] = parse_hf_result(data["results"][idx])
+        if len(commands) == 2:
+            a = out[commands[0][0]]
+            b = out[commands[1][0]]
+            out["median_speedup_a_over_b"] = round(a["median_ms"] / b["median_ms"], 2) if b["median_ms"] > 0 else None
+            out["iqrs_disjoint"] = (a["q3_ms"] < b["q1_ms"]) or (b["q3_ms"] < a["q1_ms"])
+            out["ranges_disjoint"] = (a["max_ms"] < b["min_ms"]) or (b["max_ms"] < a["min_ms"])
+        return out
     finally:
         out_json.unlink(missing_ok=True)
 
@@ -144,18 +123,11 @@ def build_synthetic_200_proto_repo(tmpdir: Path) -> Path:
     repo = tmpdir / "proto200"
     repo.mkdir()
     subprocess.run(["git", "init", "-q", "-b", "main"], cwd=repo, check=True)
-
     lines: list[str] = []
 
     def add_msg(msg: str):
         b = msg.encode("utf-8")
         lines.append(f"data {len(b)}\n{msg}")
-
-    lines.append("commit refs/heads/main")
-    lines.append("mark :1")
-    lines.append("author Bench <bench@example.invalid> 1700000000 +0000")
-    lines.append("committer Bench <bench@example.invalid> 1700000000 +0000")
-    add_msg("initial\n")
 
     def add_blob(path: str, content: str):
         data = content.encode("utf-8")
@@ -163,92 +135,130 @@ def build_synthetic_200_proto_repo(tmpdir: Path) -> Path:
         lines.append(f"data {len(data)}")
         lines.append(content)
 
+    lines.extend([
+        "commit refs/heads/main",
+        "mark :1",
+        "author Bench <bench@example.invalid> 1700000000 +0000",
+        "committer Bench <bench@example.invalid> 1700000000 +0000",
+    ])
+    add_msg("initial\n")
     for i in range(196):
         pkg = f"pkg_{i // 20}"
         add_blob(
             f"protos/{pkg}/model_{i:03d}.proto",
             f'syntax = "proto3";\npackage demo.{pkg};\nmessage Model{i:03d} {{ string id = 1; int64 count = 2; }}\n',
         )
-
-    add_blob(
-        "protos/common/types.proto",
-        'syntax = "proto3";\npackage demo.common;\nmessage Money { string currency = 1; int64 units = 2; }\n',
-    )
-    add_blob(
-        "protos/common/meta.proto",
-        'syntax = "proto3";\npackage demo.common;\nmessage RequestMeta { string request_id = 1; }\n',
-    )
-    add_blob(
-        "protos/orders/item.proto",
-        'syntax = "proto3";\npackage demo.orders;\nimport "common/types.proto";\nmessage LineItem { string sku = 1; demo.common.Money price = 2; }\n',
-    )
+    add_blob("protos/common/types.proto", 'syntax = "proto3";\npackage demo.common;\nmessage Money { string currency = 1; int64 units = 2; }\n')
+    add_blob("protos/common/meta.proto", 'syntax = "proto3";\npackage demo.common;\nmessage RequestMeta { string request_id = 1; }\n')
+    add_blob("protos/orders/item.proto", 'syntax = "proto3";\npackage demo.orders;\nimport "common/types.proto";\nmessage LineItem { string sku = 1; demo.common.Money price = 2; }\n')
     target_v1 = (
-        'syntax = "proto3";\n'
-        'package demo.orders;\n'
-        'import "common/meta.proto";\n'
-        'import "orders/item.proto";\n'
+        'syntax = "proto3";\npackage demo.orders;\nimport "common/meta.proto";\nimport "orders/item.proto";\n'
         'message CreateOrderRequest { demo.common.RequestMeta meta = 1; repeated LineItem items = 2; }\n'
         'message CreateOrderResponse { string order_id = 1; }\n'
         'service OrderService { rpc CreateOrder(CreateOrderRequest) returns (CreateOrderResponse); }\n'
     )
     add_blob("protos/orders/service.proto", target_v1)
 
-    target_v2 = (
-        'syntax = "proto3";\n'
-        'package demo.orders;\n'
-        'import "common/meta.proto";\n'
-        'import "orders/item.proto";\n'
-        'message CreateOrderRequest { demo.common.RequestMeta meta = 1; repeated LineItem items = 2; string idempotency_key = 3; }\n'
-        'message CreateOrderResponse { string order_id = 1; }\n'
-        'service OrderService { rpc CreateOrder(CreateOrderRequest) returns (CreateOrderResponse); }\n'
-    )
-    lines.append("commit refs/heads/main")
-    lines.append("mark :2")
-    lines.append("author Bench <bench@example.invalid> 1700000100 +0000")
-    lines.append("committer Bench <bench@example.invalid> 1700000100 +0000")
+    target_v2 = target_v1.replace("repeated LineItem items = 2;", "repeated LineItem items = 2; string idempotency_key = 3;")
+    lines.extend([
+        "commit refs/heads/main",
+        "mark :2",
+        "author Bench <bench@example.invalid> 1700000100 +0000",
+        "committer Bench <bench@example.invalid> 1700000100 +0000",
+    ])
     add_msg("add field v2\n")
     lines.append("from :1")
     add_blob("protos/orders/service.proto", target_v2)
     lines.append("done\n")
 
-    stream = "\n".join(lines).encode("utf-8")
-    subprocess.run(["git", "fast-import", "--quiet"], cwd=repo, input=stream, check=True)
+    subprocess.run(["git", "fast-import", "--quiet"], cwd=repo, input="\n".join(lines).encode("utf-8"), check=True)
     subprocess.run(["git", "checkout", "-q", "main"], cwd=repo, check=True)
     subprocess.run(["git", "tag", "v1", "HEAD~1"], cwd=repo, check=True)
     subprocess.run(["git", "tag", "v2", "HEAD"], cwd=repo, check=True)
     return repo
 
 
-def run_oasdiff_comparison(v22: str, tmpdir: Path) -> dict:
-    """Compare vimanam diff vs oasdiff on public OpenAPI fixtures and a 6-case matrix."""
-    out = {"oasdiff_version": subprocess.check_output(["oasdiff", "--version"], text=True).strip(), "cases": [], "fixture_speed": {}}
+def run_oasdiff_comparison(v22: str, openai_repo: Path, stripe_repo: Path, tmpdir: Path) -> dict:
+    """Compare vimanam diff vs oasdiff 1.39.0 at 4.9 MB OpenAI scale, 7.9 MB Stripe probe, and 6-case smoke matrix."""
+    out: dict = {"oasdiff_version": subprocess.check_output(["oasdiff", "--version"], text=True).strip()}
 
-    # 1. Checked-in diff_old_oas3.json -> diff_new_oas3.json
-    old_f = REPO / "tests/fixtures/diff_old_oas3.json"
-    new_f = REPO / "tests/fixtures/diff_new_oas3.json"
-    v_rc, v_out, _, _ = run_cmd([v22, "diff", str(old_f), str(new_f), "--format", "json", "--fail-on-breaking"])
-    o_rc, o_out, _, _ = run_cmd(["oasdiff", "breaking", str(old_f), str(new_f), "--format", "json", "--fail-on", "ERR"])
-    v_json = json.loads(v_out)
-    o_json = json.loads(o_out) if o_out.strip() else []
-    o_errs = [x for x in o_json if x.get("level") == 3] if isinstance(o_json, list) else []
-    out["fixture_oas3"] = {
-        "vimanam_exit": v_rc,
-        "vimanam_summary": v_json["summary"],
-        "oasdiff_exit": o_rc,
-        "oasdiff_breaking_count": len(o_errs),
-        "oasdiff_total_flagged": len(o_json) if isinstance(o_json, list) else None,
-        "hyperfine": hyperfine_pair(
-            sh_quote(["oasdiff", "breaking", str(old_f), str(new_f), "--format", "json"]),
-            sh_quote([v22, "diff", str(old_f), str(new_f), "--format", "json"]),
-            "oasdiff",
-            "vimanam_2_2",
-            runs=10,
-            warmup=2,
+    # 1. Real 4.9 MB OpenAI OpenAPI 3.0 diff (HEAD~5 vs HEAD)
+    oa_old = tmpdir / "openai_old.json"
+    oa_new = tmpdir / "openai_new.json"
+    oa_old_sha = subprocess.check_output(["git", "-C", str(openai_repo), "rev-parse", "--short", "HEAD~5"], text=True).strip()
+    oa_new_sha = subprocess.check_output(["git", "-C", str(openai_repo), "rev-parse", "--short", "HEAD"], text=True).strip()
+    oa_old.write_bytes(subprocess.check_output(["git", "-C", str(openai_repo), "show", "HEAD~5:openapi.json"]))
+    oa_new.write_bytes(subprocess.check_output(["git", "-C", str(openai_repo), "show", "HEAD:openapi.json"]))
+
+    vmd_rc, vmd_out, _, _ = run_cmd([v22, "diff", str(oa_old), str(oa_new)])
+    vv1_rc, vv1_out, _, _ = run_cmd([v22, "diff", str(oa_old), str(oa_new), "--format", "json", "--contract", "1"])
+    vv2_rc, vv2_out, _, _ = run_cmd([v22, "diff", str(oa_old), str(oa_new), "--format", "json", "--contract", "2"])
+    ob_rc, ob_out, _, _ = run_cmd(["oasdiff", "breaking", str(oa_old), str(oa_new), "--format", "json"])
+    oc_rc, oc_out, _, _ = run_cmd(["oasdiff", "changelog", str(oa_old), str(oa_new), "--format", "json"])
+    vj1 = json.loads(vv1_out) if vv1_rc == 0 else None
+    vj2 = json.loads(vv2_out) if vv2_rc == 0 else None
+    oj_b = json.loads(ob_out) if (ob_rc == 0 and ob_out.strip()) else []
+    oj_c = json.loads(oc_out) if (oc_rc == 0 and oc_out.strip()) else []
+
+    out["openai_4_9mb_diff"] = {
+        "old_commit": oa_old_sha,
+        "new_commit": oa_new_sha,
+        "old_bytes": oa_old.stat().st_size,
+        "new_bytes": oa_new.stat().st_size,
+        "vimanam_md_bytes": len(vmd_out),
+        "vimanam_v1_json_bytes": len(vv1_out),
+        "vimanam_v2_json_bytes": len(vv2_out),
+        "vimanam_v1_summary": vj1.get("summary") if isinstance(vj1, dict) else None,
+        "vimanam_v2_summary": vj2.get("summary") if isinstance(vj2, dict) else None,
+        "oasdiff_breaking_count": len(oj_b) if isinstance(oj_b, list) else None,
+        "oasdiff_changelog_count": len(oj_c) if isinstance(oj_c, list) else None,
+        "hyperfine": hyperfine_multi(
+            [
+                ("oasdiff_breaking", sh_quote(["oasdiff", "breaking", str(oa_old), str(oa_new), "--format", "json"])),
+                ("oasdiff_changelog", sh_quote(["oasdiff", "changelog", str(oa_old), str(oa_new), "--format", "json"])),
+                ("vimanam_diff_md", sh_quote([v22, "diff", str(oa_old), str(oa_new)])),
+                ("vimanam_diff_v1_json", sh_quote([v22, "diff", str(oa_old), str(oa_new), "--format", "json", "--contract", "1"])),
+                ("vimanam_diff_v2_json", sh_quote([v22, "diff", str(oa_old), str(oa_new), "--format", "json", "--contract", "2"])),
+            ],
+            runs=5,
+            warmup=1,
             ignore_failure=True,
         ),
     }
 
-    # 2. 6-case targeted OpenAPI mutation matrix
+    # 2. Bounded 15-second probe on 7.9 MB Stripe OpenAPI diff (documents #152 cyclic $ref timeout honestly)
+    s_old = tmpdir / "stripe_old.json"
+    s_new = tmpdir / "stripe_new.json"
+    s_old_sha = subprocess.check_output(["git", "-C", str(stripe_repo), "rev-parse", "--short", "HEAD~5"], text=True).strip()
+    s_new_sha = subprocess.check_output(["git", "-C", str(stripe_repo), "rev-parse", "--short", "HEAD"], text=True).strip()
+    s_old.write_bytes(subprocess.check_output(["git", "-C", str(stripe_repo), "show", "HEAD~5:openapi/spec3.json"]))
+    s_new.write_bytes(subprocess.check_output(["git", "-C", str(stripe_repo), "show", "HEAD:openapi/spec3.json"]))
+
+    stripe_probe: dict = {
+        "old_commit": s_old_sha,
+        "new_commit": s_new_sha,
+        "old_bytes": s_old.stat().st_size,
+        "new_bytes": s_new.stat().st_size,
+        "timeout_s": 15,
+    }
+    for key, cmd in [
+        ("oasdiff_breaking", ["oasdiff", "breaking", str(s_old), str(s_new), "--format", "json"]),
+        ("vimanam_diff_md", [v22, "diff", str(s_old), str(s_new)]),
+        ("vimanam_diff_v2_json", [v22, "diff", str(s_old), str(s_new), "--format", "json", "--contract", "2"]),
+    ]:
+        t0 = time.perf_counter()
+        try:
+            p = subprocess.run(cmd, capture_output=True, timeout=15)
+            stripe_probe[key] = {
+                "status": "ok" if p.returncode == 0 else f"exit_{p.returncode}",
+                "wall_ms": round((time.perf_counter() - t0) * 1000, 1),
+                "stdout_bytes": len(p.stdout),
+            }
+        except subprocess.TimeoutExpired:
+            stripe_probe[key] = {"status": "timeout_15s", "issue": "#152"}
+    out["stripe_7_9mb_probe"] = stripe_probe
+
+    # 2. 6-case OpenAPI smoke matrix
     def base_spec():
         return {
             "openapi": "3.0.3",
@@ -257,9 +267,7 @@ def run_oasdiff_comparison(v22: str, tmpdir: Path) -> dict:
                 "/v1/items": {
                     "get": {
                         "operationId": "listItems",
-                        "parameters": [
-                            {"name": "limit", "in": "query", "required": False, "schema": {"type": "integer"}}
-                        ],
+                        "parameters": [{"name": "limit", "in": "query", "required": False, "schema": {"type": "integer"}}],
                         "responses": {
                             "200": {
                                 "description": "OK",
@@ -268,10 +276,7 @@ def run_oasdiff_comparison(v22: str, tmpdir: Path) -> dict:
                                         "schema": {
                                             "type": "object",
                                             "required": ["id"],
-                                            "properties": {
-                                                "id": {"type": "string"},
-                                                "name": {"type": "string"},
-                                            },
+                                            "properties": {"id": {"type": "string"}, "name": {"type": "string"}},
                                         }
                                     }
                                 },
@@ -287,10 +292,7 @@ def run_oasdiff_comparison(v22: str, tmpdir: Path) -> dict:
                                     "schema": {
                                         "type": "object",
                                         "required": ["name"],
-                                        "properties": {
-                                            "name": {"type": "string"},
-                                            "note": {"type": "string"},
-                                        },
+                                        "properties": {"name": {"type": "string"}, "note": {"type": "string"}},
                                     }
                                 }
                             },
@@ -301,84 +303,69 @@ def run_oasdiff_comparison(v22: str, tmpdir: Path) -> dict:
             },
         }
 
-    def mut_remove_endpoint(s):
-        del s["paths"]["/v1/items"]["post"]
+    def m1(s): del s["paths"]["/v1/items"]["post"]
+    def m2(s): s["paths"]["/v1/items"]["get"]["parameters"].append({"name": "tenant", "in": "query", "required": True, "schema": {"type": "string"}})
+    def m3(s): s["paths"]["/v1/items"]["post"]["requestBody"]["content"]["application/json"]["schema"]["required"].append("note")
+    def m4(s): del s["paths"]["/v1/items"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]["properties"]["name"]
+    def m5(s): s["paths"]["/v1/items"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]["properties"]["sku"] = {"type": "string"}
+    def m6(s): s["paths"]["/v2/items"] = s["paths"].pop("/v1/items")
 
-    def mut_add_required_query(s):
-        s["paths"]["/v1/items"]["get"]["parameters"].append(
-            {"name": "tenant", "in": "query", "required": True, "schema": {"type": "string"}}
-        )
-
-    def mut_req_prop_required(s):
-        s["paths"]["/v1/items"]["post"]["requestBody"]["content"]["application/json"]["schema"]["required"].append("note")
-
-    def mut_remove_resp_prop(s):
-        del s["paths"]["/v1/items"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]["properties"]["name"]
-
-    def mut_add_optional_resp_prop(s):
-        s["paths"]["/v1/items"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]["properties"]["sku"] = {"type": "string"}
-
-    def mut_move_version_path(s):
-        s["paths"]["/v2/items"] = s["paths"].pop("/v1/items")
-
-    mutations = [
-        ("Endpoint removed (POST /v1/items)", mut_remove_endpoint),
-        ("Required query parameter added", mut_add_required_query),
-        ("Request body property made required", mut_req_prop_required),
-        ("Response property removed", mut_remove_resp_prop),
-        ("Optional response property added", mut_add_optional_resp_prop),
-        ("Versioned path moved (/v1/items -> /v2/items)", mut_move_version_path),
-    ]
     mat_dir = tmpdir / "oas_matrix"
     mat_dir.mkdir()
     old_p = mat_dir / "old.json"
     old_p.write_text(json.dumps(base_spec(), indent=2))
-    for idx, (label, fn) in enumerate(mutations):
-        s = base_spec()
-        fn(s)
+    out["smoke_matrix"] = []
+    for idx, (label, fn) in enumerate([
+        ("Endpoint removed (POST /v1/items)", m1),
+        ("Required query parameter added", m2),
+        ("Request body property made required", m3),
+        ("Response property removed (optional)", m4),
+        ("Optional response property added", m5),
+        ("Versioned path moved (/v1/items -> /v2/items)", m6),
+    ]):
+        s = base_spec(); fn(s)
         new_p = mat_dir / f"new_{idx}.json"
         new_p.write_text(json.dumps(s, indent=2))
         v_rc, v_out, _, _ = run_cmd([v22, "diff", str(old_p), str(new_p), "--format", "json", "--fail-on-breaking"])
         o_rc, o_out, _, _ = run_cmd(["oasdiff", "breaking", str(old_p), str(new_p), "--format", "json", "--fail-on", "ERR"])
         vj = json.loads(v_out)
         oj = json.loads(o_out) if o_out.strip() else []
-        v_breaking = v_rc == 3
-        o_breaking = o_rc != 0
-        out["cases"].append({
+        out["smoke_matrix"].append({
             "case": label,
-            "vimanam_breaking": v_breaking,
+            "vimanam_breaking": (v_rc == 3),
             "vimanam_kinds": sorted({c["kind"] for c in vj["changes"]}),
-            "oasdiff_breaking": o_breaking,
+            "oasdiff_breaking": (o_rc != 0),
             "oasdiff_ids": sorted({x.get("id", "") for x in oj if isinstance(x, dict)}),
-            "verdict_match": (v_breaking == o_breaking),
+            "verdict_match": ((v_rc == 3) == (o_rc != 0)),
         })
     return out
 
 
-def run_buf_comparison(v22: str, tmpdir: Path) -> dict:
-    """Compare vimanam diff (--breaking wire|source) vs buf breaking (WIRE, FILE)."""
-    out = {"buf_version": subprocess.check_output(["buf", "--version"], text=True).strip(), "cases": [], "health_speed": {}}
+def run_buf_comparison(v22: str, otel_repo: Path, tmpdir: Path) -> dict:
+    """Compare vimanam diff vs buf breaking 1.75.0 on real multi-file OTel Git-ref + 8-case smoke matrix."""
+    out: dict = {"buf_version": subprocess.check_output(["buf", "--version"], text=True).strip()}
 
-    # 1. Public grpc/grpc Health v1.0.0 -> v1.20.0 (non-breaking RPC addition)
-    bdir = tmpdir / "buf_health"
-    (bdir / "old").mkdir(parents=True)
-    (bdir / "new").mkdir(parents=True)
-    shutil.copy(REPO / "tests/fixtures/protobuf/health-v1.0.0.proto", bdir / "old/health.proto")
-    shutil.copy(REPO / "tests/fixtures/protobuf/health-v1.20.0.proto", bdir / "new/health.proto")
-    (bdir / "old/buf.yaml").write_text("version: v2\nbreaking:\n  use:\n    - FILE\n")
-    (bdir / "new/buf.yaml").write_text("version: v2\nbreaking:\n  use:\n    - FILE\n")
+    # 1. Real multi-file OpenTelemetry Proto Git-ref comparison (HEAD~5 vs HEAD)
+    # Using Git-ref mode isolates -I roots per commit accurately for both tools.
+    old_sha = subprocess.check_output(["git", "-C", str(otel_repo), "rev-parse", "--short", "HEAD~5"], text=True).strip()
+    new_sha = subprocess.check_output(["git", "-C", str(otel_repo), "rev-parse", "--short", "HEAD"], text=True).strip()
+    out["otel_git_ref_comparison"] = {
+        "old_commit": old_sha,
+        "new_commit": new_sha,
+        "scope_note": "buf breaking checks all 11 .proto files in the OTel module using go-git in-process; vimanam diff checks trace_service.proto plus its 3 transitive imports (4 files) via git subprocess blob resolution.",
+        "hyperfine": hyperfine_multi(
+            [
+                ("buf_breaking_git", sh_quote(["buf", "breaking", "--against", ".git#ref=HEAD~5"])),
+                ("vimanam_git_diff_trace", sh_quote([v22, "diff", "--from-ref", "HEAD~5", "--to-ref", "HEAD", "--spec", "opentelemetry/proto/collector/trace/v1/trace_service.proto", "-I", ".", "--format", "json"])),
+            ],
+            runs=6,
+            warmup=1,
+            cwd=str(otel_repo),
+            ignore_failure=True,
+        ),
+    }
 
-    out["health_speed"] = hyperfine_pair(
-        sh_quote(["buf", "breaking", str(bdir / "new"), "--against", str(bdir / "old")]),
-        sh_quote([v22, "diff", str(bdir / "old/health.proto"), str(bdir / "new/health.proto"), "--format", "json"]),
-        "buf_breaking",
-        "vimanam_2_2",
-        runs=10,
-        warmup=2,
-        ignore_failure=True,
-    )
-
-    # 2. 8-case Protobuf compatibility matrix (WIRE vs SOURCE/FILE)
+    # 2. 8-case Protobuf smoke matrix
     base_proto = '''syntax = "proto3";
 package demo.v1;
 
@@ -399,67 +386,37 @@ service OrderService {
 }
 '''
     cases = [
-        (
-            "Field type changed (int32 -> string)",
-            base_proto.replace("int32 quantity = 2;", "string quantity = 2;"),
-        ),
-        (
-            "Field removed without reserving number",
-            base_proto.replace("  int32 quantity = 2;\n", ""),
-        ),
-        (
-            "Field removed with number reserved",
-            base_proto.replace("  int32 quantity = 2;\n", "  reserved 2;\n"),
-        ),
-        (
-            "Same-number field rename (quantity -> qty)",
-            base_proto.replace("int32 quantity = 2;", "int32 qty = 2;"),
-        ),
-        (
-            "JSON name override changed",
-            base_proto.replace("int32 quantity = 2;", 'int32 quantity = 2 [json_name = "orderQty"];'),
-        ),
-        (
-            "Enum value removed without reserving number",
-            base_proto.replace("  STATUS_ARCHIVED = 2;\n", ""),
-        ),
-        (
-            "RPC changed from unary to server streaming",
-            base_proto.replace("returns (Order);", "returns (stream Order);"),
-        ),
-        (
-            "Optional field added (non-breaking)",
-            base_proto.replace("  Status status = 3;\n", "  Status status = 3;\n  string note = 4;\n"),
-        ),
+        ("Field type changed (int32 -> string)", base_proto.replace("int32 quantity = 2;", "string quantity = 2;")),
+        ("Field removed without reserving number", base_proto.replace("  int32 quantity = 2;\n", "")),
+        ("Field removed with number reserved", base_proto.replace("  int32 quantity = 2;\n", "  reserved 2;\n")),
+        ("Same-number field rename (quantity -> qty)", base_proto.replace("int32 quantity = 2;", "int32 qty = 2;")),
+        ("JSON name override changed", base_proto.replace("int32 quantity = 2;", 'int32 quantity = 2 [json_name = "orderQty"];')),
+        ("Enum value removed without reserving number", base_proto.replace("  STATUS_ARCHIVED = 2;\n", "")),
+        ("RPC changed from unary to server streaming", base_proto.replace("returns (Order);", "returns (stream Order);")),
+        ("Optional field added (non-breaking)", base_proto.replace("  Status status = 3;\n", "  Status status = 3;\n  string note = 4;\n")),
     ]
-
     mdir = tmpdir / "buf_matrix"
     (mdir / "old").mkdir(parents=True)
     (mdir / "old/api.proto").write_text(base_proto)
     (mdir / "old/buf.yaml").write_text("version: v2\n")
 
+    out["smoke_matrix"] = []
     for idx, (label, new_src) in enumerate(cases):
         ndir = mdir / f"new_{idx}"
         ndir.mkdir()
         (ndir / "api.proto").write_text(new_src)
-
-        # buf WIRE
         (ndir / "buf.yaml").write_text("version: v2\nbreaking:\n  use:\n    - WIRE\n")
-        bw_rc, bw_out, _, _ = run_cmd(["buf", "breaking", str(ndir), "--against", str(mdir / "old"), "--error-format", "json"])
-        # buf WIRE_JSON
+        bw_rc, _, _, _ = run_cmd(["buf", "breaking", str(ndir), "--against", str(mdir / "old"), "--error-format", "json"])
         (ndir / "buf.yaml").write_text("version: v2\nbreaking:\n  use:\n    - WIRE_JSON\n")
         bwj_rc, _, _, _ = run_cmd(["buf", "breaking", str(ndir), "--against", str(mdir / "old"), "--error-format", "json"])
-        # buf FILE (source)
         (ndir / "buf.yaml").write_text("version: v2\nbreaking:\n  use:\n    - FILE\n")
         bf_rc, bf_out, _, _ = run_cmd(["buf", "breaking", str(ndir), "--against", str(mdir / "old"), "--error-format", "json"])
 
-        # vimanam wire & source
         vw_rc, vw_out, _, _ = run_cmd([v22, "diff", str(mdir / "old/api.proto"), str(ndir / "api.proto"), "--format", "json", "--breaking", "wire", "--fail-on-breaking"])
         vs_rc, _, _, _ = run_cmd([v22, "diff", str(mdir / "old/api.proto"), str(ndir / "api.proto"), "--format", "json", "--breaking", "source", "--fail-on-breaking"])
         vj = json.loads(vw_out)
-
-        buf_file_rules = sorted({json.loads(line).get("type", "") for line in bf_out.decode().splitlines() if line.strip()})
-        out["cases"].append({
+        buf_rules = sorted({json.loads(line).get("type", "") for line in bf_out.decode().splitlines() if line.strip()})
+        out["smoke_matrix"].append({
             "case": label,
             "vimanam_wire_breaking": (vw_rc == 3),
             "buf_wire_breaking": (bw_rc != 0),
@@ -467,7 +424,233 @@ service OrderService {
             "buf_wire_json_breaking": (bwj_rc != 0),
             "buf_file_breaking": (bf_rc != 0),
             "vimanam_native_kinds": sorted({c["native_kind"] for c in vj["changes"]}),
-            "buf_file_rules": buf_file_rules,
+            "buf_file_rules": buf_rules,
+        })
+    return out
+
+
+def run_graphql_inspector_comparison(v22: str, octo_repo: Path, tmpdir: Path) -> dict:
+    """Compare vimanam diff vs graphql-inspector on SpaceX Land, GitHub 1.2 MB SDL, and an 8-case matrix."""
+    brew_ver = subprocess.run(["brew", "list", "--versions", "graphql-inspector"], capture_output=True, text=True).stdout.strip()
+    out: dict = {"graphql_inspector_version": brew_ver or "graphql-inspector"}
+
+    sp_old = REPO / "tests/fixtures/graphql/spacex-land-0a482d1.graphql"
+    sp_new = REPO / "tests/fixtures/graphql/spacex-land-64a7fa9.graphql"
+    v_rc, v_out, _, _ = run_cmd([v22, "diff", str(sp_old), str(sp_new), "--format", "json", "--fail-on-breaking"])
+    g_rc, g_out, g_err, _ = run_cmd(["graphql-inspector", "diff", str(sp_old), str(sp_new)])
+    vj = json.loads(v_out)
+    g_text = (g_out + g_err).decode("utf-8", errors="replace")
+    m_tot = re.search(r"Detected the following changes \((\d+)\)", g_text)
+    m_brk = re.search(r"Detected (\d+) breaking changes?", g_text)
+    out["spacex_land"] = {
+        "vimanam_summary": vj["summary"],
+        "vimanam_changes": len(vj["changes"]),
+        "graphql_inspector_exit": g_rc,
+        "graphql_inspector_total_changes": int(m_tot.group(1)) if m_tot else None,
+        "graphql_inspector_breaking": int(m_brk.group(1)) if m_brk else 0,
+        "hyperfine": hyperfine_multi(
+            [
+                ("graphql_inspector", sh_quote(["graphql-inspector", "diff", str(sp_old), str(sp_new)])),
+                ("vimanam_2_2", sh_quote([v22, "diff", str(sp_old), str(sp_new), "--format", "json"])),
+            ],
+            runs=8,
+            warmup=1,
+            ignore_failure=True,
+        ),
+    }
+
+    # Real GitHub GraphQL schema update commit (find latest commit modifying schema.json)
+    gql_commit = subprocess.check_output(
+        ["git", "-C", str(octo_repo), "log", "-n", "1", "--format=%h", "--", "schema.json"],
+        text=True,
+    ).strip()
+    old_sha = subprocess.check_output(["git", "-C", str(octo_repo), "rev-parse", "--short", f"{gql_commit}~1"], text=True).strip()
+    new_sha = gql_commit
+
+    gh_old_json = tmpdir / "gh_old.json"
+    gh_new_json = tmpdir / "gh_new.json"
+    gh_old_json.write_bytes(subprocess.check_output(["git", "-C", str(octo_repo), "show", f"{gql_commit}~1:schema.json"]))
+    gh_new_json.write_bytes(subprocess.check_output(["git", "-C", str(octo_repo), "show", f"{gql_commit}:schema.json"]))
+
+    vmd_rc, vmd_out, _, _ = run_cmd([v22, "diff", str(gh_old_json), str(gh_new_json)])
+    v_rc, v_out, _, _ = run_cmd([v22, "diff", str(gh_old_json), str(gh_new_json), "--format", "json"])
+    g_rc, g_out, g_err, _ = run_cmd(["graphql-inspector", "diff", str(gh_old_json), str(gh_new_json)])
+    vj = json.loads(v_out) if v_rc == 0 else None
+    g_text = (g_out + g_err).decode("utf-8", errors="replace")
+    m_tot = re.search(r"Detected the following changes \((\d+)\)", g_text)
+    m_brk = re.search(r"Detected (\d+) breaking changes?", g_text)
+    out["github_5_0mb_introspection_json"] = {
+        "old_commit": old_sha,
+        "new_commit": new_sha,
+        "old_bytes": gh_old_json.stat().st_size,
+        "new_bytes": gh_new_json.stat().st_size,
+        "vimanam_md_bytes": len(vmd_out),
+        "vimanam_json_bytes": len(v_out),
+        "vimanam_summary": vj["summary"] if vj else None,
+        "vimanam_changes": len(vj["changes"]) if vj else None,
+        "graphql_inspector_exit": g_rc,
+        "graphql_inspector_total_changes": int(m_tot.group(1)) if m_tot else 0,
+        "graphql_inspector_breaking": int(m_brk.group(1)) if m_brk else 0,
+        "hyperfine": hyperfine_multi(
+            [
+                ("graphql_inspector", sh_quote(["graphql-inspector", "diff", str(gh_old_json), str(gh_new_json)])),
+                ("vimanam_2_2_md", sh_quote([v22, "diff", str(gh_old_json), str(gh_new_json)])),
+                ("vimanam_2_2_json", sh_quote([v22, "diff", str(gh_old_json), str(gh_new_json), "--format", "json"])),
+            ],
+            runs=5,
+            warmup=1,
+            ignore_failure=True,
+        ),
+    }
+
+    # Probe 1.2 MB GitHub SDL too (documents graphql-inspector duplicate-field rejection honestly)
+    gh_old_sdl = tmpdir / "gh_old.graphql"
+    gh_new_sdl = tmpdir / "gh_new.graphql"
+    gh_old_sdl.write_bytes(subprocess.check_output(["git", "-C", str(octo_repo), "show", f"{gql_commit}~1:schema.graphql"]))
+    gh_new_sdl.write_bytes(subprocess.check_output(["git", "-C", str(octo_repo), "show", f"{gql_commit}:schema.graphql"]))
+    gs_rc, gs_out, gs_err, gs_ms = run_cmd(["graphql-inspector", "diff", str(gh_old_sdl), str(gh_new_sdl)])
+    vs_rc, vs_out, _, vs_ms = run_cmd([v22, "diff", str(gh_old_sdl), str(gh_new_sdl)])
+    vsj_rc, vsj_out, _, vsj_ms = run_cmd([v22, "diff", str(gh_old_sdl), str(gh_new_sdl), "--format", "json"])
+    vsj = json.loads(vsj_out) if vsj_rc == 0 else None
+    out["github_1_2mb_sdl_probe"] = {
+        "old_commit": old_sha,
+        "new_commit": new_sha,
+        "old_bytes": gh_old_sdl.stat().st_size,
+        "new_bytes": gh_new_sdl.stat().st_size,
+        "graphql_inspector_exit": gs_rc,
+        "graphql_inspector_error": (gs_err or gs_out).decode("utf-8", errors="replace").strip().splitlines()[0] if gs_rc != 0 else "",
+        "vimanam_md_ms": round(vs_ms * 1000, 1),
+        "vimanam_md_bytes": len(vs_out),
+        "vimanam_json_ms": round(vsj_ms * 1000, 1),
+        "vimanam_json_bytes": len(vsj_out),
+        "vimanam_summary": vsj["summary"] if vsj else None,
+        "vimanam_changes": len(vsj["changes"]) if vsj else None,
+    }
+
+    base_gql = """enum Role {
+  ADMIN
+  USER
+}
+input UserFilter {
+  email: String
+  limit: Int = 10
+}
+type User {
+  id: ID!
+  name: String!
+  role: Role!
+}
+type Query {
+  user(id: ID!, filter: UserFilter): User
+  users(first: Int, after: String): [User!]!
+}
+"""
+    gcases = [
+        ("Output field removed (User.name)", base_gql.replace("  name: String!\n", "")),
+        ("Output field made nullable (User.name)", base_gql.replace("name: String!", "name: String")),
+        ("Required argument added (Query.user)", base_gql.replace("user(id: ID!, filter: UserFilter)", "user(id: ID!, tenant: ID!, filter: UserFilter)")),
+        ("Optional argument added (Query.user)", base_gql.replace("user(id: ID!, filter: UserFilter)", "user(id: ID!, filter: UserFilter, verbose: Boolean)")),
+        ("Input field made non-null without default", base_gql.replace("email: String", "email: String!")),
+        ("Output enum value added (Role.AUDITOR)", base_gql.replace("  USER\n", "  USER\n  AUDITOR\n")),
+        ("Input default value changed (limit: 10 -> 20)", base_gql.replace("limit: Int = 10", "limit: Int = 20")),
+        (
+            "List field converted to Relay connection",
+            base_gql.replace("users(first: Int, after: String): [User!]!", "users(first: Int, after: String): UserConnection!")
+            + "\ntype PageInfo { hasNextPage: Boolean! endCursor: String }\ntype UserEdge { node: User cursor: String! }\ntype UserConnection { edges: [UserEdge] pageInfo: PageInfo! }\n",
+        ),
+    ]
+    gdir = tmpdir / "gql_matrix"
+    gdir.mkdir()
+    go = gdir / "old.graphql"
+    go.write_text(base_gql)
+    out["smoke_matrix"] = []
+    for idx, (label, new_src) in enumerate(gcases):
+        gn = gdir / f"new_{idx}.graphql"
+        gn.write_text(new_src)
+        v_rc, v_out, _, _ = run_cmd([v22, "diff", str(go), str(gn), "--format", "json", "--fail-on-breaking"])
+        g_rc, g_out, g_err, _ = run_cmd(["graphql-inspector", "diff", str(go), str(gn)])
+        vj = json.loads(v_out)
+        g_txt = (g_out + g_err).decode("utf-8", errors="replace")
+        g_brk = (g_rc != 0) or bool(re.search(r"detected\s+[1-9]\d*\s+breaking\s+change", g_txt, re.I))
+        g_warn = ("dangerous" in g_txt.lower()) or ("⚠" in g_txt)
+        v_sevs = sorted({c["severity"] for c in vj["changes"]})
+        out["smoke_matrix"].append({
+            "case": label,
+            "vimanam_severities": v_sevs,
+            "vimanam_breaking": (v_rc == 3),
+            "graphql_inspector_breaking": g_brk,
+            "graphql_inspector_dangerous": g_warn,
+            "breaking_verdict_match": ((v_rc == 3) == g_brk),
+        })
+    return out
+
+
+def run_protoc_gen_doc_comparison(v22: str, otel_repo: Path, tmpdir: Path) -> dict:
+    """Compare vimanam pure-Rust .proto Markdown vs protoc + protoc-gen-doc 1.5.1."""
+    out: dict = {
+        "protoc_gen_doc_version": subprocess.check_output(["protoc-gen-doc", "--version"], text=True).strip(),
+        "targets": [],
+    }
+    doc_out = tmpdir / "pgd_out"
+    doc_out.mkdir()
+
+    targets = [
+        (
+            "gRPC Health v1.20.0 (.proto)",
+            REPO / "tests/fixtures/protobuf/health-v1.20.0.proto",
+            [REPO / "tests/fixtures/protobuf"],
+            [REPO / "tests/fixtures/protobuf/health-v1.20.0.proto"],
+        ),
+        (
+            "OTel Collector TraceService (+ 3 transitive protos)",
+            otel_repo / "opentelemetry/proto/collector/trace/v1/trace_service.proto",
+            [otel_repo],
+            [
+                otel_repo / "opentelemetry/proto/collector/trace/v1/trace_service.proto",
+                otel_repo / "opentelemetry/proto/trace/v1/trace.proto",
+                otel_repo / "opentelemetry/proto/resource/v1/resource.proto",
+                otel_repo / "opentelemetry/proto/common/v1/common.proto",
+            ],
+        ),
+    ]
+    for idx, (label, entry, inc_dirs, all_files) in enumerate(targets):
+        pgd_md = doc_out / f"out_{idx}.md"
+        pgd_cmd = [
+            "protoc",
+            *[a for d in inc_dirs for a in ("-I", str(d))],
+            f"--doc_out={doc_out}",
+            f"--doc_opt=markdown,{pgd_md.name}",
+            *[str(f) for f in all_files],
+        ]
+        vim_md = doc_out / f"vim_{idx}.md"
+        vim_cmd = [
+            v22,
+            str(entry),
+            *[a for d in inc_dirs for a in ("-I", str(d))],
+            "--detail", "full",
+            "--include-schemas",
+            "--no-report",
+            "-o", str(vim_md),
+        ]
+        run_cmd(pgd_cmd)
+        run_cmd(vim_cmd)
+        pgd_txt = pgd_md.read_text(encoding="utf-8", errors="replace") if pgd_md.exists() else ""
+        vim_txt = vim_md.read_text(encoding="utf-8", errors="replace") if vim_md.exists() else ""
+        hf = hyperfine_multi(
+            [
+                ("protoc_gen_doc", sh_quote(pgd_cmd)),
+                ("vimanam_2_2", sh_quote(vim_cmd)),
+            ],
+            runs=10,
+            warmup=2,
+        )
+        out["targets"].append({
+            "name": label,
+            "protoc_gen_doc_bytes": len(pgd_txt.encode("utf-8")),
+            "protoc_gen_doc_bpe_o200k": count_bpe(pgd_txt),
+            "vimanam_bytes": len(vim_txt.encode("utf-8")),
+            "vimanam_bpe_o200k": count_bpe(vim_txt),
+            "hyperfine": hf,
         })
     return out
 
@@ -484,6 +667,8 @@ def main():
     v21 = str(Path(args.v21).resolve())
     v22 = str(Path(args.v22).resolve())
     corpus = Path(args.corpus).resolve()
+    stripe_repo = corpus / "stripe-openapi"
+    openai_repo = corpus / "openai-repo"
     otel = corpus / "otel-proto"
     octo = corpus / "octokit-graphql"
 
@@ -503,7 +688,8 @@ def main():
             "v22_sha256": file_sha256(v22),
             "v21_binary_bytes": os.path.getsize(v21),
             "v22_binary_bytes": os.path.getsize(v22),
-            "runs_per_benchmark": args.runs,
+            "openai_openapi_commit": subprocess.check_output(["git", "-C", str(openai_repo), "rev-parse", "--short", "HEAD"], text=True).strip(),
+            "stripe_openapi_commit": subprocess.check_output(["git", "-C", str(stripe_repo), "rev-parse", "--short", "HEAD"], text=True).strip(),
             "octokit_graphql_commit": subprocess.check_output(["git", "-C", str(octo), "rev-parse", "--short", "HEAD"], text=True).strip(),
             "otel_proto_commit": subprocess.check_output(["git", "-C", str(otel), "rev-parse", "--short", "HEAD"], text=True).strip(),
         },
@@ -517,23 +703,22 @@ def main():
         "external_baselines": {},
     }
 
-    # 1. OpenAPI benchmarks (10 runs)
-    print("[1/6] OpenAPI benchmarks...", flush=True)
-    oa_specs = [
+    # 1. OpenAPI benchmarks (10 runs including Stripe YAML for rock-solid median)
+    print("[1/6] OpenAPI benchmarks (10 runs, median + IQR)...", flush=True)
+    for name, path, fmt, runs in [
         ("Petstore OAS3 (JSON)", REPO / "tests/fixtures/petstore_oas3.json", "JSON", args.runs),
         ("Petstore OAS3 (YAML)", REPO / "tests/fixtures/petstore_oas3.yaml", "YAML", args.runs),
         ("OpenAI OpenAPI 3.0 (YAML)", corpus / "openai.yaml", "YAML", args.runs),
-        ("Stripe OpenAPI 3.0 (JSON)", corpus / "stripe.json", "JSON", min(args.runs, 6)),
-        ("Stripe OpenAPI 3.0 (YAML)", corpus / "stripe.yaml", "YAML", min(args.runs, 6)),
-    ]
-    for name, path, fmt, runs in oa_specs:
+        ("Stripe OpenAPI 3.0 (JSON)", stripe_repo / "openapi/spec3.json", "JSON", args.runs),
+        ("Stripe OpenAPI 3.0 (YAML)", stripe_repo / "openapi/spec3.yaml", "YAML", args.runs),
+    ]:
         flags = [str(path), "--detail", "full", "--include-schemas", "--no-report"]
         rc21, out21, err21, _ = run_cmd([v21, *flags])
-        rc22, out22, err22, _ = run_cmd([v22, *flags])
+        rc22, out22, _, _ = run_cmd([v22, *flags])
         hf = (
-            hyperfine_pair(sh_quote([v21, *flags]), sh_quote([v22, *flags]), "v2_1", "v2_2", runs=runs)
+            hyperfine_multi([("v2_1", sh_quote([v21, *flags])), ("v2_2", sh_quote([v22, *flags]))], runs=runs)
             if (rc21 == 0 and rc22 == 0)
-            else hyperfine_single(sh_quote([v22, *flags]), "v2_2", runs=runs)
+            else hyperfine_multi([("v2_2", sh_quote([v22, *flags]))], runs=runs)
         )
         results["openapi"].append({
             "name": name,
@@ -545,21 +730,20 @@ def main():
             "byte_identical": (rc21 == 0 and rc22 == 0 and out21 == out22),
             "hyperfine": hf,
         })
-        print(f"  {name}: rc=({rc21},{rc22}) hf={hf}", flush=True)
+        print(f"  {name}: med_v21={hf.get('v2_1',{}).get('median_ms')} med_v22={hf['v2_2']['median_ms']} ratio={hf.get('median_speedup_a_over_b')} iqrs_disjoint={hf.get('iqrs_disjoint')}", flush=True)
 
     # 2. GraphQL benchmarks (10 runs)
     print("[2/6] GraphQL benchmarks...", flush=True)
-    gql_specs = [
+    for name, path, kind, runs in [
         ("SpaceX Land (SDL)", REPO / "tests/fixtures/graphql/spacex-land-64a7fa9.graphql", "SDL", args.runs),
         ("SpaceX Land (Introspection JSON)", REPO / "tests/fixtures/graphql/spacex-land-64a7fa9.introspection.json", "Introspection", args.runs),
         ("GitHub GraphQL API (SDL)", octo / "schema.graphql", "SDL", args.runs),
-        ("GitHub GraphQL API (Introspection JSON)", octo / "schema.json", "Introspection", min(args.runs, 6)),
-    ]
-    for name, path, kind, runs in gql_specs:
+        ("GitHub GraphQL API (Introspection JSON)", octo / "schema.json", "Introspection", args.runs),
+    ]:
         flags = [str(path), "--detail", "full", "--include-schemas", "--no-report"]
         rc21, out21, _, _ = run_cmd([v21, *flags])
         rc22, out22, _, _ = run_cmd([v22, *flags])
-        hf = hyperfine_pair(sh_quote([v21, *flags]), sh_quote([v22, *flags]), "v2_1", "v2_2", runs=runs)
+        hf = hyperfine_multi([("v2_1", sh_quote([v21, *flags])), ("v2_2", sh_quote([v22, *flags]))], runs=runs)
         results["graphql"].append({
             "name": name,
             "kind": kind,
@@ -567,27 +751,31 @@ def main():
             "byte_identical": (rc21 == 0 and rc22 == 0 and out21 == out22),
             "hyperfine": hf,
         })
-        print(f"  {name}: identical={out21==out22} hf={hf}", flush=True)
+        print(f"  {name}: med_v21={hf['v2_1']['median_ms']} med_v22={hf['v2_2']['median_ms']} iqrs_disjoint={hf['iqrs_disjoint']}", flush=True)
 
+    gql_schema_commit = subprocess.check_output(
+        ["git", "-C", str(octo), "log", "-n", "1", "--format=%h", "--", "schema.json"],
+        text=True,
+    ).strip()
     for label, dflags, cwd, runs in [
         ("SpaceX Land SDL diff (0a482d1 -> 64a7fa9)", ["diff", str(REPO / "tests/fixtures/graphql/spacex-land-0a482d1.graphql"), str(REPO / "tests/fixtures/graphql/spacex-land-64a7fa9.graphql"), "--format", "json"], None, args.runs),
-        ("GitHub GraphQL SDL Git-ref diff (HEAD~1 -> HEAD)", ["diff", "--from-ref", "HEAD~1", "--to-ref", "HEAD", "--spec", "schema.graphql", "--format", "json"], str(octo), 5),
-        ("GitHub GraphQL Introspection Git-ref diff (HEAD~1 -> HEAD)", ["diff", "--from-ref", "HEAD~1", "--to-ref", "HEAD", "--spec", "schema.json", "--format", "json"], str(octo), 5),
+        (f"GitHub GraphQL SDL Git-ref diff ({gql_schema_commit}~1 -> {gql_schema_commit})", ["diff", "--from-ref", f"{gql_schema_commit}~1", "--to-ref", gql_schema_commit, "--spec", "schema.graphql", "--format", "json"], str(octo), 5),
+        (f"GitHub GraphQL Introspection Git-ref diff ({gql_schema_commit}~1 -> {gql_schema_commit})", ["diff", "--from-ref", f"{gql_schema_commit}~1", "--to-ref", gql_schema_commit, "--spec", "schema.json", "--format", "json"], str(octo), 5),
     ]:
         _, d21, _, _ = run_cmd([v21, *dflags], cwd=cwd)
         _, d22, _, _ = run_cmd([v22, *dflags], cwd=cwd)
         j21, j22 = json.loads(d21), json.loads(d22)
-        hf = hyperfine_pair(sh_quote([v21, *dflags]), sh_quote([v22, *dflags]), "v2_1", "v2_2", runs=runs, cwd=cwd)
+        hf = hyperfine_multi([("v2_1", sh_quote([v21, *dflags])), ("v2_2", sh_quote([v22, *dflags]))], runs=runs, cwd=cwd)
         results["graphql_diffs"].append({
             "name": label,
             "changes_exact_match": (j21["changes"] == j22["changes"]),
             "summary_v22": j22["summary"],
             "hyperfine": hf,
         })
-        print(f"  {label}: exact={j21['changes']==j22['changes']} hf={hf}", flush=True)
+        print(f"  {label}: med_v21={hf['v2_1']['median_ms']} med_v22={hf['v2_2']['median_ms']} iqrs_disjoint={hf['iqrs_disjoint']}", flush=True)
 
-    # 3. Protobuf targets (10 runs; v2.2.0 explicitly uses env PATH='' to prove zero protoc)
-    print("[3/6] Protobuf benchmarks (v2.2.0 invoked with env PATH='')...", flush=True)
+    # 3. Protobuf targets (10 runs; zero-protoc verified via env_no_protoc)
+    print("[3/6] Protobuf benchmarks...", flush=True)
     for label, p, inc in [
         ("gRPC Health v1.20.0 (.proto)", REPO / "tests/fixtures/protobuf/health-v1.20.0.proto", []),
         ("gRPC Health v1.20.0 (.pb descriptor)", REPO / "tests/fixtures/protobuf/health-v1.20.0.pb", []),
@@ -597,11 +785,9 @@ def main():
     ]:
         pflags = [str(p), *inc, "--detail", "full", "--include-schemas", "--no-report"]
         _, o21, _, _ = run_cmd([v21, *pflags])
-        _, o22, _, _ = run_cmd([v22, *pflags], env=env_no_protoc)
-        cmd21 = sh_quote([v21, *pflags])
-        cmd22 = sh_quote([v22, *pflags])
-        # Zero-protoc parity verified above with env_no_protoc (PATH="")
-        hf = hyperfine_pair(cmd21, cmd22, "v2_1", "v2_2", runs=args.runs)
+        rc22, o22, _, _ = run_cmd([v22, *pflags], env=env_no_protoc)
+        assert rc22 == 0, f"v2.2 failed with PATH='': {label}"
+        hf = hyperfine_multi([("v2_1", sh_quote([v21, *pflags])), ("v2_2", sh_quote([v22, *pflags]))], runs=args.runs)
         results["protobuf_targets"].append({
             "name": label,
             "v21_bytes": len(o21),
@@ -610,9 +796,8 @@ def main():
             "field_notes_v22": len(re.findall(r"Field #\d+", o22.decode("utf-8", errors="replace"))),
             "hyperfine": hf,
         })
-        print(f"  {label}: hf={hf}", flush=True)
+        print(f"  {label}: med_v21={hf['v2_1']['median_ms']} med_v22={hf['v2_2']['median_ms']} ratio={hf['median_speedup_a_over_b']}x", flush=True)
 
-    # OTel real Git-ref diff
     otel_commit = results["environment"]["otel_proto_commit"]
     gargs = ["diff", "--from-ref", f"{otel_commit}~1", "--to-ref", otel_commit, "--spec", "opentelemetry/proto/trace/v1/trace.proto", "-I", ".", "--format", "json"]
     rc21, o21, _, _ = run_cmd([v21, *gargs], cwd=str(otel))
@@ -625,12 +810,11 @@ def main():
             "spec": "opentelemetry/proto/trace/v1/trace.proto",
             "changes_exact_match": (j21["changes"] == j22["changes"]),
             "changes_count": len(j22["changes"]),
-            "hyperfine": hyperfine_pair(sh_quote([v21, *gargs]), sh_quote([v22, *gargs]), "v2_1", "v2_2", runs=6, cwd=str(otel)),
+            "hyperfine": hyperfine_multi([("v2_1", sh_quote([v21, *gargs])), ("v2_2", sh_quote([v22, *gargs]))], runs=6, cwd=str(otel)),
         }
-        print(f"  OTel Git-ref diff: {results['protobuf_git_diff_otel']['hyperfine']}", flush=True)
 
-    # 4. Synthetic 200-proto Git-ref scaling benchmark (measured, reproducible!)
-    print("[4/6] Synthetic 200-proto Git-ref scaling benchmark...", flush=True)
+    # 4. Synthetic 200-proto Git-ref scaling + 5. Large-scale external baselines
+    print("[4/6] Synthetic 200-proto Git-ref scaling & [5/6] Real-scale oasdiff/buf baselines...", flush=True)
     with tempfile.TemporaryDirectory() as td:
         tmp = Path(td)
         p200 = build_synthetic_200_proto_repo(tmp)
@@ -638,77 +822,70 @@ def main():
         _, so21, _, _ = run_cmd([v21, *sargs], cwd=str(p200))
         _, so22, _, _ = run_cmd([v22, *sargs], cwd=str(p200))
         sj21, sj22 = json.loads(so21), json.loads(so22)
-        shf = hyperfine_pair(sh_quote([v21, *sargs]), sh_quote([v22, *sargs]), "v2_1", "v2_2", runs=3, warmup=1, cwd=str(p200))
         results["protobuf_git_diff_200_synthetic"] = {
             "total_committed_protos": 200,
             "imported_protos_used": 4,
             "changes_count": len(sj22["changes"]),
             "changes_exact_match": (sj21["changes"] == sj22["changes"]),
-            "hyperfine": shf,
+            "hyperfine": hyperfine_multi([("v2_1", sh_quote([v21, *sargs])), ("v2_2", sh_quote([v22, *sargs]))], runs=3, warmup=1, cwd=str(p200)),
         }
-        print(f"  Synthetic 200-proto Git-ref diff: {shf}", flush=True)
+        print(f"  200-proto Git-ref diff: {results['protobuf_git_diff_200_synthetic']['hyperfine']['median_speedup_a_over_b']}x", flush=True)
 
-        # 5. External baseline comparisons: oasdiff & buf breaking
-        print("[5/6] External baseline comparisons (oasdiff 1.39 & buf 1.75)...", flush=True)
-        results["external_baselines"]["oasdiff"] = run_oasdiff_comparison(v22, tmp)
-        results["external_baselines"]["buf"] = run_buf_comparison(v22, tmp)
-        print(f"  oasdiff fixture speed: {results['external_baselines']['oasdiff']['fixture_oas3']['hyperfine']}", flush=True)
-        print(f"  buf health speed: {results['external_baselines']['buf']['health_speed']}", flush=True)
+        results["external_baselines"]["oasdiff"] = run_oasdiff_comparison(v22, openai_repo, stripe_repo, tmp)
+        print(f"  OpenAI 4.9 MB oasdiff vs vimanam: { {k: v['median_ms'] for k, v in results['external_baselines']['oasdiff']['openai_4_9mb_diff']['hyperfine'].items() if isinstance(v, dict)} }", flush=True)
+        print(f"  Stripe 7.9 MB probe: { {k: results['external_baselines']['oasdiff']['stripe_7_9mb_probe'][k] for k in ('oasdiff_breaking', 'vimanam_diff_md', 'vimanam_diff_v2_json')} }", flush=True)
 
-    # 6. Exact BPE tokenization (o200k_base) vs chars/4 calibration
-    print("[6/6] Exact BPE (tiktoken o200k_base) vs chars/4 calibration...", flush=True)
-    cal_targets = [
+        results["external_baselines"]["buf"] = run_buf_comparison(v22, otel, tmp)
+        print(f"  OTel multi-file buf vs vimanam: { {k: v['median_ms'] for k, v in results['external_baselines']['buf']['otel_git_ref_comparison']['hyperfine'].items() if isinstance(v, dict)} }", flush=True)
+
+        results["external_baselines"]["graphql_inspector"] = run_graphql_inspector_comparison(v22, octo, tmp)
+        print(f"  GitHub 5.0 MB Introspection graphql-inspector vs vimanam: { {k: v['median_ms'] for k, v in results['external_baselines']['graphql_inspector']['github_5_0mb_introspection_json']['hyperfine'].items() if isinstance(v, dict)} }", flush=True)
+
+        results["external_baselines"]["protoc_gen_doc"] = run_protoc_gen_doc_comparison(v22, otel, tmp)
+        print(f"  protoc-gen-doc vs vimanam: {[ (t['name'], t['hyperfine']['median_speedup_a_over_b']) for t in results['external_baselines']['protoc_gen_doc']['targets'] ]}", flush=True)
+
+    # 6. o200k_base BPE vs chars/4 calibration
+    print("[6/6] o200k_base BPE vs chars/4 calibration...", flush=True)
+    for name, path, fmt, inc, sel_flags in [
         ("OpenAI OpenAPI 3.0 (1.3 MB YAML)", corpus / "openai.yaml", "YAML", [], ["--operation", "POST /chat/completions", "--detail", "full", "--include-schemas", "--schema-depth", "2", "--no-report"]),
-        ("Stripe OpenAPI 3.0 (7.9 MB JSON)", corpus / "stripe.json", "JSON", [], ["--operation", "POST /v1/customers", "--detail", "full", "--include-schemas", "--schema-depth", "2", "--no-report"]),
+        ("Stripe OpenAPI 3.0 (7.9 MB JSON)", stripe_repo / "openapi/spec3.json", "JSON", [], ["--operation", "POST /v1/customers", "--detail", "full", "--include-schemas", "--schema-depth", "2", "--no-report"]),
         ("GitHub GraphQL API (1.2 MB SDL)", octo / "schema.graphql", "GraphQL SDL", [], ["--operation", "QUERY Query.repository", "--detail", "full", "--include-schemas", "--schema-depth", "2", "--no-report"]),
         ("SpaceX Land GraphQL (12 KB SDL)", REPO / "tests/fixtures/graphql/spacex-land-64a7fa9.graphql", "GraphQL SDL", [], ["--operation", "QUERY Query.launchesPastResult", "--detail", "full", "--include-schemas", "--schema-depth", "2", "--no-report"]),
         ("OTel TraceService (.proto + 3 transitive)", otel / "opentelemetry/proto/collector/trace/v1/trace_service.proto", "Protobuf", ["-I", str(otel)], ["--operation", "RPC opentelemetry.proto.collector.trace.v1.TraceService.Export", "--detail", "full", "--include-schemas", "--schema-depth", "3", "--no-report"]),
-    ]
-    for name, path, fmt, inc, sel_flags in cal_targets:
-        raw_text = path.read_text(encoding="utf-8", errors="replace")
-        if fmt == "Protobuf":
-            # Include transitive imports for fair raw source size
-            trans = [
+    ]:
+        raw_text = (
+            "\n".join(p.read_text() for p in [
                 otel / "opentelemetry/proto/collector/trace/v1/trace_service.proto",
                 otel / "opentelemetry/proto/trace/v1/trace.proto",
                 otel / "opentelemetry/proto/resource/v1/resource.proto",
                 otel / "opentelemetry/proto/common/v1/common.proto",
-            ]
-            raw_text = "\n".join(p.read_text() for p in trans)
+            ])
+            if fmt == "Protobuf"
+            else path.read_text(encoding="utf-8", errors="replace")
+        )
         _, full_out, _, _ = run_cmd([v22, str(path), *inc, "--detail", "full", "--include-schemas", "--no-report"])
         _, sum_out, _, _ = run_cmd([v22, str(path), *inc, "--detail", "summary", "--no-report"])
         _, foc_out, _, _ = run_cmd([v22, str(path), *inc, *sel_flags])
 
-        full_t = full_out.decode("utf-8", errors="replace")
-        sum_t = sum_out.decode("utf-8", errors="replace")
-        foc_t = foc_out.decode("utf-8", errors="replace")
-
-        raw_bpe, raw_est = count_bpe(raw_text), chars_div_4(raw_text)
-        full_bpe, full_est = count_bpe(full_t), chars_div_4(full_t)
-        sum_bpe, sum_est = count_bpe(sum_t), chars_div_4(sum_t)
-        foc_bpe, foc_est = count_bpe(foc_t), chars_div_4(foc_t)
-
+        full_t, sum_t, foc_t = full_out.decode("utf-8", "replace"), sum_out.decode("utf-8", "replace"), foc_out.decode("utf-8", "replace")
+        raw_bpe, full_bpe, sum_bpe, foc_bpe = count_bpe(raw_text), count_bpe(full_t), count_bpe(sum_t), count_bpe(foc_t)
         results["token_calibration"].append({
             "name": name,
             "format": fmt,
             "raw_chars": len(raw_text),
             "raw_bpe_o200k": raw_bpe,
-            "raw_chars_div_4": raw_est,
-            "raw_chars_per_bpe": round(len(raw_text) / raw_bpe, 2) if raw_bpe else None,
+            "raw_chars_div_4": chars_div_4(raw_text),
+            "raw_chars_per_o200k": round(len(raw_text) / raw_bpe, 2),
             "full_md_bpe_o200k": full_bpe,
-            "full_md_chars_div_4": full_est,
-            "full_md_chars_per_bpe": round(len(full_t) / full_bpe, 2) if full_bpe else None,
+            "full_md_chars_div_4": chars_div_4(full_t),
+            "full_md_chars_per_o200k": round(len(full_t) / full_bpe, 2),
             "summary_bpe_o200k": sum_bpe,
-            "summary_chars_div_4": sum_est,
             "focused_bpe_o200k": foc_bpe,
-            "focused_chars_div_4": foc_est,
-            "focused_vs_raw_bpe_reduction_pct": round((1 - foc_bpe / raw_bpe) * 100, 1) if raw_bpe else None,
+            "focused_vs_raw_o200k_reduction_pct": round((1 - foc_bpe / raw_bpe) * 100, 1),
         })
-        print(f"  Token calibration {name}: raw={raw_bpe} BPE ({round(len(raw_text)/raw_bpe,2)} c/tok) -> focused={foc_bpe} BPE ({round(len(foc_t)/foc_bpe,2)} c/tok)", flush=True)
 
-    out_path = Path(args.output)
-    out_path.write_text(json.dumps(results, indent=2) + "\n")
-    print(f"\nWrote {out_path}", flush=True)
+    Path(args.output).write_text(json.dumps(results, indent=2) + "\n")
+    print(f"\nWrote {args.output}", flush=True)
 
 
 if __name__ == "__main__":

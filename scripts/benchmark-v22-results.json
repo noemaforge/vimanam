@@ -11,7 +11,8 @@
     "v22_sha256": "ed253315ec06912e635f62bf538bcf83d1e507bc40f8307fd0bc5e7b94688a03",
     "v21_binary_bytes": 7593616,
     "v22_binary_bytes": 9731360,
-    "runs_per_benchmark": 10,
+    "openai_openapi_commit": "373f26a",
+    "stripe_openapi_commit": "5237fa0",
     "octokit_graphql_commit": "82ff2d4",
     "otel_proto_commit": "d31f7ac"
   },
@@ -27,26 +28,55 @@
       "hyperfine": {
         "v2_1": {
           "count": 10,
-          "mean_ms": 7.19,
-          "stddev_ms": 0.76,
-          "median_ms": 7.1,
-          "min_ms": 6.28,
-          "max_ms": 8.38,
+          "median_ms": 7.9,
+          "q1_ms": 7.1,
+          "q3_ms": 9.69,
+          "min_ms": 6.11,
+          "max_ms": 10.02,
+          "mean_ms": 8.14,
+          "stddev_ms": 1.35,
           "rss_mb": 4.0,
-          "instructions_m": 19.9
+          "instructions_m": 19.9,
+          "samples_ms": [
+            7.1,
+            10.02,
+            9.92,
+            6.11,
+            7.1,
+            7.57,
+            7.22,
+            9.61,
+            8.55,
+            8.23
+          ]
         },
         "v2_2": {
           "count": 10,
-          "mean_ms": 7.25,
-          "stddev_ms": 1.46,
-          "median_ms": 6.8,
-          "min_ms": 5.56,
-          "max_ms": 9.66,
-          "rss_mb": 4.0,
-          "instructions_m": 19.9
+          "median_ms": 7.78,
+          "q1_ms": 7.21,
+          "q3_ms": 8.15,
+          "min_ms": 6.73,
+          "max_ms": 8.72,
+          "mean_ms": 7.72,
+          "stddev_ms": 0.62,
+          "rss_mb": 4.1,
+          "instructions_m": 19.9,
+          "samples_ms": [
+            6.73,
+            7.57,
+            8.72,
+            8.32,
+            7.31,
+            7.8,
+            8.01,
+            7.77,
+            8.09,
+            6.9
+          ]
         },
-        "speedup_a_over_b": 0.99,
-        "within_1sigma_noise": true
+        "median_speedup_a_over_b": 1.02,
+        "iqrs_disjoint": false,
+        "ranges_disjoint": false
       }
     },
     {
@@ -60,26 +90,55 @@
       "hyperfine": {
         "v2_1": {
           "count": 10,
-          "mean_ms": 8.57,
-          "stddev_ms": 1.03,
-          "median_ms": 8.6,
-          "min_ms": 7.13,
-          "max_ms": 10.38,
+          "median_ms": 8.96,
+          "q1_ms": 7.88,
+          "q3_ms": 9.79,
+          "min_ms": 7.06,
+          "max_ms": 10.43,
+          "mean_ms": 8.86,
+          "stddev_ms": 1.13,
           "rss_mb": 4.2,
-          "instructions_m": 20.6
+          "instructions_m": 20.6,
+          "samples_ms": [
+            9.62,
+            9.35,
+            10.3,
+            8.4,
+            7.47,
+            8.71,
+            7.06,
+            10.43,
+            9.22,
+            8.02
+          ]
         },
         "v2_2": {
           "count": 10,
-          "mean_ms": 8.3,
-          "stddev_ms": 0.84,
-          "median_ms": 8.32,
-          "min_ms": 7.23,
-          "max_ms": 9.62,
+          "median_ms": 9.11,
+          "q1_ms": 7.92,
+          "q3_ms": 9.37,
+          "min_ms": 7.08,
+          "max_ms": 11.56,
+          "mean_ms": 8.89,
+          "stddev_ms": 1.27,
           "rss_mb": 5.1,
-          "instructions_m": 21.0
+          "instructions_m": 21.0,
+          "samples_ms": [
+            7.08,
+            8.06,
+            8.25,
+            9.79,
+            9.1,
+            9.12,
+            9.21,
+            11.56,
+            9.23,
+            7.51
+          ]
         },
-        "speedup_a_over_b": 1.03,
-        "within_1sigma_noise": true
+        "median_speedup_a_over_b": 0.98,
+        "iqrs_disjoint": false,
+        "ranges_disjoint": false
       }
     },
     {
@@ -93,13 +152,27 @@
       "hyperfine": {
         "v2_2": {
           "count": 10,
-          "mean_ms": 43.87,
-          "stddev_ms": 2.68,
-          "median_ms": 43.28,
-          "min_ms": 41.98,
-          "max_ms": 50.96,
-          "rss_mb": 23.6,
-          "instructions_m": 468.4
+          "median_ms": 45.33,
+          "q1_ms": 43.99,
+          "q3_ms": 46.2,
+          "min_ms": 43.78,
+          "max_ms": 47.54,
+          "mean_ms": 45.33,
+          "stddev_ms": 1.22,
+          "rss_mb": 23.5,
+          "instructions_m": 466.7,
+          "samples_ms": [
+            45.78,
+            45.46,
+            44.03,
+            45.19,
+            46.09,
+            45.07,
+            47.54,
+            46.52,
+            43.78,
+            43.88
+          ]
         }
       }
     },
@@ -113,27 +186,56 @@
       "byte_identical": true,
       "hyperfine": {
         "v2_1": {
-          "count": 6,
-          "mean_ms": 119.72,
-          "stddev_ms": 3.02,
-          "median_ms": 118.65,
-          "min_ms": 116.91,
-          "max_ms": 123.68,
+          "count": 10,
+          "median_ms": 113.43,
+          "q1_ms": 111.58,
+          "q3_ms": 114.49,
+          "min_ms": 108.62,
+          "max_ms": 116.33,
+          "mean_ms": 113.03,
+          "stddev_ms": 2.13,
           "rss_mb": 124.2,
-          "instructions_m": 1462.3
+          "instructions_m": 1456.2,
+          "samples_ms": [
+            113.82,
+            113.33,
+            113.54,
+            112.45,
+            114.71,
+            116.33,
+            111.41,
+            111.64,
+            108.62,
+            114.42
+          ]
         },
         "v2_2": {
-          "count": 6,
-          "mean_ms": 115.87,
-          "stddev_ms": 2.65,
-          "median_ms": 115.81,
-          "min_ms": 112.73,
-          "max_ms": 120.34,
-          "rss_mb": 124.1,
-          "instructions_m": 1464.5
+          "count": 10,
+          "median_ms": 111.0,
+          "q1_ms": 109.56,
+          "q3_ms": 111.64,
+          "min_ms": 108.53,
+          "max_ms": 113.6,
+          "mean_ms": 110.74,
+          "stddev_ms": 1.47,
+          "rss_mb": 124.0,
+          "instructions_m": 1453.7,
+          "samples_ms": [
+            111.03,
+            109.97,
+            111.03,
+            111.56,
+            113.6,
+            109.68,
+            111.89,
+            108.53,
+            110.97,
+            109.19
+          ]
         },
-        "speedup_a_over_b": 1.03,
-        "within_1sigma_noise": true
+        "median_speedup_a_over_b": 1.02,
+        "iqrs_disjoint": false,
+        "ranges_disjoint": false
       }
     },
     {
@@ -146,27 +248,56 @@
       "byte_identical": true,
       "hyperfine": {
         "v2_1": {
-          "count": 6,
-          "mean_ms": 302.96,
-          "stddev_ms": 166.14,
-          "median_ms": 201.42,
-          "min_ms": 192.71,
-          "max_ms": 565.53,
-          "rss_mb": 151.0,
-          "instructions_m": 3051.3
+          "count": 10,
+          "median_ms": 193.56,
+          "q1_ms": 192.07,
+          "q3_ms": 196.38,
+          "min_ms": 191.46,
+          "max_ms": 202.1,
+          "mean_ms": 194.61,
+          "stddev_ms": 3.23,
+          "rss_mb": 152.0,
+          "instructions_m": 3026.0,
+          "samples_ms": [
+            202.1,
+            196.04,
+            191.9,
+            191.46,
+            197.38,
+            193.18,
+            194.77,
+            193.84,
+            193.28,
+            192.13
+          ]
         },
         "v2_2": {
-          "count": 6,
-          "mean_ms": 231.73,
-          "stddev_ms": 19.31,
-          "median_ms": 224.9,
-          "min_ms": 215.62,
-          "max_ms": 265.53,
+          "count": 10,
+          "median_ms": 206.67,
+          "q1_ms": 205.53,
+          "q3_ms": 207.71,
+          "min_ms": 202.22,
+          "max_ms": 208.12,
+          "mean_ms": 206.28,
+          "stddev_ms": 1.82,
           "rss_mb": 121.9,
-          "instructions_m": 2845.2
+          "instructions_m": 2832.2,
+          "samples_ms": [
+            207.93,
+            207.15,
+            204.43,
+            207.24,
+            206.2,
+            208.12,
+            207.64,
+            205.96,
+            202.22,
+            205.9
+          ]
         },
-        "speedup_a_over_b": 1.31,
-        "within_1sigma_noise": true
+        "median_speedup_a_over_b": 0.94,
+        "iqrs_disjoint": true,
+        "ranges_disjoint": true
       }
     }
   ],
@@ -179,26 +310,55 @@
       "hyperfine": {
         "v2_1": {
           "count": 10,
-          "mean_ms": 10.49,
-          "stddev_ms": 1.13,
-          "median_ms": 10.63,
-          "min_ms": 8.59,
-          "max_ms": 12.63,
+          "median_ms": 11.27,
+          "q1_ms": 9.81,
+          "q3_ms": 11.94,
+          "min_ms": 9.07,
+          "max_ms": 12.05,
+          "mean_ms": 10.95,
+          "stddev_ms": 1.1,
           "rss_mb": 5.3,
-          "instructions_m": 44.6
+          "instructions_m": 44.5,
+          "samples_ms": [
+            10.76,
+            11.93,
+            10.9,
+            9.07,
+            11.96,
+            12.05,
+            9.53,
+            11.64,
+            9.91,
+            11.72
+          ]
         },
         "v2_2": {
           "count": 10,
-          "mean_ms": 8.41,
-          "stddev_ms": 0.91,
-          "median_ms": 8.25,
-          "min_ms": 7.61,
-          "max_ms": 10.83,
-          "rss_mb": 5.2,
-          "instructions_m": 51.2
+          "median_ms": 10.86,
+          "q1_ms": 9.19,
+          "q3_ms": 12.15,
+          "min_ms": 8.39,
+          "max_ms": 12.52,
+          "mean_ms": 10.59,
+          "stddev_ms": 1.53,
+          "rss_mb": 5.1,
+          "instructions_m": 51.1,
+          "samples_ms": [
+            8.63,
+            12.45,
+            10.93,
+            12.05,
+            9.54,
+            12.52,
+            8.39,
+            9.38,
+            10.79,
+            11.25
+          ]
         },
-        "speedup_a_over_b": 1.25,
-        "within_1sigma_noise": false
+        "median_speedup_a_over_b": 1.04,
+        "iqrs_disjoint": false,
+        "ranges_disjoint": false
       }
     },
     {
@@ -209,26 +369,55 @@
       "hyperfine": {
         "v2_1": {
           "count": 10,
-          "mean_ms": 12.27,
-          "stddev_ms": 1.78,
-          "median_ms": 11.83,
-          "min_ms": 10.07,
-          "max_ms": 15.49,
+          "median_ms": 13.56,
+          "q1_ms": 11.01,
+          "q3_ms": 14.88,
+          "min_ms": 10.41,
+          "max_ms": 15.24,
+          "mean_ms": 13.17,
+          "stddev_ms": 1.81,
           "rss_mb": 6.0,
-          "instructions_m": 78.9
+          "instructions_m": 78.8,
+          "samples_ms": [
+            13.28,
+            13.84,
+            11.06,
+            15.24,
+            10.41,
+            14.27,
+            14.84,
+            10.86,
+            15.02,
+            12.87
+          ]
         },
         "v2_2": {
           "count": 10,
-          "mean_ms": 13.09,
-          "stddev_ms": 1.69,
-          "median_ms": 13.85,
-          "min_ms": 9.79,
-          "max_ms": 15.04,
+          "median_ms": 12.26,
+          "q1_ms": 10.87,
+          "q3_ms": 12.48,
+          "min_ms": 9.17,
+          "max_ms": 13.13,
+          "mean_ms": 11.71,
+          "stddev_ms": 1.21,
           "rss_mb": 6.1,
-          "instructions_m": 79.0
+          "instructions_m": 78.8,
+          "samples_ms": [
+            10.95,
+            12.32,
+            12.39,
+            10.64,
+            12.38,
+            12.2,
+            9.17,
+            13.13,
+            11.17,
+            12.76
+          ]
         },
-        "speedup_a_over_b": 0.94,
-        "within_1sigma_noise": true
+        "median_speedup_a_over_b": 1.11,
+        "iqrs_disjoint": false,
+        "ranges_disjoint": false
       }
     },
     {
@@ -239,26 +428,55 @@
       "hyperfine": {
         "v2_1": {
           "count": 10,
-          "mean_ms": 53.11,
-          "stddev_ms": 2.88,
-          "median_ms": 52.37,
-          "min_ms": 49.26,
-          "max_ms": 58.53,
-          "rss_mb": 23.6,
-          "instructions_m": 583.4
+          "median_ms": 52.77,
+          "q1_ms": 51.46,
+          "q3_ms": 53.56,
+          "min_ms": 47.8,
+          "max_ms": 55.34,
+          "mean_ms": 52.44,
+          "stddev_ms": 2.06,
+          "rss_mb": 23.5,
+          "instructions_m": 582.0,
+          "samples_ms": [
+            52.65,
+            55.34,
+            52.45,
+            53.31,
+            53.16,
+            50.78,
+            47.8,
+            51.69,
+            54.3,
+            52.89
+          ]
         },
         "v2_2": {
           "count": 10,
-          "mean_ms": 63.72,
-          "stddev_ms": 3.15,
-          "median_ms": 62.43,
-          "min_ms": 60.3,
-          "max_ms": 67.73,
-          "rss_mb": 24.4,
-          "instructions_m": 827.9
+          "median_ms": 64.85,
+          "q1_ms": 63.52,
+          "q3_ms": 65.3,
+          "min_ms": 61.91,
+          "max_ms": 65.85,
+          "mean_ms": 64.45,
+          "stddev_ms": 1.26,
+          "rss_mb": 24.1,
+          "instructions_m": 826.9,
+          "samples_ms": [
+            64.72,
+            65.85,
+            65.04,
+            61.91,
+            64.79,
+            65.24,
+            62.69,
+            64.91,
+            63.8,
+            65.49
+          ]
         },
-        "speedup_a_over_b": 0.83,
-        "within_1sigma_noise": false
+        "median_speedup_a_over_b": 0.81,
+        "iqrs_disjoint": true,
+        "ranges_disjoint": true
       }
     },
     {
@@ -268,27 +486,56 @@
       "byte_identical": true,
       "hyperfine": {
         "v2_1": {
-          "count": 6,
-          "mean_ms": 95.17,
-          "stddev_ms": 2.21,
-          "median_ms": 94.51,
-          "min_ms": 93.07,
-          "max_ms": 98.49,
+          "count": 10,
+          "median_ms": 93.49,
+          "q1_ms": 90.38,
+          "q3_ms": 95.01,
+          "min_ms": 89.46,
+          "max_ms": 95.66,
+          "mean_ms": 92.92,
+          "stddev_ms": 2.37,
           "rss_mb": 44.7,
-          "instructions_m": 1247.8
+          "instructions_m": 1243.2,
+          "samples_ms": [
+            95.51,
+            90.56,
+            92.74,
+            95.66,
+            89.85,
+            91.77,
+            94.85,
+            94.25,
+            89.46,
+            94.58
+          ]
         },
         "v2_2": {
-          "count": 6,
-          "mean_ms": 93.83,
-          "stddev_ms": 1.63,
-          "median_ms": 94.35,
-          "min_ms": 91.42,
-          "max_ms": 95.38,
-          "rss_mb": 44.4,
-          "instructions_m": 1259.3
+          "count": 10,
+          "median_ms": 93.34,
+          "q1_ms": 91.45,
+          "q3_ms": 94.48,
+          "min_ms": 91.12,
+          "max_ms": 98.14,
+          "mean_ms": 93.46,
+          "stddev_ms": 2.14,
+          "rss_mb": 44.2,
+          "instructions_m": 1254.1,
+          "samples_ms": [
+            91.14,
+            91.12,
+            93.71,
+            94.25,
+            93.93,
+            91.55,
+            98.14,
+            92.63,
+            95.19,
+            92.98
+          ]
         },
-        "speedup_a_over_b": 1.01,
-        "within_1sigma_noise": true
+        "median_speedup_a_over_b": 1.0,
+        "iqrs_disjoint": false,
+        "ranges_disjoint": false
       }
     }
   ],
@@ -307,98 +554,165 @@
       "hyperfine": {
         "v2_1": {
           "count": 10,
-          "mean_ms": 33.63,
-          "stddev_ms": 2.17,
-          "median_ms": 33.6,
-          "min_ms": 31.03,
-          "max_ms": 37.38,
+          "median_ms": 33.51,
+          "q1_ms": 32.79,
+          "q3_ms": 33.87,
+          "min_ms": 31.26,
+          "max_ms": 34.84,
+          "mean_ms": 33.35,
+          "stddev_ms": 1.07,
           "rss_mb": 6.7,
-          "instructions_m": 340.0
+          "instructions_m": 338.9,
+          "samples_ms": [
+            31.26,
+            32.08,
+            33.46,
+            33.03,
+            34.7,
+            34.84,
+            33.56,
+            33.59,
+            33.58,
+            33.37
+          ]
         },
         "v2_2": {
           "count": 10,
-          "mean_ms": 32.17,
-          "stddev_ms": 3.07,
-          "median_ms": 31.19,
-          "min_ms": 28.45,
-          "max_ms": 39.03,
+          "median_ms": 34.92,
+          "q1_ms": 33.36,
+          "q3_ms": 35.28,
+          "min_ms": 32.87,
+          "max_ms": 35.83,
+          "mean_ms": 34.44,
+          "stddev_ms": 1.06,
           "rss_mb": 6.8,
-          "instructions_m": 355.0
+          "instructions_m": 353.1,
+          "samples_ms": [
+            32.87,
+            35.11,
+            33.5,
+            33.28,
+            35.0,
+            33.39,
+            35.34,
+            35.26,
+            34.85,
+            35.83
+          ]
         },
-        "speedup_a_over_b": 1.05,
-        "within_1sigma_noise": true
+        "median_speedup_a_over_b": 0.96,
+        "iqrs_disjoint": false,
+        "ranges_disjoint": false
       }
     },
     {
-      "name": "GitHub GraphQL SDL Git-ref diff (HEAD~1 -> HEAD)",
+      "name": "GitHub GraphQL SDL Git-ref diff (597478f~1 -> 597478f)",
+      "changes_exact_match": true,
+      "summary_v22": {
+        "operations_added": 8,
+        "operations_removed": 2,
+        "operations_changed": 17,
+        "breaking": 11,
+        "non_breaking": 204,
+        "review": 17
+      },
+      "hyperfine": {
+        "v2_1": {
+          "count": 5,
+          "median_ms": 803.24,
+          "q1_ms": 793.57,
+          "q3_ms": 814.0,
+          "min_ms": 791.44,
+          "max_ms": 816.01,
+          "mean_ms": 803.68,
+          "stddev_ms": 10.43,
+          "rss_mb": 52.5,
+          "instructions_m": 6970.3,
+          "samples_ms": [
+            791.44,
+            816.01,
+            811.99,
+            795.7,
+            803.24
+          ]
+        },
+        "v2_2": {
+          "count": 5,
+          "median_ms": 814.23,
+          "q1_ms": 808.68,
+          "q3_ms": 822.55,
+          "min_ms": 805.47,
+          "max_ms": 823.19,
+          "mean_ms": 815.34,
+          "stddev_ms": 7.33,
+          "rss_mb": 54.3,
+          "instructions_m": 7460.0,
+          "samples_ms": [
+            823.19,
+            814.23,
+            821.91,
+            805.47,
+            811.9
+          ]
+        },
+        "median_speedup_a_over_b": 0.99,
+        "iqrs_disjoint": false,
+        "ranges_disjoint": false
+      }
+    },
+    {
+      "name": "GitHub GraphQL Introspection Git-ref diff (597478f~1 -> 597478f)",
       "changes_exact_match": true,
       "summary_v22": {
         "operations_added": 0,
         "operations_removed": 0,
         "operations_changed": 0,
         "breaking": 0,
-        "non_breaking": 0,
+        "non_breaking": 1,
         "review": 0
       },
       "hyperfine": {
         "v2_1": {
           "count": 5,
-          "mean_ms": 800.81,
-          "stddev_ms": 2.63,
-          "median_ms": 800.09,
-          "min_ms": 798.43,
-          "max_ms": 805.34,
-          "rss_mb": 52.4,
-          "instructions_m": 6999.0
+          "median_ms": 887.87,
+          "q1_ms": 872.79,
+          "q3_ms": 896.6,
+          "min_ms": 864.21,
+          "max_ms": 903.3,
+          "mean_ms": 885.33,
+          "stddev_ms": 14.25,
+          "rss_mb": 71.2,
+          "instructions_m": 8455.0,
+          "samples_ms": [
+            881.37,
+            889.9,
+            887.87,
+            903.3,
+            864.21
+          ]
         },
         "v2_2": {
           "count": 5,
-          "mean_ms": 834.83,
-          "stddev_ms": 7.41,
-          "median_ms": 836.41,
-          "min_ms": 825.84,
-          "max_ms": 845.13,
-          "rss_mb": 54.4,
-          "instructions_m": 7498.9
+          "median_ms": 895.84,
+          "q1_ms": 887.69,
+          "q3_ms": 902.13,
+          "min_ms": 882.51,
+          "max_ms": 902.83,
+          "mean_ms": 895.1,
+          "stddev_ms": 8.12,
+          "rss_mb": 70.6,
+          "instructions_m": 8485.7,
+          "samples_ms": [
+            901.43,
+            902.83,
+            892.88,
+            895.84,
+            882.51
+          ]
         },
-        "speedup_a_over_b": 0.96,
-        "within_1sigma_noise": false
-      }
-    },
-    {
-      "name": "GitHub GraphQL Introspection Git-ref diff (HEAD~1 -> HEAD)",
-      "changes_exact_match": true,
-      "summary_v22": {
-        "operations_added": 0,
-        "operations_removed": 0,
-        "operations_changed": 0,
-        "breaking": 0,
-        "non_breaking": 0,
-        "review": 0
-      },
-      "hyperfine": {
-        "v2_1": {
-          "count": 5,
-          "mean_ms": 908.37,
-          "stddev_ms": 14.08,
-          "median_ms": 905.49,
-          "min_ms": 889.68,
-          "max_ms": 926.26,
-          "rss_mb": 70.8,
-          "instructions_m": 8485.1
-        },
-        "v2_2": {
-          "count": 5,
-          "mean_ms": 1351.67,
-          "stddev_ms": 648.02,
-          "median_ms": 1013.31,
-          "min_ms": 1008.94,
-          "max_ms": 2498.67,
-          "rss_mb": 69.4,
-          "instructions_m": 8577.0
-        },
-        "speedup_a_over_b": 0.67,
-        "within_1sigma_noise": true
+        "median_speedup_a_over_b": 0.99,
+        "iqrs_disjoint": false,
+        "ranges_disjoint": false
       }
     }
   ],
@@ -412,26 +726,55 @@
       "hyperfine": {
         "v2_1": {
           "count": 10,
-          "mean_ms": 47.17,
-          "stddev_ms": 2.44,
-          "median_ms": 47.01,
-          "min_ms": 44.21,
-          "max_ms": 50.7,
+          "median_ms": 47.96,
+          "q1_ms": 42.74,
+          "q3_ms": 50.65,
+          "min_ms": 40.96,
+          "max_ms": 52.01,
+          "mean_ms": 46.91,
+          "stddev_ms": 4.09,
           "rss_mb": 12.0,
-          "instructions_m": 28.4
+          "instructions_m": 28.3,
+          "samples_ms": [
+            47.47,
+            51.55,
+            43.05,
+            50.35,
+            44.23,
+            52.01,
+            41.83,
+            49.2,
+            40.96,
+            48.45
+          ]
         },
         "v2_2": {
           "count": 10,
-          "mean_ms": 7.71,
-          "stddev_ms": 1.81,
-          "median_ms": 6.59,
-          "min_ms": 6.33,
-          "max_ms": 10.63,
+          "median_ms": 7.65,
+          "q1_ms": 6.86,
+          "q3_ms": 8.2,
+          "min_ms": 5.51,
+          "max_ms": 13.82,
+          "mean_ms": 7.98,
+          "stddev_ms": 2.22,
           "rss_mb": 5.9,
-          "instructions_m": 25.6
+          "instructions_m": 25.5,
+          "samples_ms": [
+            6.92,
+            7.71,
+            6.69,
+            5.51,
+            8.14,
+            7.59,
+            6.96,
+            8.32,
+            13.82,
+            8.16
+          ]
         },
-        "speedup_a_over_b": 6.12,
-        "within_1sigma_noise": false
+        "median_speedup_a_over_b": 6.27,
+        "iqrs_disjoint": true,
+        "ranges_disjoint": true
       }
     },
     {
@@ -443,26 +786,55 @@
       "hyperfine": {
         "v2_1": {
           "count": 10,
-          "mean_ms": 10.96,
-          "stddev_ms": 3.6,
-          "median_ms": 10.1,
-          "min_ms": 6.84,
-          "max_ms": 17.19,
+          "median_ms": 7.13,
+          "q1_ms": 6.73,
+          "q3_ms": 9.2,
+          "min_ms": 6.65,
+          "max_ms": 9.84,
+          "mean_ms": 7.76,
+          "stddev_ms": 1.29,
           "rss_mb": 5.3,
-          "instructions_m": 24.4
+          "instructions_m": 23.9,
+          "samples_ms": [
+            7.87,
+            6.65,
+            7.16,
+            6.74,
+            9.03,
+            9.73,
+            7.1,
+            6.69,
+            6.78,
+            9.84
+          ]
         },
         "v2_2": {
           "count": 10,
-          "mean_ms": 9.76,
-          "stddev_ms": 6.04,
-          "median_ms": 8.48,
-          "min_ms": 6.34,
-          "max_ms": 26.67,
+          "median_ms": 8.51,
+          "q1_ms": 7.94,
+          "q3_ms": 9.49,
+          "min_ms": 7.04,
+          "max_ms": 10.92,
+          "mean_ms": 8.71,
+          "stddev_ms": 1.15,
           "rss_mb": 5.4,
-          "instructions_m": 24.1
+          "instructions_m": 23.9,
+          "samples_ms": [
+            8.4,
+            10.02,
+            9.31,
+            7.04,
+            10.92,
+            8.94,
+            8.08,
+            8.62,
+            8.23,
+            7.52
+          ]
         },
-        "speedup_a_over_b": 1.12,
-        "within_1sigma_noise": true
+        "median_speedup_a_over_b": 0.84,
+        "iqrs_disjoint": false,
+        "ranges_disjoint": false
       }
     },
     {
@@ -474,26 +846,55 @@
       "hyperfine": {
         "v2_1": {
           "count": 10,
-          "mean_ms": 57.78,
-          "stddev_ms": 12.49,
-          "median_ms": 53.75,
-          "min_ms": 44.89,
-          "max_ms": 78.31,
+          "median_ms": 45.56,
+          "q1_ms": 43.76,
+          "q3_ms": 50.39,
+          "min_ms": 41.08,
+          "max_ms": 54.03,
+          "mean_ms": 46.81,
+          "stddev_ms": 4.21,
           "rss_mb": 12.7,
-          "instructions_m": 36.0
+          "instructions_m": 35.5,
+          "samples_ms": [
+            44.5,
+            51.79,
+            41.08,
+            49.04,
+            45.32,
+            45.79,
+            54.03,
+            44.24,
+            49.93,
+            42.33
+          ]
         },
         "v2_2": {
           "count": 10,
-          "mean_ms": 7.85,
-          "stddev_ms": 0.61,
-          "median_ms": 7.86,
-          "min_ms": 7.19,
-          "max_ms": 9.37,
-          "rss_mb": 7.4,
-          "instructions_m": 39.9
+          "median_ms": 8.2,
+          "q1_ms": 7.54,
+          "q3_ms": 10.31,
+          "min_ms": 6.99,
+          "max_ms": 10.83,
+          "mean_ms": 8.64,
+          "stddev_ms": 1.43,
+          "rss_mb": 7.3,
+          "instructions_m": 39.9,
+          "samples_ms": [
+            8.18,
+            7.72,
+            7.19,
+            6.99,
+            7.66,
+            8.21,
+            8.72,
+            10.73,
+            10.83,
+            10.17
+          ]
         },
-        "speedup_a_over_b": 7.36,
-        "within_1sigma_noise": false
+        "median_speedup_a_over_b": 5.56,
+        "iqrs_disjoint": true,
+        "ranges_disjoint": true
       }
     },
     {
@@ -505,26 +906,55 @@
       "hyperfine": {
         "v2_1": {
           "count": 10,
-          "mean_ms": 54.52,
-          "stddev_ms": 9.03,
-          "median_ms": 49.99,
-          "min_ms": 46.92,
-          "max_ms": 69.93,
+          "median_ms": 46.7,
+          "q1_ms": 43.06,
+          "q3_ms": 52.32,
+          "min_ms": 41.66,
+          "max_ms": 54.55,
+          "mean_ms": 47.32,
+          "stddev_ms": 4.71,
           "rss_mb": 12.9,
-          "instructions_m": 39.8
+          "instructions_m": 39.4,
+          "samples_ms": [
+            52.5,
+            41.66,
+            52.26,
+            42.39,
+            47.51,
+            43.29,
+            49.77,
+            45.89,
+            43.36,
+            54.55
+          ]
         },
         "v2_2": {
           "count": 10,
-          "mean_ms": 9.15,
-          "stddev_ms": 0.97,
-          "median_ms": 8.81,
-          "min_ms": 8.14,
-          "max_ms": 11.15,
+          "median_ms": 9.48,
+          "q1_ms": 8.49,
+          "q3_ms": 10.93,
+          "min_ms": 7.98,
+          "max_ms": 17.23,
+          "mean_ms": 10.16,
+          "stddev_ms": 2.68,
           "rss_mb": 7.9,
-          "instructions_m": 47.5
+          "instructions_m": 47.3,
+          "samples_ms": [
+            7.98,
+            11.06,
+            8.95,
+            17.23,
+            9.53,
+            9.67,
+            9.43,
+            8.36,
+            10.89,
+            8.54
+          ]
         },
-        "speedup_a_over_b": 5.96,
-        "within_1sigma_noise": false
+        "median_speedup_a_over_b": 4.93,
+        "iqrs_disjoint": true,
+        "ranges_disjoint": true
       }
     },
     {
@@ -536,26 +966,55 @@
       "hyperfine": {
         "v2_1": {
           "count": 10,
-          "mean_ms": 51.56,
-          "stddev_ms": 12.01,
-          "median_ms": 47.86,
-          "min_ms": 43.48,
-          "max_ms": 83.54,
+          "median_ms": 45.92,
+          "q1_ms": 42.36,
+          "q3_ms": 50.79,
+          "min_ms": 41.14,
+          "max_ms": 52.5,
+          "mean_ms": 46.22,
+          "stddev_ms": 4.18,
           "rss_mb": 12.5,
-          "instructions_m": 34.4
+          "instructions_m": 34.1,
+          "samples_ms": [
+            47.11,
+            52.5,
+            45.4,
+            50.51,
+            41.9,
+            51.63,
+            42.51,
+            46.43,
+            41.14,
+            43.01
+          ]
         },
         "v2_2": {
           "count": 10,
-          "mean_ms": 7.75,
-          "stddev_ms": 0.49,
-          "median_ms": 7.59,
-          "min_ms": 7.21,
-          "max_ms": 8.88,
+          "median_ms": 8.86,
+          "q1_ms": 7.82,
+          "q3_ms": 10.0,
+          "min_ms": 7.12,
+          "max_ms": 10.71,
+          "mean_ms": 8.87,
+          "stddev_ms": 1.27,
           "rss_mb": 7.2,
-          "instructions_m": 37.5
+          "instructions_m": 37.2,
+          "samples_ms": [
+            7.12,
+            7.19,
+            9.04,
+            8.24,
+            9.35,
+            8.03,
+            8.68,
+            10.58,
+            10.71,
+            9.81
+          ]
         },
-        "speedup_a_over_b": 6.65,
-        "within_1sigma_noise": false
+        "median_speedup_a_over_b": 5.18,
+        "iqrs_disjoint": true,
+        "ranges_disjoint": true
       }
     }
   ],
@@ -568,26 +1027,92 @@
     "hyperfine": {
       "v2_1": {
         "count": 6,
-        "mean_ms": 2344.48,
-        "stddev_ms": 76.13,
-        "median_ms": 2328.06,
-        "min_ms": 2282.6,
-        "max_ms": 2489.11,
+        "median_ms": 2164.43,
+        "q1_ms": 2133.48,
+        "q3_ms": 2172.87,
+        "min_ms": 2109.76,
+        "max_ms": 2179.92,
+        "mean_ms": 2155.08,
+        "stddev_ms": 25.7,
         "rss_mb": 12.6,
-        "instructions_m": 749.6
+        "instructions_m": 736.8,
+        "samples_ms": [
+          2141.39,
+          2168.28,
+          2109.76,
+          2179.92,
+          2170.52,
+          2160.58
+        ]
       },
       "v2_2": {
         "count": 6,
-        "mean_ms": 816.53,
-        "stddev_ms": 11.01,
-        "median_ms": 815.48,
-        "min_ms": 799.91,
-        "max_ms": 831.0,
+        "median_ms": 798.36,
+        "q1_ms": 781.78,
+        "q3_ms": 807.6,
+        "min_ms": 772.8,
+        "max_ms": 812.89,
+        "mean_ms": 795.5,
+        "stddev_ms": 14.58,
         "rss_mb": 8.3,
-        "instructions_m": 324.7
+        "instructions_m": 321.2,
+        "samples_ms": [
+          772.8,
+          805.83,
+          800.27,
+          784.77,
+          812.89,
+          796.45
+        ]
       },
-      "speedup_a_over_b": 2.87,
-      "within_1sigma_noise": false
+      "median_speedup_a_over_b": 2.71,
+      "iqrs_disjoint": true,
+      "ranges_disjoint": true
+    }
+  },
+  "protobuf_git_diff_200_synthetic": {
+    "total_committed_protos": 200,
+    "imported_protos_used": 4,
+    "changes_count": 1,
+    "changes_exact_match": true,
+    "hyperfine": {
+      "v2_1": {
+        "count": 3,
+        "median_ms": 29545.58,
+        "q1_ms": 28743.77,
+        "q3_ms": 29614.67,
+        "min_ms": 28743.77,
+        "max_ms": 29614.67,
+        "mean_ms": 29301.34,
+        "stddev_ms": 484.1,
+        "rss_mb": 12.0,
+        "instructions_m": 7508.7,
+        "samples_ms": [
+          28743.77,
+          29545.58,
+          29614.67
+        ]
+      },
+      "v2_2": {
+        "count": 3,
+        "median_ms": 966.21,
+        "q1_ms": 946.29,
+        "q3_ms": 989.93,
+        "min_ms": 946.29,
+        "max_ms": 989.93,
+        "mean_ms": 967.48,
+        "stddev_ms": 21.85,
+        "rss_mb": 6.7,
+        "instructions_m": 271.2,
+        "samples_ms": [
+          989.93,
+          946.29,
+          966.21
+        ]
+      },
+      "median_speedup_a_over_b": 30.58,
+      "iqrs_disjoint": true,
+      "ranges_disjoint": true
     }
   },
   "token_calibration": [
@@ -597,15 +1122,13 @@
       "raw_chars": 1375985,
       "raw_bpe_o200k": 281146,
       "raw_chars_div_4": 343997,
-      "raw_chars_per_bpe": 4.89,
+      "raw_chars_per_o200k": 4.89,
       "full_md_bpe_o200k": 151987,
       "full_md_chars_div_4": 154266,
-      "full_md_chars_per_bpe": 4.06,
+      "full_md_chars_per_o200k": 4.06,
       "summary_bpe_o200k": 1041,
-      "summary_chars_div_4": 923,
       "focused_bpe_o200k": 1286,
-      "focused_chars_div_4": 1381,
-      "focused_vs_raw_bpe_reduction_pct": 99.5
+      "focused_vs_raw_o200k_reduction_pct": 99.5
     },
     {
       "name": "Stripe OpenAPI 3.0 (7.9 MB JSON)",
@@ -613,15 +1136,13 @@
       "raw_chars": 8316842,
       "raw_bpe_o200k": 1418244,
       "raw_chars_div_4": 2079211,
-      "raw_chars_per_bpe": 5.86,
+      "raw_chars_per_o200k": 5.86,
       "full_md_bpe_o200k": 1095911,
       "full_md_chars_div_4": 1147353,
-      "full_md_chars_per_bpe": 4.19,
+      "full_md_chars_per_o200k": 4.19,
       "summary_bpe_o200k": 4991,
-      "summary_chars_div_4": 5149,
-      "focused_bpe_o200k": 3693,
-      "focused_chars_div_4": 3834,
-      "focused_vs_raw_bpe_reduction_pct": 99.7
+      "focused_bpe_o200k": 3825,
+      "focused_vs_raw_o200k_reduction_pct": 99.7
     },
     {
       "name": "GitHub GraphQL API (1.2 MB SDL)",
@@ -629,15 +1150,13 @@
       "raw_chars": 1223834,
       "raw_bpe_o200k": 286673,
       "raw_chars_div_4": 305959,
-      "raw_chars_per_bpe": 4.27,
+      "raw_chars_per_o200k": 4.27,
       "full_md_bpe_o200k": 414860,
       "full_md_chars_div_4": 427790,
-      "full_md_chars_per_bpe": 4.12,
+      "full_md_chars_per_o200k": 4.12,
       "summary_bpe_o200k": 2236,
-      "summary_chars_div_4": 2534,
       "focused_bpe_o200k": 9902,
-      "focused_chars_div_4": 10321,
-      "focused_vs_raw_bpe_reduction_pct": 96.5
+      "focused_vs_raw_o200k_reduction_pct": 96.5
     },
     {
       "name": "SpaceX Land GraphQL (12 KB SDL)",
@@ -645,15 +1164,13 @@
       "raw_chars": 12439,
       "raw_bpe_o200k": 3672,
       "raw_chars_div_4": 3110,
-      "raw_chars_per_bpe": 3.39,
+      "raw_chars_per_o200k": 3.39,
       "full_md_bpe_o200k": 15129,
       "full_md_chars_div_4": 13556,
-      "full_md_chars_per_bpe": 3.58,
+      "full_md_chars_per_o200k": 3.58,
       "summary_bpe_o200k": 251,
-      "summary_chars_div_4": 214,
       "focused_bpe_o200k": 510,
-      "focused_chars_div_4": 495,
-      "focused_vs_raw_bpe_reduction_pct": 86.1
+      "focused_vs_raw_o200k_reduction_pct": 86.1
     },
     {
       "name": "OTel TraceService (.proto + 3 transitive)",
@@ -661,21 +1178,163 @@
       "raw_chars": 28142,
       "raw_bpe_o200k": 6696,
       "raw_chars_div_4": 7036,
-      "raw_chars_per_bpe": 4.2,
+      "raw_chars_per_o200k": 4.2,
       "full_md_bpe_o200k": 9369,
       "full_md_chars_div_4": 9359,
-      "full_md_chars_per_bpe": 4.0,
+      "full_md_chars_per_o200k": 4.0,
       "summary_bpe_o200k": 66,
-      "summary_chars_div_4": 74,
       "focused_bpe_o200k": 1393,
-      "focused_chars_div_4": 1433,
-      "focused_vs_raw_bpe_reduction_pct": 79.2
+      "focused_vs_raw_o200k_reduction_pct": 79.2
     }
   ],
   "external_baselines": {
     "oasdiff": {
       "oasdiff_version": "oasdiff version 1.39.0",
-      "cases": [
+      "openai_4_9mb_diff": {
+        "old_commit": "a01e367",
+        "new_commit": "373f26a",
+        "old_bytes": 5138860,
+        "new_bytes": 5138366,
+        "vimanam_md_bytes": 20575,
+        "vimanam_v1_json_bytes": 98511,
+        "vimanam_v2_json_bytes": 37133511,
+        "vimanam_v1_summary": {
+          "endpoints_added": 0,
+          "endpoints_removed": 0,
+          "endpoints_changed": 37,
+          "breaking": 62,
+          "non_breaking": 12,
+          "review": 62
+        },
+        "vimanam_v2_summary": {
+          "operations_added": 0,
+          "operations_removed": 0,
+          "operations_changed": 37,
+          "breaking": 62,
+          "non_breaking": 12,
+          "review": 134
+        },
+        "oasdiff_breaking_count": 20,
+        "oasdiff_changelog_count": 128,
+        "hyperfine": {
+          "oasdiff_breaking": {
+            "count": 5,
+            "median_ms": 1031.04,
+            "q1_ms": 1024.22,
+            "q3_ms": 1038.15,
+            "min_ms": 1023.44,
+            "max_ms": 1040.85,
+            "mean_ms": 1031.16,
+            "stddev_ms": 7.24,
+            "rss_mb": 483.1,
+            "instructions_m": 19569.5,
+            "samples_ms": [
+              1025.0,
+              1040.85,
+              1023.44,
+              1035.46,
+              1031.04
+            ]
+          },
+          "oasdiff_changelog": {
+            "count": 5,
+            "median_ms": 1025.91,
+            "q1_ms": 1022.55,
+            "q3_ms": 1028.57,
+            "min_ms": 1020.93,
+            "max_ms": 1030.36,
+            "mean_ms": 1025.63,
+            "stddev_ms": 3.47,
+            "rss_mb": 483.5,
+            "instructions_m": 19202.0,
+            "samples_ms": [
+              1030.36,
+              1025.91,
+              1024.17,
+              1026.77,
+              1020.93
+            ]
+          },
+          "vimanam_diff_md": {
+            "count": 5,
+            "median_ms": 271.5,
+            "q1_ms": 270.95,
+            "q3_ms": 273.64,
+            "min_ms": 270.4,
+            "max_ms": 274.9,
+            "mean_ms": 272.14,
+            "stddev_ms": 1.7,
+            "rss_mb": 110.6,
+            "instructions_m": 4018.9,
+            "samples_ms": [
+              272.39,
+              271.5,
+              271.5,
+              274.9,
+              270.4
+            ]
+          },
+          "vimanam_diff_v1_json": {
+            "count": 5,
+            "median_ms": 274.48,
+            "q1_ms": 274.01,
+            "q3_ms": 276.24,
+            "min_ms": 273.78,
+            "max_ms": 276.76,
+            "mean_ms": 275.0,
+            "stddev_ms": 1.22,
+            "rss_mb": 109.8,
+            "instructions_m": 4059.1,
+            "samples_ms": [
+              275.71,
+              274.48,
+              273.78,
+              274.25,
+              276.76
+            ]
+          },
+          "vimanam_diff_v2_json": {
+            "count": 5,
+            "median_ms": 1616.56,
+            "q1_ms": 1615.54,
+            "q3_ms": 1630.0,
+            "min_ms": 1615.13,
+            "max_ms": 1636.21,
+            "mean_ms": 1621.52,
+            "stddev_ms": 8.91,
+            "rss_mb": 313.9,
+            "instructions_m": 26462.0,
+            "samples_ms": [
+              1615.94,
+              1636.21,
+              1623.79,
+              1616.56,
+              1615.13
+            ]
+          }
+        }
+      },
+      "stripe_7_9mb_probe": {
+        "old_commit": "2f8d147",
+        "new_commit": "5237fa0",
+        "old_bytes": 8317513,
+        "new_bytes": 8317513,
+        "timeout_s": 15,
+        "oasdiff_breaking": {
+          "status": "ok",
+          "wall_ms": 1145.6,
+          "stdout_bytes": 3
+        },
+        "vimanam_diff_md": {
+          "status": "timeout_15s",
+          "issue": "#152"
+        },
+        "vimanam_diff_v2_json": {
+          "status": "timeout_15s",
+          "issue": "#152"
+        }
+      },
+      "smoke_matrix": [
         {
           "case": "Endpoint removed (POST /v1/items)",
           "vimanam_breaking": true,
@@ -713,7 +1372,7 @@
           "verdict_match": true
         },
         {
-          "case": "Response property removed",
+          "case": "Response property removed (optional)",
           "vimanam_breaking": true,
           "vimanam_kinds": [
             "field_removed"
@@ -744,50 +1403,61 @@
           ],
           "verdict_match": true
         }
-      ],
-      "fixture_speed": {},
-      "fixture_oas3": {
-        "vimanam_exit": 3,
-        "vimanam_summary": {
-          "operations_added": 1,
-          "operations_removed": 1,
-          "operations_changed": 4,
-          "breaking": 4,
-          "non_breaking": 8,
-          "review": 4
-        },
-        "oasdiff_exit": 1,
-        "oasdiff_breaking_count": 1,
-        "oasdiff_total_flagged": 1,
-        "hyperfine": {
-          "oasdiff": {
-            "count": 10,
-            "mean_ms": 16.67,
-            "stddev_ms": 2.13,
-            "median_ms": 16.41,
-            "min_ms": 13.58,
-            "max_ms": 22.05,
-            "rss_mb": 24.1,
-            "instructions_m": 123.3
-          },
-          "vimanam_2_2": {
-            "count": 10,
-            "mean_ms": 12.68,
-            "stddev_ms": 3.79,
-            "median_ms": 11.43,
-            "min_ms": 8.55,
-            "max_ms": 18.71,
-            "rss_mb": 5.2,
-            "instructions_m": 57.0
-          },
-          "speedup_a_over_b": 1.31,
-          "within_1sigma_noise": true
-        }
-      }
+      ]
     },
     "buf": {
       "buf_version": "1.75.0",
-      "cases": [
+      "otel_git_ref_comparison": {
+        "old_commit": "40cb2e5",
+        "new_commit": "d31f7ac",
+        "scope_note": "buf breaking checks all 11 .proto files in the OTel module using go-git in-process; vimanam diff checks trace_service.proto plus its 3 transitive imports (4 files) via git subprocess blob resolution.",
+        "hyperfine": {
+          "buf_breaking_git": {
+            "count": 6,
+            "median_ms": 299.11,
+            "q1_ms": 293.44,
+            "q3_ms": 302.82,
+            "min_ms": 279.15,
+            "max_ms": 309.77,
+            "mean_ms": 297.64,
+            "stddev_ms": 10.03,
+            "rss_mb": 57.3,
+            "instructions_m": 1123.2,
+            "samples_ms": [
+              298.47,
+              299.74,
+              298.2,
+              300.5,
+              279.15,
+              309.77
+            ]
+          },
+          "vimanam_git_diff_trace": {
+            "count": 6,
+            "median_ms": 1012.42,
+            "q1_ms": 994.22,
+            "q3_ms": 1046.37,
+            "min_ms": 980.63,
+            "max_ms": 1047.24,
+            "mean_ms": 1016.26,
+            "stddev_ms": 26.47,
+            "rss_mb": 8.6,
+            "instructions_m": 393.9,
+            "samples_ms": [
+              980.63,
+              998.75,
+              1047.24,
+              1017.39,
+              1046.08,
+              1007.44
+            ]
+          },
+          "median_speedup_a_over_b": 0.3,
+          "iqrs_disjoint": true,
+          "ranges_disjoint": true
+        }
+      },
+      "smoke_matrix": [
         {
           "case": "Field type changed (int32 -> string)",
           "vimanam_wire_breaking": true,
@@ -903,62 +1573,381 @@
           ],
           "buf_file_rules": []
         }
-      ],
-      "health_speed": {
-        "buf_breaking": {
-          "count": 10,
-          "mean_ms": 39.67,
-          "stddev_ms": 4.46,
-          "median_ms": 38.73,
-          "min_ms": 34.3,
-          "max_ms": 48.53,
-          "rss_mb": 49.4,
-          "instructions_m": 434.8
+      ]
+    },
+    "graphql_inspector": {
+      "graphql_inspector_version": "graphql-inspector 7.0.8",
+      "spacex_land": {
+        "vimanam_summary": {
+          "operations_added": 0,
+          "operations_removed": 4,
+          "operations_changed": 0,
+          "breaking": 8,
+          "non_breaking": 1,
+          "review": 0
         },
-        "vimanam_2_2": {
-          "count": 10,
-          "mean_ms": 10.33,
-          "stddev_ms": 2.35,
-          "median_ms": 10.8,
-          "min_ms": 7.66,
-          "max_ms": 14.11,
-          "rss_mb": 6.2,
-          "instructions_m": 39.2
+        "vimanam_changes": 9,
+        "graphql_inspector_exit": 1,
+        "graphql_inspector_total_changes": 9,
+        "graphql_inspector_breaking": 8,
+        "hyperfine": {
+          "graphql_inspector": {
+            "count": 8,
+            "median_ms": 257.05,
+            "q1_ms": 254.55,
+            "q3_ms": 260.98,
+            "min_ms": 253.1,
+            "max_ms": 266.41,
+            "mean_ms": 258.14,
+            "stddev_ms": 4.49,
+            "rss_mb": 120.0,
+            "instructions_m": 3520.5,
+            "samples_ms": [
+              254.29,
+              255.34,
+              266.41,
+              253.1,
+              260.96,
+              260.99,
+              255.32,
+              258.76
+            ]
+          },
+          "vimanam_2_2": {
+            "count": 8,
+            "median_ms": 29.02,
+            "q1_ms": 25.72,
+            "q3_ms": 33.67,
+            "min_ms": 25.19,
+            "max_ms": 34.52,
+            "mean_ms": 29.45,
+            "stddev_ms": 3.8,
+            "rss_mb": 6.8,
+            "instructions_m": 354.0,
+            "samples_ms": [
+              34.19,
+              34.52,
+              32.13,
+              25.86,
+              25.19,
+              25.68,
+              29.09,
+              28.95
+            ]
+          },
+          "median_speedup_a_over_b": 8.86,
+          "iqrs_disjoint": true,
+          "ranges_disjoint": true
+        }
+      },
+      "github_5_0mb_introspection_json": {
+        "old_commit": "a6de3c1",
+        "new_commit": "597478f",
+        "old_bytes": 4967369,
+        "new_bytes": 4970156,
+        "vimanam_md_bytes": 212,
+        "vimanam_json_bytes": 17108851,
+        "vimanam_summary": {
+          "operations_added": 0,
+          "operations_removed": 0,
+          "operations_changed": 0,
+          "breaking": 0,
+          "non_breaking": 1,
+          "review": 0
         },
-        "speedup_a_over_b": 3.84,
-        "within_1sigma_noise": false,
-        "note": "buf breaking exits 100 on health-v1.0.0 -> v1.20.0 due to added go_package/java_* file options under FILE category; vimanam classifies file-option additions as review."
-      }
-    }
-  },
-  "protobuf_git_diff_200_synthetic": {
-    "total_committed_protos": 200,
-    "imported_protos_used": 4,
-    "changes_count": 1,
-    "changes_exact_match": true,
-    "hyperfine": {
-      "v2_1": {
-        "count": 3,
-        "mean_ms": 30566.93,
-        "stddev_ms": 484.86,
-        "median_ms": 30650.55,
-        "min_ms": 30045.7,
-        "max_ms": 31004.54,
-        "rss_mb": 12.0,
-        "instructions_m": 7718.7
+        "vimanam_changes": 1,
+        "graphql_inspector_exit": 0,
+        "graphql_inspector_total_changes": 1,
+        "graphql_inspector_breaking": 0,
+        "hyperfine": {
+          "graphql_inspector": {
+            "count": 5,
+            "median_ms": 386.33,
+            "q1_ms": 383.01,
+            "q3_ms": 390.38,
+            "min_ms": 380.45,
+            "max_ms": 392.22,
+            "mean_ms": 386.62,
+            "stddev_ms": 4.31,
+            "rss_mb": 200.0,
+            "instructions_m": 6663.2,
+            "samples_ms": [
+              385.57,
+              388.53,
+              380.45,
+              392.22,
+              386.33
+            ]
+          },
+          "vimanam_2_2_md": {
+            "count": 5,
+            "median_ms": 236.57,
+            "q1_ms": 232.7,
+            "q3_ms": 237.59,
+            "min_ms": 229.88,
+            "max_ms": 237.92,
+            "mean_ms": 235.43,
+            "stddev_ms": 3.23,
+            "rss_mb": 69.7,
+            "instructions_m": 3709.6,
+            "samples_ms": [
+              237.92,
+              229.88,
+              237.27,
+              235.52,
+              236.57
+            ]
+          },
+          "vimanam_2_2_json": {
+            "count": 5,
+            "median_ms": 512.22,
+            "q1_ms": 511.9,
+            "q3_ms": 533.76,
+            "min_ms": 511.68,
+            "max_ms": 552.64,
+            "mean_ms": 520.71,
+            "stddev_ms": 17.89,
+            "rss_mb": 69.7,
+            "instructions_m": 8405.5,
+            "samples_ms": [
+              512.22,
+              511.68,
+              512.12,
+              514.88,
+              552.64
+            ]
+          }
+        }
       },
-      "v2_2": {
-        "count": 3,
-        "mean_ms": 983.08,
-        "stddev_ms": 28.37,
-        "median_ms": 997.31,
-        "min_ms": 950.42,
-        "max_ms": 1001.52,
-        "rss_mb": 6.7,
-        "instructions_m": 274.2
+      "github_1_2mb_sdl_probe": {
+        "old_commit": "a6de3c1",
+        "new_commit": "597478f",
+        "old_bytes": 1177658,
+        "new_bytes": 1223842,
+        "graphql_inspector_exit": 1,
+        "graphql_inspector_error": "Error: Field \"EnterpriseOwnerInfo.repositoryDeployKeySetting\" can only be defined once.",
+        "vimanam_md_ms": 165.9,
+        "vimanam_md_bytes": 53145,
+        "vimanam_json_ms": 389.5,
+        "vimanam_json_bytes": 17445888,
+        "vimanam_summary": {
+          "operations_added": 8,
+          "operations_removed": 2,
+          "operations_changed": 17,
+          "breaking": 11,
+          "non_breaking": 204,
+          "review": 17
+        },
+        "vimanam_changes": 232
       },
-      "speedup_a_over_b": 31.09,
-      "within_1sigma_noise": false
+      "smoke_matrix": [
+        {
+          "case": "Output field removed (User.name)",
+          "vimanam_severities": [
+            "breaking"
+          ],
+          "vimanam_breaking": true,
+          "graphql_inspector_breaking": true,
+          "graphql_inspector_dangerous": false,
+          "breaking_verdict_match": true
+        },
+        {
+          "case": "Output field made nullable (User.name)",
+          "vimanam_severities": [
+            "breaking"
+          ],
+          "vimanam_breaking": true,
+          "graphql_inspector_breaking": true,
+          "graphql_inspector_dangerous": false,
+          "breaking_verdict_match": true
+        },
+        {
+          "case": "Required argument added (Query.user)",
+          "vimanam_severities": [
+            "breaking"
+          ],
+          "vimanam_breaking": true,
+          "graphql_inspector_breaking": true,
+          "graphql_inspector_dangerous": false,
+          "breaking_verdict_match": true
+        },
+        {
+          "case": "Optional argument added (Query.user)",
+          "vimanam_severities": [
+            "non_breaking"
+          ],
+          "vimanam_breaking": false,
+          "graphql_inspector_breaking": false,
+          "graphql_inspector_dangerous": false,
+          "breaking_verdict_match": true
+        },
+        {
+          "case": "Input field made non-null without default",
+          "vimanam_severities": [
+            "breaking"
+          ],
+          "vimanam_breaking": true,
+          "graphql_inspector_breaking": true,
+          "graphql_inspector_dangerous": false,
+          "breaking_verdict_match": true
+        },
+        {
+          "case": "Output enum value added (Role.AUDITOR)",
+          "vimanam_severities": [
+            "review"
+          ],
+          "vimanam_breaking": false,
+          "graphql_inspector_breaking": false,
+          "graphql_inspector_dangerous": true,
+          "breaking_verdict_match": true
+        },
+        {
+          "case": "Input default value changed (limit: 10 -> 20)",
+          "vimanam_severities": [
+            "review"
+          ],
+          "vimanam_breaking": false,
+          "graphql_inspector_breaking": false,
+          "graphql_inspector_dangerous": true,
+          "breaking_verdict_match": true
+        },
+        {
+          "case": "List field converted to Relay connection",
+          "vimanam_severities": [
+            "breaking",
+            "non_breaking"
+          ],
+          "vimanam_breaking": true,
+          "graphql_inspector_breaking": true,
+          "graphql_inspector_dangerous": false,
+          "breaking_verdict_match": true
+        }
+      ]
+    },
+    "protoc_gen_doc": {
+      "protoc_gen_doc_version": "protoc-gen-doc version 1.5.1",
+      "targets": [
+        {
+          "name": "gRPC Health v1.20.0 (.proto)",
+          "protoc_gen_doc_bytes": 5351,
+          "protoc_gen_doc_bpe_o200k": 1409,
+          "vimanam_bytes": 4717,
+          "vimanam_bpe_o200k": 1126,
+          "hyperfine": {
+            "protoc_gen_doc": {
+              "count": 10,
+              "median_ms": 49.58,
+              "q1_ms": 48.21,
+              "q3_ms": 52.07,
+              "min_ms": 44.32,
+              "max_ms": 55.19,
+              "mean_ms": 49.91,
+              "stddev_ms": 3.02,
+              "rss_mb": 13.8,
+              "instructions_m": 352.2,
+              "samples_ms": [
+                55.19,
+                44.32,
+                48.55,
+                48.96,
+                52.48,
+                47.7,
+                51.41,
+                48.38,
+                51.93,
+                50.21
+              ]
+            },
+            "vimanam_2_2": {
+              "count": 10,
+              "median_ms": 6.77,
+              "q1_ms": 6.46,
+              "q3_ms": 10.31,
+              "min_ms": 6.34,
+              "max_ms": 12.01,
+              "mean_ms": 8.05,
+              "stddev_ms": 2.16,
+              "rss_mb": 5.9,
+              "instructions_m": 26.0,
+              "samples_ms": [
+                6.43,
+                6.34,
+                6.47,
+                10.99,
+                6.66,
+                6.6,
+                6.87,
+                8.03,
+                10.08,
+                12.01
+              ]
+            },
+            "median_speedup_a_over_b": 7.32,
+            "iqrs_disjoint": true,
+            "ranges_disjoint": true
+          }
+        },
+        {
+          "name": "OTel Collector TraceService (+ 3 transitive protos)",
+          "protoc_gen_doc_bytes": 32362,
+          "protoc_gen_doc_bpe_o200k": 8215,
+          "vimanam_bytes": 37438,
+          "vimanam_bpe_o200k": 9369,
+          "hyperfine": {
+            "protoc_gen_doc": {
+              "count": 10,
+              "median_ms": 49.92,
+              "q1_ms": 48.58,
+              "q3_ms": 53.4,
+              "min_ms": 48.23,
+              "max_ms": 58.79,
+              "mean_ms": 51.3,
+              "stddev_ms": 3.39,
+              "rss_mb": 14.7,
+              "instructions_m": 363.4,
+              "samples_ms": [
+                58.79,
+                49.11,
+                53.28,
+                48.23,
+                50.22,
+                48.27,
+                53.0,
+                48.68,
+                53.77,
+                49.63
+              ]
+            },
+            "vimanam_2_2": {
+              "count": 10,
+              "median_ms": 7.98,
+              "q1_ms": 7.49,
+              "q3_ms": 8.75,
+              "min_ms": 7.37,
+              "max_ms": 13.7,
+              "mean_ms": 8.65,
+              "stddev_ms": 1.95,
+              "rss_mb": 7.4,
+              "instructions_m": 39.3,
+              "samples_ms": [
+                10.19,
+                13.7,
+                8.27,
+                7.94,
+                8.2,
+                7.37,
+                7.41,
+                8.02,
+                7.51,
+                7.87
+              ]
+            },
+            "median_speedup_a_over_b": 6.26,
+            "iqrs_disjoint": true,
+            "ranges_disjoint": true
+          }
+        }
+      ]
     }
   }
 }

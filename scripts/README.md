@@ -102,11 +102,11 @@ sample ranges, and these measurements are not a promise for other repositories.
 
 Reproducible public evaluation scripts backing the [Benchmarks & v2.2 analysis](https://noemaforge.github.io/vimanam/benchmarks/) page. Both use only public open-source specifications (Stripe OpenAPI, OpenAI OpenAPI, GitHub GraphQL, SpaceX Land GraphQL, OpenTelemetry Proto, and gRPC Health) and checked-in raw captures:
 
-- `scripts/benchmark-public.py` → `scripts/benchmark-v22-results.json`: runs `hyperfine 2.0.0` (`mean`, `stddev`, `median`, `min`, `max`, peak RSS, CPU instructions, plus a 1σ overlap check), compares `tiktoken` (`o200k_base`) BPE tokens against Vimanam's `chars / 4` estimate, benchmarks a generated 200-file `.proto` Git repo (`git fast-import`), and compares diff verdicts and timing against `oasdiff` and `buf breaking`.
-- `scripts/eval-context-accuracy.py` → `scripts/eval-context-accuracy-results.json`: runs a 10-task, 4-condition (`no_spec`, `summary`, `raw_spec`, `focused_slice`) deterministic programmatic-grading evaluation on the same model (`claude-haiku-5-5`, zero tools, isolated system prompt), recording exact API token counts, `o200k_base` BPE tokens, latency, USD cost, and per-assertion pass/fail.
+- `scripts/benchmark-public.py` → `scripts/benchmark-v22-results.json`: runs `hyperfine 2.0.0` (`median`, Q1–Q3 `IQR`, `min`, `max`, `mean`, `stddev`, peak RSS, CPU instructions, raw `samples_ms`, and disjoint-IQR checks), compares `tiktoken` (`o200k_base`) BPE tokens against Vimanam's `chars / 4` estimate, benchmarks a generated 200-file `.proto` Git repo (`git fast-import`), and compares diff verdicts and timing against `oasdiff`, `buf breaking`, `graphql-inspector`, and `protoc-gen-doc`.
+- `scripts/eval-context-accuracy.py` → `scripts/eval-context-accuracy-results.json`: runs a repeated-trial (`--trials 3`), 10-task, 5-condition (`no_spec`, `summary`, `routed_e2e`, `oracle_slice`, `raw_spec`) deterministic programmatic-grading evaluation on `claude-haiku-5-5` (zero tools, isolated system prompt), separating the 8 fitting specs from the 2 Stripe 7.9 MB tasks (`not_attempted` raw) and recording Claude API context tokens alongside `o200k_base` BPE tokens and `chars / 4`.
 
 ```bash
-# Re-run public performance, BPE calibration, and oasdiff/buf baselines
+# Re-run public performance, BPE calibration, and 4 external baselines
 uv run --with tiktoken python3 scripts/benchmark-public.py \
   --v21 /tmp/vimanam-v2.1.0/target/release/vimanam \
   --v22 target/release/vimanam \
@@ -114,11 +114,13 @@ uv run --with tiktoken python3 scripts/benchmark-public.py \
   --runs 10 \
   --output scripts/benchmark-v22-results.json
 
-# Re-run the 10-task LLM context-accuracy evaluation
+# Re-run the 3-trial end-to-end routed + oracle LLM evaluation
 uv run --with tiktoken python3 scripts/eval-context-accuracy.py \
   --v22 target/release/vimanam \
   --corpus /tmp/vimanam-eval-corpus \
   --model haiku \
+  --trials 3 \
+  --workers 3 \
   --output scripts/eval-context-accuracy-results.json
 ```
 
