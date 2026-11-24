@@ -172,7 +172,9 @@ fn schema_depth_bounds_deferred_graph_and_reports_retrieval() {
         .stdout(predicate::str::contains(
             "Omitted nested expansion at schema depth 3",
         ))
-        .stdout(predicate::str::contains("--schema 'Tag' --no-report"))
+        .stdout(predicate::str::contains(
+            "--schema 'Tag' --schema-depth 3 --no-report",
+        ))
         .stderr(predicate::str::contains("omitted nested schema expansion"));
 }
 
@@ -227,10 +229,10 @@ fn schema_depth_field_selector_retrieval_uses_same_schema_field() {
         .assert()
         .success()
         .stdout(predicate::str::contains(
-            "--schema-field 'Root#/properties/selected' --no-report",
+            "--schema-field 'Root#/properties/selected' --schema-depth 2 --no-report",
         ))
         .stderr(predicate::str::contains(
-            "--schema-field 'Root#/properties/selected' --no-report",
+            "--schema-field 'Root#/properties/selected' --schema-depth 2 --no-report",
         ));
 }
 
@@ -298,7 +300,7 @@ fn request_schema_skips_schema_less_media_type() {
             "must not skip the JSON body when octet-stream is first: {text}"
         );
         assert!(
-            text.contains("| `request.name` | string | Yes | File name |"),
+            text.contains("| `name` | string | Yes | File name |"),
             "JSON request schema table missing: {text}"
         );
     };
@@ -435,7 +437,7 @@ fn schema_depth_cutoff_links_shared_schema_discovered_by_later_endpoint() {
         })
         .expect("Early section before Late");
     assert!(
-        early.contains("| `response.l1.l2.hop` | [Shared](#schema-shared) |"),
+        early.contains("| `l1.l2.hop` | [Shared](#schema-shared) |"),
         "Early cutoff must link to Shared discovered via Late: {early}"
     );
     assert!(text.contains("### Shared {#schema-shared}"), "{text}");
@@ -477,7 +479,7 @@ fn schema_depth_inline_cutoff_stays_plain_ref_without_schema_link() {
         })
         .expect("Early section before Late");
     assert!(
-        early.contains("| `response.l1.l2.hop` | ref Shared |"),
+        early.contains("| `l1.l2.hop` | ref Shared |"),
         "inline cutoff must stay a plain ref: {early}"
     );
     assert!(
@@ -563,9 +565,7 @@ fn schema_depth_ignores_schemas_reachable_only_via_non_2xx() {
         ])
         .assert()
         .success()
-        .stdout(predicate::str::contains(
-            "| `response.l1.l2.hop` | ref ErrorOnly |",
-        ))
+        .stdout(predicate::str::contains("| `l1.l2.hop` | ref ErrorOnly |"))
         .stdout(predicate::str::contains("### ErrorOnly").not())
         .stdout(predicate::str::contains("[ErrorOnly]").not());
 }
@@ -820,5 +820,213 @@ fn schema_depth_stats_estimate_matches_real_render() {
             .parse::<usize>()
             .unwrap(),
         tokens
+    );
+}
+
+/// A cyclic component graph larger than the auto-depth threshold (#160): every
+/// `NodeN` links the next node, the first node and (through an inline object)
+/// the node after next, so any root reaches all of them.
+fn large_cyclic_spec() -> serde_json::Value {
+    const NODES: usize = 210;
+    let mut schemas = serde_json::Map::new();
+    for i in 0..NODES {
+        schemas.insert(
+            format!("Node{i}"),
+            serde_json::json!({
+                "type": "object",
+                "description": format!("Node {i}"),
+                "required": ["name"],
+                "properties": {
+                    "name": {"type": "string"},
+                    "next": {"$ref": format!("#/components/schemas/Node{}", (i + 1) % NODES)},
+                    "first": {"$ref": "#/components/schemas/Node0"},
+                    "meta": {
+                        "type": "object",
+                        "properties": {
+                            "owner": {"$ref": format!("#/components/schemas/Node{}", (i + 2) % NODES)}
+                        }
+                    }
+                }
+            }),
+        );
+    }
+    serde_json::json!({
+        "openapi": "3.0.3",
+        "info": {"title": "Graph", "version": "1.0.0"},
+        "paths": {
+            "/nodes": {
+                "post": {
+                    "operationId": "CreateNode",
+                    "tags": ["Nodes"],
+                    "requestBody": {"content": {"application/json": {"schema": {
+                        "type": "object",
+                        "required": ["label"],
+                        "properties": {
+                            "label": {"type": "string", "description": "Display label"},
+                            "node": {"$ref": "#/components/schemas/Node1"}
+                        }
+                    }}}},
+                    "responses": {"201": {"description": "Created", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Node0"}}}}}
+                }
+            },
+            "/small": {
+                "get": {
+                    "operationId": "GetSmall",
+                    "tags": ["Nodes"],
+                    "responses": {"200": {"description": "OK", "content": {"application/json": {"schema": {
+                        "type": "object",
+                        "properties": {"id": {"type": "string"}}
+                    }}}}}
+                }
+            }
+        },
+        "components": {"schemas": schemas}
+    })
+}
+
+fn run_output(args: &[&str]) -> (String, String) {
+    let output = vimanam().args(args).output().unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    (
+        String::from_utf8(output.stdout).unwrap(),
+        String::from_utf8(output.stderr).unwrap(),
+    )
+}
+
+const AUTO_DEPTH_NOTICE: &str = "vimanam: selection reaches more than 200 component schemas and --schema-depth is not set; bounding schema expansion at --schema-depth 2 (pass --schema-depth 0..=24 to choose)";
+
+#[test]
+fn standalone_schema_on_large_cyclic_graph_is_bounded_by_default() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = write_spec(&dir, "graph.json", &large_cyclic_spec());
+    let (stdout, stderr) = run_output(&[&path, "--schema", "Node0", "--no-report"]);
+    assert_eq!(
+        stderr.lines().next(),
+        Some(AUTO_DEPTH_NOTICE),
+        "notice first: {stderr}"
+    );
+    assert!(stdout.contains("Omitted nested expansion at schema depth 2"));
+    // Followed hints stay bounded: a re-rooted `$ref` carries the active depth.
+    assert!(
+        stdout.contains("--schema 'Node2' --schema-depth 2 --no-report"),
+        "{stdout}"
+    );
+    assert!(
+        !stdout.contains("### Node50 "),
+        "graph must not be expanded"
+    );
+    assert!(
+        stdout.contains("it reaches more than 200 component schemas, so expansion is bounded at --schema-depth 2 unless --schema-depth is passed"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.len() < 20_000,
+        "bounded read is small: {}",
+        stdout.len()
+    );
+
+    // An explicit depth is honoured as given, without the notice.
+    let (_, explicit) = run_output(&[
+        &path,
+        "--schema",
+        "Node0",
+        "--schema-depth",
+        "3",
+        "--no-report",
+    ]);
+    assert!(
+        !explicit.contains("bounding schema expansion"),
+        "{explicit}"
+    );
+}
+
+#[test]
+fn operation_slice_on_large_cyclic_graph_is_bounded_but_whole_document_is_not() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = write_spec(&dir, "graph.json", &large_cyclic_spec());
+    let (stdout, stderr) = run_output(&[
+        &path,
+        "--operation-id",
+        "CreateNode",
+        "--detail",
+        "full",
+        "--include-schemas",
+        "--no-report",
+    ]);
+    assert_eq!(stderr.lines().next(), Some(AUTO_DEPTH_NOTICE), "{stderr}");
+    assert!(!stdout.contains("### Node50 "), "{stdout}");
+    // #156: body fields render as bare JSON property names.
+    assert!(
+        stdout.contains("| `(request body)` | object | - | - |"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("| `label` | string | Yes | Display label |"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("| `(response body)` | [Node0](#schema-node0) | - | Node 0 |"),
+        "{stdout}"
+    );
+    assert!(!stdout.contains("`request."), "{stdout}");
+    assert!(!stdout.contains("`response."), "{stdout}");
+
+    // A slice whose graph is small is untouched.
+    let (_, small) = run_output(&[
+        &path,
+        "--operation-id",
+        "GetSmall",
+        "--detail",
+        "full",
+        "--include-schemas",
+        "--no-report",
+    ]);
+    assert!(small.is_empty(), "{small}");
+
+    // The whole document already renders each component once: no bound.
+    let (whole, whole_err) = run_output(&[
+        &path,
+        "--detail",
+        "full",
+        "--include-schemas",
+        "--no-report",
+    ]);
+    assert!(whole_err.is_empty(), "{whole_err}");
+    assert!(whole.contains("### Node209 {#schema-node209}"));
+}
+
+#[test]
+fn small_schema_selection_is_not_auto_bounded() {
+    let (stdout, stderr) = run_output(&[SCHEMA_SELECTION, "--schema", "Root", "--no-report"]);
+    assert!(!stderr.contains("bounding schema expansion"), "{stderr}");
+    assert!(stdout.contains("Retrieve the complete named schema without selection/depth limits"));
+}
+
+// #161: one stderr line per retrieval command, not one per truncated field.
+#[test]
+fn omission_notices_are_grouped_by_retrieval_command() {
+    let (_, stderr) = run_output(&[
+        SCHEMA_SELECTION,
+        "--operation-id",
+        "GetRoot",
+        "--detail",
+        "full",
+        "--include-schemas",
+        "--schema-depth",
+        "3",
+        "--no-report",
+    ]);
+    let source = "vimanam 'tests/fixtures/schema_selection_oas3.json'";
+    assert_eq!(
+        stderr,
+        format!(
+            "vimanam: omitted nested schema expansion at depth 3 for 3 fields (Root.selected[], Root.choice.oneOf[1], Root.map.*); retrieve full detail: {source} --schema 'Tag' --schema-depth 3 --no-report\n\
+             vimanam: omitted nested schema expansion at depth 3 for 2 fields (Root.deep.hop, Shared); retrieve full detail: {source} --schema 'Shared' --schema-depth 3 --no-report\n\
+             vimanam: omitted nested schema expansion at depth 3 for Unrelated; retrieve full detail: {source} --schema 'Unrelated' --schema-depth 3 --no-report\n"
+        )
     );
 }

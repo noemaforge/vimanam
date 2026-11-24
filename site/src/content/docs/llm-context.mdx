@@ -96,7 +96,13 @@ vimanam openapi.yaml \
   --detail full --include-schemas --schema-depth 2 --no-report
 ```
 
-Every truncated branch preserves its field type and requiredness and prints the exact `--schema` or `--schema-field` command needed to inspect deeper fields. Without `--schema` or `--schema-field`, `--schema-depth` requires `--detail full --include-schemas`.
+Every truncated branch preserves its field type and requiredness and prints the exact `--schema`, `--schema-field`, or operation command needed to inspect deeper fields. Those commands carry a bounded `--schema-depth` too: a linked schema is re-rooted at the same depth, and a re-render of the same root goes that many levels past the cutoff, so following a hint never triggers an unbounded expansion. On stderr, truncated fields that share a retrieval command are summarized on one line (`... at depth 2 for 89 fields (amount_details.discount_amount, ...); retrieve full detail: ...`). Without `--schema` or `--schema-field`, `--schema-depth` requires `--detail full --include-schemas`.
+
+### Default bound for large component graphs
+
+When `--schema-depth` is omitted, a selected slice (standalone `--schema` / `--schema-field`, or `--operation` / `--operation-id` with `--detail full --include-schemas`) whose roots transitively reach more than 200 component schemas is bounded at `--schema-depth 2`, and stderr says so. Highly connected specs hit this: Stripe's `customer` schema and GitHub's GraphQL `createIssue` reach 830–920 components and rendered 1.2–1.4 MB unbounded, against roughly 4–18 KB at depth 2. Smaller graphs, whole-document renders, and any explicit `--schema-depth` are unchanged; pass `--schema-depth N` (up to 24) to choose a different bound.
+
+Inline request and response tables label their root row `(request body)` / `(response body)` and list body fields by their real JSON paths (`input_file_id`, `metadata.key`, `tags[]`), so the names can be copied straight into a request.
 
 ## Step detail down with `--max-tokens`
 

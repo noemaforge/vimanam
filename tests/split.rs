@@ -874,7 +874,7 @@ fn schema_depth_split_does_not_emit_non_2xx_only_schemas() {
         .find(|text| text.contains("### GetItem") || text.contains("# GetItem"))
         .expect("endpoint detail");
     assert!(
-        detail.contains("| ` response.l1.l2.hop ` | ref ErrorOnly |"),
+        detail.contains("| ` l1.l2.hop ` | ref ErrorOnly |"),
         "cutoff must stay an unlinked ref: {detail}"
     );
     assert!(

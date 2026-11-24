@@ -42,4 +42,4 @@
 | Duplicate operationIds | 0 | 0 | 0 |
 | Parameters without description | 0 | 0 | 0 |
 
-Token estimate (--detail full --include-schemas): 993 → 1140 (+147)
+Token estimate (--detail full --include-schemas): 1000 → 1147 (+147)

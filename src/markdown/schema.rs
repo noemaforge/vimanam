@@ -21,6 +21,141 @@ use crate::models::{
 };
 use crate::utils::{clean_for_id, decode_json_pointer_token, resolve_schema_reference};
 
+/// Root-row label of an operation's request body table. Body roots are
+/// synthetic: their child rows carry bare JSON property paths (`name`,
+/// `category.id`) rather than a `request.` prefix an agent could mistake for a
+/// real body field (#156). The parenthesised label cannot collide with a
+/// property, argument or component name.
+pub(super) const REQUEST_BODY_LABEL: &str = "(request body)";
+/// Root-row label of an operation's success response table (see
+/// [`REQUEST_BODY_LABEL`]).
+pub(super) const RESPONSE_BODY_LABEL: &str = "(response body)";
+
+fn is_body_label(label: &str) -> bool {
+    label == REQUEST_BODY_LABEL || label == RESPONSE_BODY_LABEL
+}
+
+/// `--schema-depth` applied to a selected slice (standalone `--schema` /
+/// `--schema-field`, or `--operation`/`--operation-id` with `--detail full
+/// --include-schemas`) when none is given and its component graph is large
+/// (#160). Measured on pinned Stripe/GitHub specs, depth 2 keeps a slice in the
+/// low tens of KB where unbounded expansion reached 1.2-1.4 MB.
+pub(crate) const AUTO_SCHEMA_DEPTH: usize = 2;
+/// A selection whose roots reach more distinct component schemas than this
+/// (transitively, through `$ref`) is bounded at [`AUTO_SCHEMA_DEPTH`] unless
+/// `--schema-depth` is passed. Graphs split sharply in practice: the Stripe
+/// and GitHub GraphQL slices behind #160 reach 830-920 components (1.2-1.4 MB
+/// unbounded), while the largest operations of a 3 MB protobuf-generated spec
+/// reach at most ~150 (under 120 KB). Graphs at or below the threshold render
+/// exactly as before.
+pub(crate) const AUTO_SCHEMA_DEPTH_THRESHOLD: usize = 200;
+
+/// Distinct component schemas transitively reachable from `roots` through
+/// `$ref`s (properties, items, additionalProperties and compositions), counted
+/// up to `cap + 1` so a huge graph stops early. Deterministic: a set size.
+pub(crate) fn reachable_component_count<'a>(
+    doc: &'a ApiDocumentation,
+    roots: impl IntoIterator<Item = &'a Schema>,
+    cap: usize,
+) -> usize {
+    let mut seen: HashSet<&'a str> = HashSet::new();
+    let mut stack: Vec<&'a Schema> = roots.into_iter().collect();
+    while let Some(schema) = stack.pop() {
+        if let Some(reference) = schema.reference.as_deref() {
+            if seen.len() <= cap
+                && seen.insert(reference)
+                && let Some(resolved) = resolve_schema_reference(reference, doc)
+            {
+                stack.push(resolved);
+            }
+            continue;
+        }
+        if seen.len() > cap {
+            break;
+        }
+        if let Some(properties) = &schema.properties {
+            stack.extend(properties.values());
+        }
+        if let Some(items) = schema.items.as_deref() {
+            stack.push(items);
+        }
+        if let Some(AdditionalProperties::Schema(child)) = &schema.additional_properties {
+            stack.push(child);
+        }
+        for variants in [&schema.all_of, &schema.one_of, &schema.any_of]
+            .into_iter()
+            .flatten()
+        {
+            stack.extend(variants);
+        }
+    }
+    seen.len().min(cap + 1)
+}
+
+/// One depth-limited row whose nested expansion was omitted.
+#[derive(Debug, Clone)]
+pub(super) struct Omission {
+    depth: usize,
+    field: String,
+    command: String,
+}
+
+/// Collapses omission notices into one stderr line per retrieval command, in
+/// first-seen order (#161). A single field keeps the original one-line form;
+/// several fields sharing a command report their count, depth range and the
+/// first few field paths.
+pub(super) fn summarize_omissions(omissions: Vec<Omission>) -> Vec<String> {
+    const EXAMPLES: usize = 3;
+    let mut groups: IndexMap<String, Vec<Omission>> = IndexMap::new();
+    for omission in omissions {
+        groups
+            .entry(omission.command.clone())
+            .or_default()
+            .push(omission);
+    }
+    groups
+        .into_iter()
+        .map(|(command, mut group)| {
+            // Exact duplicates (the same row rendered on several split pages)
+            // count once; order stays first-seen.
+            let mut unique = HashSet::new();
+            group.retain(|omission| unique.insert((omission.depth, omission.field.clone())));
+            if let [single] = group.as_slice() {
+                return format!(
+                    "vimanam: omitted nested schema expansion at depth {} for {}; retrieve full detail: {command}",
+                    single.depth, single.field
+                );
+            }
+            let low = group.iter().map(|o| o.depth).min().unwrap_or(0);
+            let high = group.iter().map(|o| o.depth).max().unwrap_or(0);
+            let depth = if low == high {
+                format!("depth {low}")
+            } else {
+                format!("depths {low}-{high}")
+            };
+            let mut fields: HashSet<&str> = HashSet::new();
+            let names: Vec<&str> = group
+                .iter()
+                .map(|o| o.field.as_str())
+                .filter(|field| fields.insert(field))
+                .collect();
+            let mut examples = names
+                .iter()
+                .take(EXAMPLES)
+                .copied()
+                .collect::<Vec<_>>()
+                .join(", ");
+            if names.len() > EXAMPLES {
+                examples.push_str(", ...");
+            }
+            format!(
+                "vimanam: omitted nested schema expansion at {depth} for {} fields ({examples}); retrieve full detail: {command}",
+                group.len()
+            )
+        })
+        .collect()
+}
+
 #[derive(Debug)]
 struct SchemaRow {
     field: String,
@@ -83,7 +218,14 @@ pub(super) struct SchemaContext<'a> {
     protected_depth: usize,
     /// Omission notices for the render that owns this context; callers print
     /// them only when that render's buffer is actually written.
-    omissions: Vec<String>,
+    omissions: Vec<Omission>,
+    /// Display label of the synthetic body root being rendered, if any, used
+    /// for its own (empty-path) row in omission notices.
+    body_label: Option<String>,
+    /// Depth at which the root currently being rendered (an operation body,
+    /// selection, definition, split page or inlined `$ref` target) starts, so
+    /// retrieval hints can size `--schema-depth` relative to that root.
+    root_depth: usize,
     /// Use-site observations per reference, in first-encounter order. Fed to
     /// the `--costs` analysis through the render result.
     uses: IndexMap<String, SchemaUse>,
@@ -115,6 +257,8 @@ impl<'a> SchemaContext<'a> {
             selected: false,
             protected_depth: 0,
             omissions: Vec::new(),
+            body_label: None,
+            root_depth: 0,
             uses: IndexMap::new(),
         }
     }
@@ -174,8 +318,15 @@ impl<'a> SchemaContext<'a> {
         self.depths.clone()
     }
 
-    pub(super) fn take_omissions(&mut self) -> Vec<String> {
+    /// Raw omissions, for callers that merge several contexts before
+    /// summarizing them with [`summarize_omissions`].
+    pub(super) fn take_omissions(&mut self) -> Vec<Omission> {
         std::mem::take(&mut self.omissions)
+    }
+
+    /// This context's omissions as summarized stderr lines.
+    pub(super) fn take_omission_lines(&mut self) -> Vec<String> {
+        summarize_omissions(self.take_omissions())
     }
 
     /// Records one rendered use of `reference`: a linked row (default mode), an
@@ -252,16 +403,31 @@ impl<'a> SchemaContext<'a> {
         }
     }
 
-    fn retrieval(&self, reference: Option<&str>) -> String {
+    /// Recovery command for a row cut off at `depth`. Under a depth limit the
+    /// command carries a bounded `--schema-depth` too, so following it can
+    /// never re-trigger an unbounded expansion (#160): a `$ref` re-rooted with
+    /// `--schema NAME` shows the next `limit` levels of that schema; a command
+    /// that re-renders the same root goes `limit` levels past the cutoff.
+    fn retrieval(&self, reference: Option<&str>, depth: usize) -> String {
         let mut command = format!("vimanam {}", super::split::quote_shell(&self.source_path));
         command.push_str(&super::split::proto_path_flags(
             &self.source_path,
             &self.proto_paths,
         ));
+        let step = self.max_depth.map(|limit| limit.max(1));
+        let relative = depth.saturating_sub(self.root_depth);
+        let deeper = step
+            .map(|step| {
+                format!(
+                    " --schema-depth {}",
+                    (relative + step).min(SCHEMA_DEPTH_LIMIT)
+                )
+            })
+            .unwrap_or_default();
 
         if let Some(selector) = &self.active_selector {
             command.push_str(&format!(
-                " --schema-field {}",
+                " --schema-field {}{deeper}",
                 super::split::quote_shell(selector)
             ));
             command.push_str(" --no-report");
@@ -269,20 +435,31 @@ impl<'a> SchemaContext<'a> {
         }
 
         if let Some(name) = reference.map(short_schema_reference) {
-            command.push_str(&format!(" --schema {}", super::split::quote_shell(&name)));
+            let rerooted = step
+                .map(|step| format!(" --schema-depth {step}"))
+                .unwrap_or_default();
+            command.push_str(&format!(
+                " --schema {}{rerooted}",
+                super::split::quote_shell(&name)
+            ));
             command.push_str(" --no-report");
             return command;
         }
 
         if let Some(name) = &self.current_schema {
-            command.push_str(&format!(" --schema {}", super::split::quote_shell(name)));
+            command.push_str(&format!(
+                " --schema {}{deeper}",
+                super::split::quote_shell(name)
+            ));
             command.push_str(" --no-report");
             return command;
         }
 
         // Inline operation body: reconstruct from the active endpoint and filters.
         self.append_scope_flags(&mut command);
-        command.push_str(" --detail full --include-schemas --no-report");
+        command.push_str(&format!(
+            " --detail full --include-schemas{deeper} --no-report"
+        ));
         command
     }
 
@@ -447,7 +624,7 @@ pub(super) fn first_success_response(endpoint: &Endpoint) -> Option<(&str, &Resp
 /// the argument type exactly as it counts from an OpenAPI request body (#170).
 /// Built-in scalar arguments are already fully described by the Arguments
 /// table. Every other endpoint has at most the request body, labelled
-/// `request`. The third element is the root row's Required cell: the
+/// [`REQUEST_BODY_LABEL`]. The third element is the root row's Required cell: the
 /// argument's non-null flag, or `None` (`-`) for a request body.
 pub(super) fn request_schema_roots(endpoint: &Endpoint) -> Vec<(&str, &Schema, Option<bool>)> {
     if crate::contract::graphql::OPERATION_METHODS.contains(&endpoint.method.as_str()) {
@@ -465,7 +642,7 @@ pub(super) fn request_schema_roots(endpoint: &Endpoint) -> Vec<(&str, &Schema, O
             .collect();
     }
     request_body_schema(endpoint)
-        .map(|schema| ("request", schema, None))
+        .map(|schema| (REQUEST_BODY_LABEL, schema, None))
         .into_iter()
         .collect()
 }
@@ -544,9 +721,37 @@ pub(super) fn write_schema_roots_table<W: Write>(
         if ctx.max_depth.is_some() && !ctx.inline {
             ctx.discover(schema, 0);
         }
-        collect_schema_rows(schema, label, *required, &mut rows, &mut ref_stack, 0, ctx);
+        collect_root_rows(schema, label, *required, &mut rows, &mut ref_stack, 0, ctx);
     }
     write_rows(writer, &rows, ctx.external)
+}
+
+/// Collects one root's rows. A synthetic body root ([`REQUEST_BODY_LABEL`],
+/// [`RESPONSE_BODY_LABEL`]) is walked with an empty path so its descendants
+/// render as bare JSON property paths, and only its own row shows the label.
+fn collect_root_rows(
+    schema: &Schema,
+    label: &str,
+    required: Option<bool>,
+    rows: &mut Vec<SchemaRow>,
+    ref_stack: &mut Vec<String>,
+    depth: usize,
+    ctx: &mut SchemaContext,
+) {
+    ctx.root_depth = depth;
+    if !is_body_label(label) {
+        collect_schema_rows(schema, label, required, rows, ref_stack, depth, ctx);
+        return;
+    }
+    let start = rows.len();
+    let prior = ctx.body_label.replace(label.to_string());
+    collect_schema_rows(schema, "", required, rows, ref_stack, depth, ctx);
+    ctx.body_label = prior;
+    for row in &mut rows[start..] {
+        if row.field.is_empty() {
+            row.field = label.to_string();
+        }
+    }
 }
 
 pub(super) fn write_schema_table_at<W: Write>(
@@ -561,7 +766,7 @@ pub(super) fn write_schema_table_at<W: Write>(
     if ctx.max_depth.is_some() && !ctx.inline {
         ctx.discover(schema, depth);
     }
-    collect_schema_rows(
+    collect_root_rows(
         schema,
         root_label,
         None,
@@ -603,6 +808,7 @@ pub(super) fn render_schema_definitions<W: Write>(
         ctx.current_schema = Some(name.clone());
         ctx.protected_depth = 0;
         let definition_depth = ctx.depths.get(&reference).copied().unwrap_or(0);
+        ctx.root_depth = definition_depth;
         writeln!(writer, "### {} {{#{}}}", name, anchor)?;
 
         let mut rows = Vec::new();
@@ -789,13 +995,19 @@ fn push_cutoff_row(
         || schema.one_of.is_some()
         || schema.any_of.is_some();
     if expandable {
-        let command = ctx.retrieval(schema.reference.as_deref());
+        let command = ctx.retrieval(schema.reference.as_deref(), depth);
         description.push_str(&format!(
             "; Omitted nested expansion at schema depth {depth}. Retrieve full detail: {command}"
         ));
-        ctx.omissions.push(format!(
-            "vimanam: omitted nested schema expansion at depth {depth} for {field}; retrieve full detail: {command}"
-        ));
+        let field = match (&ctx.body_label, field.is_empty()) {
+            (Some(label), true) => label.clone(),
+            _ => field.to_string(),
+        };
+        ctx.omissions.push(Omission {
+            depth,
+            field,
+            command,
+        });
     }
     rows.push(SchemaRow {
         field: field.to_string(),
@@ -842,6 +1054,9 @@ fn composition_source_index(variant: &Schema, index: usize, selected: bool) -> u
     }
 }
 
+/// Recursion safety limit, and the largest accepted `--schema-depth`.
+const SCHEMA_DEPTH_LIMIT: usize = 24;
+
 fn collect_schema_rows(
     schema: &Schema,
     field: &str,
@@ -851,7 +1066,7 @@ fn collect_schema_rows(
     depth: usize,
     ctx: &mut SchemaContext,
 ) {
-    const MAX_DEPTH: usize = 24;
+    const MAX_DEPTH: usize = SCHEMA_DEPTH_LIMIT;
 
     if ctx
         .max_depth
@@ -900,6 +1115,8 @@ fn collect_schema_rows(
                 let prior_schema = ctx
                     .current_schema
                     .replace(short_schema_reference(reference));
+                // The inlined target's own row sits one edge below the ref.
+                let prior_root = std::mem::replace(&mut ctx.root_depth, depth + 1);
                 let mut inlined;
                 let target = if prefer_ref_description(schema)
                     && let Some(combined) = inlined_ref_description(schema, resolved)
@@ -911,6 +1128,7 @@ fn collect_schema_rows(
                     resolved
                 };
                 collect_schema_rows(target, field, required, rows, ref_stack, depth + 1, ctx);
+                ctx.root_depth = prior_root;
                 ctx.current_schema = prior_schema;
                 ref_stack.pop();
             } else {
@@ -1018,7 +1236,7 @@ fn collect_schema_rows(
     {
         collect_schema_rows(
             child,
-            &format!("{field}.*"),
+            &format_field(field, "*"),
             None,
             rows,
             ref_stack,
@@ -1035,7 +1253,7 @@ fn collect_schema_rows(
         if let Some(variants) = variants {
             for (index, variant) in variants.iter().enumerate() {
                 let source_index = composition_source_index(variant, index, ctx.selected);
-                let variant_field = format!("{field}.{label}[{source_index}]");
+                let variant_field = format_field(field, &format!("{label}[{source_index}]"));
                 collect_schema_rows(
                     variant,
                     &variant_field,
@@ -1404,5 +1622,74 @@ mod tests {
             ..Schema::default()
         };
         assert_eq!(display(schema_type_label(&schema)), "array<ref Pet>");
+    }
+
+    // ── omission summaries (#161) ────────────────────────────────────────────
+
+    fn omission(depth: usize, field: &str, command: &str) -> Omission {
+        Omission {
+            depth,
+            field: field.into(),
+            command: command.into(),
+        }
+    }
+
+    #[test]
+    fn single_omission_keeps_one_line_form() {
+        assert_eq!(
+            summarize_omissions(vec![omission(2, "a.b", "cmd")]),
+            [
+                "vimanam: omitted nested schema expansion at depth 2 for a.b; retrieve full detail: cmd"
+            ]
+        );
+    }
+
+    #[test]
+    fn omissions_group_by_command_in_first_seen_order() {
+        let lines = summarize_omissions(vec![
+            omission(2, "a", "one"),
+            omission(3, "b", "two"),
+            omission(2, "c", "one"),
+            omission(4, "d", "one"),
+            omission(2, "a", "one"),
+            omission(2, "e", "one"),
+        ]);
+        assert_eq!(
+            lines,
+            [
+                "vimanam: omitted nested schema expansion at depths 2-4 for 4 fields (a, c, d, ...); retrieve full detail: one",
+                "vimanam: omitted nested schema expansion at depth 3 for b; retrieve full detail: two",
+            ]
+        );
+    }
+
+    #[test]
+    fn reachable_component_count_stops_past_cap() {
+        let mut doc = ApiDocumentation {
+            title: String::new(),
+            version: String::new(),
+            description: None,
+            services: Vec::new(),
+            endpoints: Vec::new(),
+            servers: Vec::new(),
+            security_schemes: IndexMap::new(),
+            schemas: IndexMap::new(),
+            examples: IndexMap::new(),
+        };
+        for i in 0..10 {
+            doc.schemas.insert(
+                format!("N{i}"),
+                Schema {
+                    reference: Some(format!("#/components/schemas/N{}", (i + 1) % 10)),
+                    ..Schema::default()
+                },
+            );
+        }
+        let root = Schema {
+            reference: Some("#/components/schemas/N0".into()),
+            ..Schema::default()
+        };
+        assert_eq!(reachable_component_count(&doc, [&root], 100), 10);
+        assert_eq!(reachable_component_count(&doc, [&root], 4), 5);
     }
 }

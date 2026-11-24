@@ -23,7 +23,7 @@ use super::{detail_level_name, estimate_tokens, service_is_visible, visible_endp
 const MANIFEST: &str = ".vimanam-manifest.json";
 
 type TreeFiles = BTreeMap<String, Vec<u8>>;
-type RenderedTree = (TreeFiles, Vec<String>);
+type RenderedTree = (TreeFiles, Vec<super::schema::Omission>);
 
 pub(crate) enum TreeLayout {
     Split(SplitArg),
@@ -218,7 +218,7 @@ pub(crate) fn write_tree(
         }
     };
     write_files(output, &files)?;
-    for omission in omissions {
+    for omission in super::schema::summarize_omissions(omissions) {
         notice(&omission);
     }
     Ok(())
@@ -643,7 +643,7 @@ fn write_detail(
     config: &DocConfig,
     emitted_depths: &indexmap::IndexMap<String, usize>,
     references: &mut BTreeMap<String, usize>,
-    omissions: &mut Vec<String>,
+    omissions: &mut Vec<super::schema::Omission>,
 ) -> Result<()> {
     if config.detail_level == DetailLevel::Summary {
         // Summary never invokes write_endpoint (whose lowest body level is Basic).

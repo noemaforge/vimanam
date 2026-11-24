@@ -99,6 +99,62 @@ pub(crate) fn render<W: Write>(
     doc: &ApiDocumentation,
     config: &DocConfig,
 ) -> Result<ViewRender> {
+    match auto_schema_depth(doc, config) {
+        Some((bounded, bound_notice)) => {
+            let mut rendered = render_configured(writer, doc, &bounded)?;
+            rendered.omissions.insert(0, bound_notice);
+            Ok(rendered)
+        }
+        None => render_configured(writer, doc, config),
+    }
+}
+
+/// Bounds a selected slice at [`schema::AUTO_SCHEMA_DEPTH`] when
+/// `--schema-depth` is not set and the slice's roots reach more than
+/// [`schema::AUTO_SCHEMA_DEPTH_THRESHOLD`] component schemas (#160). Slices are
+/// standalone `--schema`/`--schema-field` reads and `--operation`/
+/// `--operation-id` renders at `--detail full --include-schemas`; whole
+/// documents, which already render each component once, are unchanged.
+/// Returns the bounded configuration and the stderr notice explaining it.
+fn auto_schema_depth(doc: &ApiDocumentation, config: &DocConfig) -> Option<(DocConfig, String)> {
+    if config.schema_depth.is_some() {
+        return None;
+    }
+    let selected;
+    let roots: Vec<&crate::models::Schema> = if schema_selection::active(config) {
+        selected = schema_selection::selections(doc, config).ok()?;
+        selected.iter().map(|(_, schema)| schema).collect()
+    } else if config.operation_selector.is_some()
+        && config.detail_level == DetailLevel::Full
+        && config.include_schemas
+    {
+        visible_endpoints(doc, config)
+            .into_iter()
+            .flat_map(schema::rendered_endpoint_schemas)
+            .collect()
+    } else {
+        return None;
+    };
+    let threshold = schema::AUTO_SCHEMA_DEPTH_THRESHOLD;
+    if schema::reachable_component_count(doc, roots, threshold) <= threshold {
+        return None;
+    }
+    let depth = schema::AUTO_SCHEMA_DEPTH;
+    let mut bounded = config.clone();
+    bounded.schema_depth = Some(depth);
+    Some((
+        bounded,
+        format!(
+            "vimanam: selection reaches more than {threshold} component schemas and --schema-depth is not set; bounding schema expansion at --schema-depth {depth} (pass --schema-depth 0..=24 to choose)"
+        ),
+    ))
+}
+
+fn render_configured<W: Write>(
+    writer: &mut W,
+    doc: &ApiDocumentation,
+    config: &DocConfig,
+) -> Result<ViewRender> {
     if schema_selection::active(config) {
         let omissions = schema_selection::render(writer, doc, config)?;
         return Ok(ViewRender {

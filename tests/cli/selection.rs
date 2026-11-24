@@ -316,10 +316,7 @@ fn operation_composes_with_full_detail_schemas_examples_and_budget() {
     assert_eq!(code, 0);
     assert!(stderr.is_empty(), "no detail reduction expected: {stderr}");
     assert_eq!(rendered_operations(&stdout), ["GET /users"]);
-    assert!(
-        stdout.contains("`response[].id`"),
-        "inline schema rows: {stdout}"
-    );
+    assert!(stdout.contains("`[].id`"), "inline schema rows: {stdout}");
     assert!(!stdout.contains("## Schema Definitions"));
     // Without the selector the same budget forces the detail down.
     let (_, _, stderr) = run_select(&budget_args);
