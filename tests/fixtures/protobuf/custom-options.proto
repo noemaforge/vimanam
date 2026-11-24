@@ -1,0 +1,20 @@
+// Synthetic fixture: a custom field option (which imports
+// google/protobuf/descriptor.proto) plus a well-known-type reference.
+syntax = "proto3";
+package demo.v1;
+
+import "google/protobuf/descriptor.proto";
+import "google/protobuf/timestamp.proto";
+
+extend google.protobuf.FieldOptions {
+  string label = 50001;
+}
+
+message Item {
+  string id = 1 [(label) = "identifier"];
+  google.protobuf.Timestamp created_at = 2;
+}
+
+service Items {
+  rpc Get(Item) returns (Item);
+}

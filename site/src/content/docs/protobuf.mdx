@@ -78,9 +78,13 @@ vimanam diff --from-ref v1.0.0 --to-ref v2.0.0 \
 | JSON name changed | Breaking source and JSON | `FIELD_SAME_JSON_NAME` |
 | Message, enum, service, or RPC removed/renamed | Breaking source | `MESSAGE_NO_DELETE`, `ENUM_NO_DELETE`, `SERVICE_NO_DELETE`, `RPC_NO_DELETE` |
 | File package changed | Breaking source | `FILE_SAME_PACKAGE` |
-| RPC client or server streaming changed | Breaking source | `RPC_SAME_CLIENT_STREAMING`, `RPC_SAME_SERVER_STREAMING` |
+| RPC client or server streaming changed | Breaking wire, source, JSON | `RPC_SAME_CLIENT_STREAMING`, `RPC_SAME_SERVER_STREAMING` |
 | Optional field, type, enum alias, or RPC added | Non-breaking | `PROTOBUF_SURFACE_CHANGED` |
 | Effective default, deprecation, or custom option changed | Review | `DefaultChanged`, `DEPRECATED_CHANGED`, `PROTOBUF_SURFACE_CHANGED` |
+
+### Bundled `google/protobuf` files
+
+Every compiler bundles its own `google/protobuf/*.proto` (well-known types and `descriptor.proto`), so a `.pb` built by one `protoc` release and `.proto` sources compiled by Vimanam differ inside those files. `diff` drops findings whose subject is defined only in bundled files. Custom option extensions, applied options, and fields referencing well-known types live in your files and are still reported. Inputs made only of bundled files keep every finding.
 
 ### Identity and AIP-158 pagination
 

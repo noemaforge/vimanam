@@ -86,7 +86,9 @@ Proto2/proto3 only: reject Editions/unknown syntax before prost-reflect, which
 cannot safely decode their features. Preserve original descriptor bytes and
 custom options. Neutral field IDs use message FQN+number; enum label IDs add
 names to preserve aliases. Safe same-number renames break source/JSON only;
-reserved-identity reuse and type changes supply wire evidence. Enum reserved
+reserved-identity reuse, type and RPC streaming changes supply wire evidence.
+`diff` drops findings whose subject lives only in bundled `google/protobuf/*`
+files (compiler-version skew), unless neither input has a user file. Enum reserved
 bounds use wide integers.
 
 `--breaking` scopes protobuf failure gates only; `--contract 1` rejects protobuf

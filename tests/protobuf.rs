@@ -170,13 +170,35 @@ fn service_and_rpc_renames_break_source() {
     assert!(has_rule(&c, "SERVICE_NO_DELETE", "source"));
 }
 #[test]
-fn streaming_changes_break_source() {
+fn streaming_changes_break_wire_and_source() {
     let c = compare(
         "message M {} service S { rpc R(M) returns (M); }",
         "message M {} service S { rpc R(stream M) returns (stream M); }",
     );
-    assert!(has_rule(&c, "RPC_SAME_CLIENT_STREAMING", "source"));
-    assert!(has_rule(&c, "RPC_SAME_SERVER_STREAMING", "source"));
+    for rule in ["RPC_SAME_CLIENT_STREAMING", "RPC_SAME_SERVER_STREAMING"] {
+        assert!(has_rule(&c, rule, "source"), "{rule} source");
+        assert!(has_rule(&c, rule, "wire"), "{rule} wire");
+    }
+    // Each direction is classified on its own, and impacts are excluded from
+    // `vc2_` hashing, so the change IDs predate the wire impact (#153).
+    let client = compare(
+        "message M {} service S { rpc R(M) returns (M); }",
+        "message M {} service S { rpc R(stream M) returns (M); }",
+    );
+    assert_eq!(client.len(), 1);
+    assert_eq!(client[0].native_kind, "RPC_SAME_CLIENT_STREAMING");
+    assert_eq!(client[0].impacts, ["wire", "source", "wire_json"]);
+    let mut legacy = client[0].clone();
+    legacy.impacts = vec!["source".into(), "wire_json".into()];
+    legacy.refresh_id();
+    assert_eq!(legacy.id, client[0].id);
+    let server = compare(
+        "message M {} service S { rpc R(stream M) returns (stream M); }",
+        "message M {} service S { rpc R(stream M) returns (M); }",
+    );
+    assert_eq!(server.len(), 1);
+    assert_eq!(server[0].native_kind, "RPC_SAME_SERVER_STREAMING");
+    assert!(has_rule(&server, "RPC_SAME_SERVER_STREAMING", "wire"));
 }
 #[test]
 fn json_name_changes_break_source() {
@@ -960,4 +982,79 @@ fn symlinked_proto_under_include_root_preserves_virtual_path_and_shadow_checks()
     // Reversing -I order so v2 precedes v1 resolves cleanly.
     let ok = Document::read(&v2.join("api.proto"), &[v2, v1]).unwrap();
     assert!(ok.pool.files().any(|f| f.name() == "api.proto"));
+}
+
+fn custom_options_source(field_option: &str, option_type: &str) -> Document {
+    let temp = tempfile::tempdir().unwrap();
+    let text = fs::read_to_string(fixture("custom-options.proto"))
+        .unwrap()
+        .replace(
+            "string label = 50001",
+            &format!("{option_type} label = 50001"),
+        )
+        .replace(
+            "(label) = \"identifier\"",
+            &format!("(label) = {field_option}"),
+        );
+    let path = temp.path().join("custom-options.proto");
+    fs::write(&path, text).unwrap();
+    Document::read(&path, &[]).unwrap()
+}
+#[test]
+fn bundled_descriptor_drift_produces_no_changes_in_mixed_inputs() {
+    // The `.pb` embeds protoc 36.2's descriptor.proto (Editions FeatureSet and
+    // newer option fields); protox compiles its own bundled copy (#155).
+    let descriptor = Document::read(&fixture("custom-options.pb"), &[]).unwrap();
+    let source = Document::read(&fixture("custom-options.proto"), &[]).unwrap();
+    let names = |d: &Document| {
+        protobuf::adapt(d)
+            .entities
+            .into_iter()
+            .map(|e| e.name)
+            .collect::<std::collections::BTreeSet<_>>()
+    };
+    assert_ne!(
+        names(&descriptor),
+        names(&source),
+        "fixture must carry descriptor.proto version skew"
+    );
+    assert_eq!(protobuf::diff(&descriptor, &source).unwrap(), vec![]);
+    assert_eq!(protobuf::diff(&source, &descriptor).unwrap(), vec![]);
+}
+#[test]
+fn custom_option_changes_survive_bundled_descriptor_filtering() {
+    let descriptor = Document::read(&fixture("custom-options.pb"), &[]).unwrap();
+    let applied = protobuf::diff(&descriptor, &custom_options_source("\"id\"", "string")).unwrap();
+    assert_eq!(applied.len(), 1, "{applied:#?}");
+    assert_eq!(applied[0].kind, ChangeKind::ConstraintChanged);
+    assert!(matches!(&applied[0].native,
+        vimanam::contract::NativeLocation::Protobuf { full_name, .. } if full_name == "demo.v1.Item.id"));
+    assert_eq!(applied[0].details["pointer"], "/options/[demo.v1.label]");
+
+    let retyped = protobuf::diff(&descriptor, &custom_options_source("7", "int32")).unwrap();
+    assert!(retyped.iter().any(|c| c.native_kind == "FIELD_SAME_TYPE"
+        && matches!(&c.native,
+            vimanam::contract::NativeLocation::Protobuf { full_name, .. } if full_name == "demo.v1.label")));
+    assert!(retyped.iter().all(|c| !matches!(&c.native,
+        vimanam::contract::NativeLocation::Protobuf { full_name, .. } if full_name.starts_with("google.protobuf."))));
+}
+#[test]
+fn bundled_only_inputs_keep_findings() {
+    use prost::Message;
+    // With no user files on either side the bundled files are the contract
+    // being compared, so their changes are reported.
+    let pool = |names: &[&str]| {
+        let descriptor = Document::read(&fixture("custom-options.pb"), &[]).unwrap();
+        let mut set =
+            prost_types::FileDescriptorSet::decode(descriptor.descriptor_bytes.as_slice()).unwrap();
+        set.file.retain(|f| names.contains(&f.name()));
+        Document::decode(&set.encode_to_vec()).unwrap()
+    };
+    let old = pool(&[
+        "google/protobuf/timestamp.proto",
+        "google/protobuf/descriptor.proto",
+    ]);
+    let new = pool(&["google/protobuf/descriptor.proto"]);
+    let changes = protobuf::diff(&old, &new).unwrap();
+    assert!(changes.iter().any(|c| c.native_kind == "MESSAGE_NO_DELETE"));
 }
