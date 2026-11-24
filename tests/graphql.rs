@@ -1259,49 +1259,132 @@ fn sdl_rejects_malformed_arguments_object_fields_duplicates_and_incomplete_roots
     );
 }
 
-/// #163: duplicate members inside one SDL definition are rejected with the
-/// same wording `extend` uses across extension blocks.
+/// #163: a member repeated inside one SDL definition with a different type,
+/// arguments, default or deprecation is rejected.
 #[test]
-fn duplicate_members_within_one_definition_are_rejected() {
-    let err = |text: &str| {
-        Document::from_sdl(&[("a.graphql".into(), text.into())])
-            .unwrap_err()
-            .to_string()
-    };
+fn conflicting_duplicate_members_within_one_definition_are_rejected() {
     let cases = [
         (
             "type Query { x: Int x: String }",
-            "Duplicate GraphQL field Query.x in a.graphql",
+            "Duplicate GraphQL field Query.x in a.graphql with a conflicting definition",
         ),
         (
-            "type Query { x: Int } interface Node { id: ID id: ID }",
+            "type Query { x: Int } interface Node { id: ID id: ID! }",
             "Duplicate GraphQL field Node.id in a.graphql",
         ),
         (
-            "type Query { x(a: Int, a: Int): Int }",
+            "type Query { x(a: Int): Int x(a: Int, b: Int): Int }",
+            "Duplicate GraphQL field Query.x in a.graphql",
+        ),
+        (
+            "type Query { x(a: Int, a: String): Int }",
             "Duplicate GraphQL argument Query.x.a in a.graphql",
         ),
         (
-            "type Query { x(f: F): Int } input F { a: Int a: Int }",
+            "type Query { x(f: F): Int } input F { a: Int a: Int = 1 }",
             "Duplicate GraphQL input field F.a in a.graphql",
         ),
         (
-            "type Query { x: E } enum E { A B A }",
+            "type Query { x: E } enum E { A B A @deprecated }",
             "Duplicate GraphQL enum value E.A in a.graphql",
         ),
         (
-            "type Query { x: U } type A { a: Int } union U = A | A",
-            "Duplicate GraphQL union member U.A in a.graphql",
+            "type Query { x: Int } extend type Query { y(a: Int, a: Float): Int }",
+            "Duplicate GraphQL argument Query.y.a in a.graphql",
         ),
         (
-            "type Query { x: Int } extend type Query { y(a: Int, a: Int): Int }",
-            "Duplicate GraphQL argument Query.y.a in a.graphql",
+            "type Query { x: Int } interface I { y: Int } extend interface I { z(a: Int, a: ID): Int }",
+            "Duplicate GraphQL argument I.z.a in a.graphql",
         ),
     ];
     for (text, expected) in cases {
-        let message = err(text);
+        let message = Document::from_sdl(&[("a.graphql".into(), text.into())])
+            .unwrap_err()
+            .to_string();
         assert!(message.contains(expected), "{text}: {message}");
     }
     // Same name in different scopes is fine.
     sdl("type Query { x(a: Int): Int y(a: Int): Int } input F { x: Int } enum E { x }");
+}
+
+/// #163: an identical repeat (published GitHub SDL repeats a field verbatim)
+/// is dropped with one warning naming the type and member; the first
+/// occurrence, including its description, is kept.
+#[test]
+fn identical_duplicate_members_are_dropped_with_a_warning() {
+    let text = r#"
+        type Query { x(a: Int = 1, a: Int = 1): Int "first" n: Node "second" n: Node u: U e: E }
+        interface Node { id: ID }
+        interface Other { id: ID }
+        type A implements Node & Other & Node { id: ID }
+        union U = A | A
+        enum E { X Y X }
+        input F { a: Int a: Int }
+        extend type Query { f(i: F, i: F): Int }
+        extend interface Other { z(b: ID, b: ID): Int }
+    "#;
+    let mut warnings = vec![];
+    let doc =
+        Document::from_sdl_reporting(&[("a.graphql".into(), text.into())], &mut warnings).unwrap();
+    let mut expected = [
+        "argument Query.x.a",
+        "field Query.n",
+        "interface A.Node",
+        "union member U.A",
+        "enum value E.X",
+        "input field F.a",
+        "argument Query.f.i",
+        "argument Other.z.b",
+    ]
+    .map(|m| format!("vimanam: ignoring identical duplicate GraphQL {m} in a.graphql"));
+    expected.sort();
+    warnings.sort();
+    assert_eq!(warnings, expected);
+
+    let query = &doc.types["Query"];
+    let names: Vec<_> = query.fields.iter().map(|f| f.name.as_str()).collect();
+    assert_eq!(names, ["x", "n", "u", "e", "f"]);
+    assert_eq!(query.fields[0].args.len(), 1);
+    assert_eq!(query.fields[1].description.as_deref(), Some("first"));
+    assert_eq!(doc.types["A"].interfaces, ["Node", "Other"]);
+    assert_eq!(doc.types["U"].members, ["A"]);
+    assert_eq!(doc.types["E"].values.len(), 2);
+    assert_eq!(doc.types["F"].input_fields.len(), 1);
+    // The non-reporting constructor accepts the same schema.
+    sdl(text);
+}
+
+/// #163: introspection input follows the same duplicate-member rule as SDL.
+#[test]
+fn introspection_duplicate_members_follow_the_sdl_rule() {
+    let field = |ty: &str| {
+        json!({"name": "x", "description": null, "args": [], "isDeprecated": false,
+               "deprecationReason": null,
+               "type": {"kind": "SCALAR", "name": ty, "ofType": null}})
+    };
+    let schema = |second: Value| {
+        serde_json::to_vec(&json!({"__schema": {
+            "queryType": {"name": "Query"}, "mutationType": null, "subscriptionType": null,
+            "types": [{"kind": "OBJECT", "name": "Query", "description": null,
+                       "fields": [field("Int"), second], "inputFields": null,
+                       "interfaces": [], "enumValues": null, "possibleTypes": null}]
+        }}))
+        .unwrap()
+    };
+    let mut warnings = vec![];
+    let doc = Document::from_introspection_reporting(&schema(field("Int")), &mut warnings).unwrap();
+    assert_eq!(doc.types["Query"].fields.len(), 1);
+    assert_eq!(
+        warnings,
+        ["vimanam: ignoring identical duplicate GraphQL field Query.x in introspection result"]
+    );
+    let err = Document::from_introspection(&schema(field("String")))
+        .unwrap_err()
+        .to_string();
+    assert!(
+        err.contains(
+            "Duplicate GraphQL field Query.x in introspection result with a conflicting definition"
+        ),
+        "{err}"
+    );
 }

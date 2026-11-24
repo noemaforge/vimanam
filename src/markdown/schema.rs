@@ -447,8 +447,9 @@ pub(super) fn first_success_response(endpoint: &Endpoint) -> Option<(&str, &Resp
 /// the argument type exactly as it counts from an OpenAPI request body (#170).
 /// Built-in scalar arguments are already fully described by the Arguments
 /// table. Every other endpoint has at most the request body, labelled
-/// `request`.
-pub(super) fn request_schema_roots(endpoint: &Endpoint) -> Vec<(&str, &Schema)> {
+/// `request`. The third element is the root row's Required cell: the
+/// argument's non-null flag, or `None` (`-`) for a request body.
+pub(super) fn request_schema_roots(endpoint: &Endpoint) -> Vec<(&str, &Schema, Option<bool>)> {
     if crate::contract::graphql::OPERATION_METHODS.contains(&endpoint.method.as_str()) {
         return endpoint
             .parameters
@@ -459,12 +460,12 @@ pub(super) fn request_schema_roots(endpoint: &Endpoint) -> Vec<(&str, &Schema)> 
                     .schema
                     .as_ref()
                     .filter(|schema| names_schema_type(schema))
-                    .map(|schema| (parameter.name.as_str(), schema))
+                    .map(|schema| (parameter.name.as_str(), schema, parameter.required))
             })
             .collect();
     }
     request_body_schema(endpoint)
-        .map(|schema| ("request", schema))
+        .map(|schema| ("request", schema, None))
         .into_iter()
         .collect()
 }
@@ -482,7 +483,7 @@ fn names_schema_type(schema: &Schema) -> bool {
 pub(super) fn rendered_endpoint_schemas(endpoint: &Endpoint) -> Vec<&Schema> {
     let mut schemas: Vec<&Schema> = request_schema_roots(endpoint)
         .into_iter()
-        .map(|(_, schema)| schema)
+        .map(|(_, schema, _)| schema)
         .collect();
     if let Some((_, response)) = first_success_response(endpoint)
         && let Some(schema) = response_schema(response)
@@ -534,16 +535,16 @@ pub(super) fn write_schema_table<W: Write>(
 /// expanded exactly as [`write_schema_table`] would expand it alone.
 pub(super) fn write_schema_roots_table<W: Write>(
     writer: &mut W,
-    roots: &[(&str, &Schema)],
+    roots: &[(&str, &Schema, Option<bool>)],
     ctx: &mut SchemaContext,
 ) -> Result<()> {
     let mut rows = Vec::new();
-    for (label, schema) in roots {
+    for (label, schema, required) in roots {
         let mut ref_stack = Vec::new();
         if ctx.max_depth.is_some() && !ctx.inline {
             ctx.discover(schema, 0);
         }
-        collect_schema_rows(schema, label, None, &mut rows, &mut ref_stack, 0, ctx);
+        collect_schema_rows(schema, label, *required, &mut rows, &mut ref_stack, 0, ctx);
     }
     write_rows(writer, &rows, ctx.external)
 }

@@ -234,8 +234,12 @@ fn run_graphql_diff<W: Write>(
         !(args.context && args.format == DiffFormatArg::Json),
         "--context renders Markdown; it cannot be combined with --format json"
     );
-    let old = old_input.graphql()?;
-    let new = new_input.graphql()?;
+    let mut warnings = vec![];
+    let old = old_input.graphql(&mut warnings)?;
+    let new = new_input.graphql(&mut warnings)?;
+    for warning in &warnings {
+        notice(warning);
+    }
     let changes = graphql::diff(&old, &new)?;
     let document = crate::contract::json::to_json(
         graphql::adapt(&old),
@@ -354,10 +358,13 @@ pub fn run<W: Write>(cli: &Cli, output: &mut W, notice: &mut dyn FnMut(&str)) ->
 
     // Parse OpenAPI spec
     let api_doc = if crate::contract::graphql::is_input(input) {
-        crate::contract::graphql::documentation(
-            &crate::contract::graphql::Document::read(input)
-                .with_context(|| format!("Failed to parse GraphQL schema: {input:?}"))?,
-        )
+        let mut warnings = vec![];
+        let document = crate::contract::graphql::Document::read_reporting(input, &mut warnings)
+            .with_context(|| format!("Failed to parse GraphQL schema: {input:?}"))?;
+        for warning in &warnings {
+            notice(warning);
+        }
+        crate::contract::graphql::documentation(&document)
     } else if crate::contract::protobuf::is_input(input) {
         crate::contract::protobuf::documentation(&crate::contract::protobuf::Document::read(
             input,

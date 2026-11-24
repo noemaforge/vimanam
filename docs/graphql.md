@@ -9,10 +9,13 @@ Vimanam reads GraphQL schemas as:
   once, under its first path in sort order. A dangling `.graphql`/`.graphqls`
   link is an error; `extend schema`, `extend type`, `extend enum`, … may appear
   in any file. Duplicate schema/type definitions, duplicate root operations,
-  duplicate members (fields, arguments, input fields, enum values, interfaces,
-  union members) within one definition or from extensions, extensions of
-  undefined types and references to undefined types are errors naming the
-  file.
+  duplicate members from extensions, extensions of undefined types and
+  references to undefined types are errors naming the file. A member
+  (field, argument, input field, enum value, interface or union member)
+  repeated inside one definition is an error when the repeat differs in type,
+  arguments, default or deprecation; an identical repeat (GitHub's published
+  schema has one) is dropped, keeping the first occurrence and its
+  description, with a stderr warning. Introspection JSON follows the same rule.
 - **Introspection JSON**: the result of an introspection query, either
   `{"data": {"__schema": …}}` or `{"__schema": …}`. A `.json` input is GraphQL
   only when it contains a `__schema` object, so OpenAPI JSON is unaffected.
@@ -137,7 +140,9 @@ types are schemas (`--schema User`). With `--detail full --include-schemas`,
 the *Request Schema* lists each argument whose type is an input object, enum or
 custom scalar (possibly in a list) as its own root, linked to and expanded in
 *Schema Definitions* the way an OpenAPI request body is; built-in scalar
-arguments appear only in the *Arguments* table. Budgets, schema depth, split
+arguments appear only in the *Arguments* table. A list-wrapped argument
+(`[Input!]`) renders an array row plus an item row, so the list consumes one
+`--schema-depth` level before the item type. Budgets, schema depth, split
 and Skill trees reuse the shared renderer.
 
 ## Git refs
