@@ -31,8 +31,8 @@ Vimanam reads OpenAPI specs, `.proto` files, binary descriptor sets, and GraphQL
 
 <div class="vim-metric-strip not-content">
   <div class="vim-metric-cell">
-    <span class="vim-metric-value is-accent">26.1x fewer</span>
-    <span class="vim-metric-label">Claude API tokens across 8 fitting specs via end-to-end routing (<code>97.6%</code> assertions, <code>161x</code> lower observed cost)</span>
+    <span class="vim-metric-value is-accent">53x fewer</span>
+    <span class="vim-metric-label">Claude input tokens on specs over 1 MB via routed slices, scoring <code>19/19</code> assertions (<code>18/19</code> strict) against <code>19/19</code> for the raw spec. On specs under 30 KB, the raw spec is cheaper.</span>
   </div>
   <div class="vim-metric-cell">
     <span class="vim-metric-value">0 external tools</span>

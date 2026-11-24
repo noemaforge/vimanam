@@ -11,7 +11,7 @@ Vimanam benchmarks are organized into child pages so each release retains its ow
   <LinkCard
     title="v2.2 standalone & LLM eval"
     href="/vimanam/benchmarks/v2-2/"
-    description="Standalone v2.2.0 render medians/IQRs, 3-trial serial routed LLM evaluation, Claude vs o200k_base calibration, and known limits."
+    description="Standalone v2.2.0 render medians/IQRs, 6-condition serial LLM evaluation with cold and warm-cache costs, by-size results, an oracle slice, Claude vs o200k_base calibration, and known limits."
   />
   <LinkCard
     title="v2.2 vs v2.1 upgrade"
@@ -35,12 +35,12 @@ All measurements on these pages come from public open-source specifications (plu
 |---|---|---|
 | **Vimanam** | `2.2.0` (`ed253315…`) and `2.1.0` (`923af877…`) | Release binaries built with `cargo build --release --locked` |
 | **Timing harness** | `hyperfine 2.0.0` | Medians, Q1–Q3 IQRs, min–max, peak RSS, CPU instructions, raw `samples_ms` |
-| **LLM & BPE** | `claude-haiku-5-5` (serial, zero tools), `tiktoken` (`o200k_base`) | 3-trial deterministic programmatic JSON assertions; no LLM judge |
+| **LLM & BPE** | `claude-haiku-5-5` via `claude -p` (serial, zero tools), `tiktoken` (`o200k_base`) | 3 cold trials per cell (fresh prompt-cache nonce each) plus 1 warm replay; deterministic JSON assertions, no LLM judge |
 | **External baselines** | `oasdiff 1.39.0`, `buf 1.75.0`, `graphql-inspector 7.0.8`, `protoc-gen-doc 1.5.1`, `libprotoc 36.2` | Format-specific diff and doc-generation baselines |
 | **OpenAI OpenAPI** | `498c71d` (`1.3 MB` YAML) · `a01e367..373f26a` (`4.9 MB` JSON) | Standalone render, LLM eval, and `oasdiff` revision diff |
 | **Stripe OpenAPI** | `2f8d147..5237fa0` (`7.9 MB` JSON, `6.3 MB` YAML) | Render latency, LLM eval overflow, and cyclic `$ref` diff probe |
 | **GitHub GraphQL** | `a6de3c1..597478f` (`1.2 MB` SDL, `5.0 MB` Introspection JSON) | Render latency, LLM eval, Git-ref diff, and `graphql-inspector` |
-| **OpenTelemetry Proto** | `40cb2e5..d31f7ac` (`11` `.proto` files) | Pure-Rust `.proto` compile, `buf breaking` Git-ref, and `protoc-gen-doc` |
+| **OpenTelemetry Proto** | `40cb2e5..d31f7ac` (`11` `.proto` files) | Pure-Rust `.proto` compile, `buf breaking` Git-ref, `protoc-gen-doc`, and the real-spec LLM follow-up task (`d31f7ac`) |
 | **Synthetic eval protos** | [`scripts/eval-fixtures/protos/`](https://github.com/noemaforge/vimanam/tree/main/scripts/eval-fixtures/protos) | Non-memorizable `ledger/v1`, `fleet/v2`, and `vault/v1` RPC tasks |
 
 ### Statistical conventions
@@ -63,14 +63,15 @@ hyperfine --env PATH= --warmup 2 --runs 10 \
 uv run --with tiktoken python3 scripts/benchmark-public.py \
   --v21 /path/to/vimanam-2.1.0 \
   --v22 /path/to/vimanam-2.2.0 \
-  --corpus /tmp/vimanam-eval-corpus \
+  --corpus /path/to/vimanam-eval-corpus \
   --runs 10 \
   --output scripts/benchmark-v22-results.json
 
-# 3. Serial 3-trial end-to-end routed + fixed-slice LLM evaluation
+# 3. Serial 6-condition LLM evaluation (cold trials + warm replays; ~1 h, a few USD).
+#    Build the pinned corpus first: see "Corpus" in scripts/README.md.
 uv run --with tiktoken python3 scripts/eval-context-accuracy.py \
   --v22 /path/to/vimanam-2.2.0 \
-  --corpus /tmp/vimanam-eval-corpus \
+  --corpus /path/to/vimanam-eval-corpus \
   --model haiku \
   --trials 3 \
   --workers 1 \
