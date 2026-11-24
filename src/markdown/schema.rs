@@ -438,15 +438,52 @@ pub(super) fn first_success_response(endpoint: &Endpoint) -> Option<(&str, &Resp
         .map(|(code, response)| (code.as_str(), response))
 }
 
-/// Schemas [`super::endpoint::write_endpoint`] actually expands under
-/// `--detail full --include-schemas`: request body (if any) and the first 2xx
-/// response schema (if any). Shared by single-file and split/Skill pre-discovery
-/// so cutoff linking never invents pages for schemas the tree does not render.
-pub(super) fn rendered_endpoint_schemas(endpoint: &Endpoint) -> Vec<&Schema> {
-    let mut schemas = Vec::new();
-    if let Some(schema) = request_body_schema(endpoint) {
-        schemas.push(schema);
+/// Labelled request roots [`super::endpoint::write_endpoint`] expands under
+/// `--detail full --include-schemas`.
+///
+/// For a GraphQL root field these are its arguments whose type names a schema
+/// type (input object, enum or custom scalar, possibly inside lists), each a
+/// depth-0 root labelled by the argument name, so `--schema-depth` counts from
+/// the argument type exactly as it counts from an OpenAPI request body (#170).
+/// Built-in scalar arguments are already fully described by the Arguments
+/// table. Every other endpoint has at most the request body, labelled
+/// `request`.
+pub(super) fn request_schema_roots(endpoint: &Endpoint) -> Vec<(&str, &Schema)> {
+    if crate::contract::graphql::OPERATION_METHODS.contains(&endpoint.method.as_str()) {
+        return endpoint
+            .parameters
+            .iter()
+            .filter(|parameter| parameter.parameter_in == "argument")
+            .filter_map(|parameter| {
+                parameter
+                    .schema
+                    .as_ref()
+                    .filter(|schema| names_schema_type(schema))
+                    .map(|schema| (parameter.name.as_str(), schema))
+            })
+            .collect();
     }
+    request_body_schema(endpoint)
+        .map(|schema| ("request", schema))
+        .into_iter()
+        .collect()
+}
+
+/// Whether a GraphQL argument schema is (a list of) a `$ref` to a schema type.
+fn names_schema_type(schema: &Schema) -> bool {
+    schema.reference.is_some() || schema.items.as_deref().is_some_and(names_schema_type)
+}
+
+/// Schemas [`super::endpoint::write_endpoint`] actually expands under
+/// `--detail full --include-schemas`: request roots (see
+/// [`request_schema_roots`]) and the first 2xx response schema (if any).
+/// Shared by single-file and split/Skill pre-discovery so cutoff linking never
+/// invents pages for schemas the tree does not render.
+pub(super) fn rendered_endpoint_schemas(endpoint: &Endpoint) -> Vec<&Schema> {
+    let mut schemas: Vec<&Schema> = request_schema_roots(endpoint)
+        .into_iter()
+        .map(|(_, schema)| schema)
+        .collect();
     if let Some((_, response)) = first_success_response(endpoint)
         && let Some(schema) = response_schema(response)
     {
@@ -490,6 +527,25 @@ pub(super) fn write_schema_table<W: Write>(
     ctx: &mut SchemaContext,
 ) -> Result<()> {
     write_schema_table_at(writer, schema, root_label, 0, ctx)
+}
+
+/// Writes one Markdown field table holding several depth-0 roots, each
+/// labelled by its own name (GraphQL arguments). Each root is discovered and
+/// expanded exactly as [`write_schema_table`] would expand it alone.
+pub(super) fn write_schema_roots_table<W: Write>(
+    writer: &mut W,
+    roots: &[(&str, &Schema)],
+    ctx: &mut SchemaContext,
+) -> Result<()> {
+    let mut rows = Vec::new();
+    for (label, schema) in roots {
+        let mut ref_stack = Vec::new();
+        if ctx.max_depth.is_some() && !ctx.inline {
+            ctx.discover(schema, 0);
+        }
+        collect_schema_rows(schema, label, None, &mut rows, &mut ref_stack, 0, ctx);
+    }
+    write_rows(writer, &rows, ctx.external)
 }
 
 pub(super) fn write_schema_table_at<W: Write>(

@@ -1258,3 +1258,50 @@ fn sdl_rejects_malformed_arguments_object_fields_duplicates_and_incomplete_roots
         Some("{a: {a: 1}}")
     );
 }
+
+/// #163: duplicate members inside one SDL definition are rejected with the
+/// same wording `extend` uses across extension blocks.
+#[test]
+fn duplicate_members_within_one_definition_are_rejected() {
+    let err = |text: &str| {
+        Document::from_sdl(&[("a.graphql".into(), text.into())])
+            .unwrap_err()
+            .to_string()
+    };
+    let cases = [
+        (
+            "type Query { x: Int x: String }",
+            "Duplicate GraphQL field Query.x in a.graphql",
+        ),
+        (
+            "type Query { x: Int } interface Node { id: ID id: ID }",
+            "Duplicate GraphQL field Node.id in a.graphql",
+        ),
+        (
+            "type Query { x(a: Int, a: Int): Int }",
+            "Duplicate GraphQL argument Query.x.a in a.graphql",
+        ),
+        (
+            "type Query { x(f: F): Int } input F { a: Int a: Int }",
+            "Duplicate GraphQL input field F.a in a.graphql",
+        ),
+        (
+            "type Query { x: E } enum E { A B A }",
+            "Duplicate GraphQL enum value E.A in a.graphql",
+        ),
+        (
+            "type Query { x: U } type A { a: Int } union U = A | A",
+            "Duplicate GraphQL union member U.A in a.graphql",
+        ),
+        (
+            "type Query { x: Int } extend type Query { y(a: Int, a: Int): Int }",
+            "Duplicate GraphQL argument Query.y.a in a.graphql",
+        ),
+    ];
+    for (text, expected) in cases {
+        let message = err(text);
+        assert!(message.contains(expected), "{text}: {message}");
+    }
+    // Same name in different scopes is fine.
+    sdl("type Query { x(a: Int): Int y(a: Int): Int } input F { x: Int } enum E { x }");
+}

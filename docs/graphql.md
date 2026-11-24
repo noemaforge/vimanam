@@ -9,8 +9,10 @@ Vimanam reads GraphQL schemas as:
   once, under its first path in sort order. A dangling `.graphql`/`.graphqls`
   link is an error; `extend schema`, `extend type`, `extend enum`, … may appear
   in any file. Duplicate schema/type definitions, duplicate root operations,
-  duplicate members from extensions, extensions of undefined types and
-  references to undefined types are errors naming the file.
+  duplicate members (fields, arguments, input fields, enum values, interfaces,
+  union members) within one definition or from extensions, extensions of
+  undefined types and references to undefined types are errors naming the
+  file.
 - **Introspection JSON**: the result of an introspection query, either
   `{"data": {"__schema": …}}` or `{"__schema": …}`. A `.json` input is GraphQL
   only when it contains a `__schema` object, so OpenAPI JSON is unaffected.
@@ -131,8 +133,12 @@ Removed root fields have no new-schema context.
 Conversion renders root fields as operations with `QUERY`, `MUTATION` or
 `SUBSCRIPTION` and the coordinate (`--operation 'QUERY Query.user'` or
 `--operation-id Query.user`), an *Arguments* table and a *Result*. Non-root
-types are schemas (`--schema User`). Budgets, schema depth, split and Skill
-trees reuse the shared renderer.
+types are schemas (`--schema User`). With `--detail full --include-schemas`,
+the *Request Schema* lists each argument whose type is an input object, enum or
+custom scalar (possibly in a list) as its own root, linked to and expanded in
+*Schema Definitions* the way an OpenAPI request body is; built-in scalar
+arguments appear only in the *Arguments* table. Budgets, schema depth, split
+and Skill trees reuse the shared renderer.
 
 ## Git refs
 

@@ -379,3 +379,103 @@ fn missing_graphql_file_is_labelled_graphql() {
         .failure()
         .stderr(contains("GraphQL schema"));
 }
+
+/// #170: argument input types are linked and expanded like request bodies.
+#[test]
+fn argument_input_types_are_linked_and_expanded() {
+    let run = |extra: &[&str]| {
+        let out = binary()
+            .arg(fixture(OLD))
+            .args([
+                "--operation",
+                "QUERY Query.launchesPastResult",
+                "--detail",
+                "full",
+                "--include-schemas",
+                "--no-report",
+            ])
+            .args(extra)
+            .assert()
+            .success()
+            .get_output()
+            .stdout
+            .clone();
+        String::from_utf8(out).unwrap()
+    };
+
+    let text = run(&[]);
+    assert!(
+        text.contains(
+            "#### Request Schema\n| Field | Type | Required | Description |\n|------|------|---------:|-------------|\n| `find` | [LaunchFind](#schema-launchfind) | - | GraphQL input object |\n\n"
+        ),
+        "{text}"
+    );
+    let definitions = &text[text.find("## Schema Definitions").unwrap()..];
+    assert!(
+        definitions.contains("### LaunchFind {#schema-launchfind}"),
+        "{text}"
+    );
+    assert!(definitions.contains("| `LaunchFind.end` | [Date](#schema-date) |"));
+    // Built-in scalar arguments stay in the Arguments table only.
+    assert!(!text.contains("| `limit` | Int |"), "{text}");
+
+    // Depth-limited: the argument row keeps its type and a retrieval command.
+    let shallow = run(&["--schema-depth", "0"]);
+    assert!(
+        shallow.contains("| `find` | ref LaunchFind | - | GraphQL input object; Omitted nested expansion at schema depth 0. Retrieve full detail:"),
+        "{shallow}"
+    );
+    assert!(shallow.contains("--schema 'LaunchFind'"), "{shallow}");
+    assert!(!shallow.contains("### LaunchFind"), "{shallow}");
+
+    // Inline mode expands under the argument name.
+    let inline = run(&["--inline-schemas"]);
+    assert!(inline.contains("| `find` | object | - | GraphQL input object |"));
+    assert!(
+        inline.contains("| `find.apoapsis_km` | Float | No |"),
+        "{inline}"
+    );
+}
+
+#[test]
+fn skill_endpoint_pages_link_argument_input_types() {
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().canonicalize().unwrap().join("skill");
+    binary()
+        .arg(fixture(OLD))
+        .args([
+            "--operation",
+            "QUERY Query.launchesPastResult",
+            "--detail",
+            "full",
+            "--include-schemas",
+            "--output-mode",
+            "skill",
+            "-o",
+        ])
+        .arg(&out)
+        .assert()
+        .success();
+    let endpoint = fs::read_dir(out.join("endpoints"))
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .find(|p| {
+            p.file_name()
+                .unwrap()
+                .to_string_lossy()
+                .starts_with("query-query-launchespastresult-")
+        })
+        .unwrap();
+    let page = fs::read_to_string(endpoint).unwrap();
+    assert!(
+        page.contains("| ` find ` | [LaunchFind](../schemas/launchfind-"),
+        "{page}"
+    );
+    let has_schema_page = fs::read_dir(out.join("schemas")).unwrap().any(|e| {
+        e.unwrap()
+            .file_name()
+            .to_string_lossy()
+            .starts_with("launchfind-")
+    });
+    assert!(has_schema_page);
+}

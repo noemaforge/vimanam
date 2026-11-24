@@ -282,6 +282,7 @@ impl Document {
                         if is_builtin(&def.name) {
                             continue;
                         }
+                        ensure_unique_members(&def, label)?;
                         if let Some((_, previous)) = types.get(&def.name) {
                             bail!(
                                 "Duplicate GraphQL type {} in {label} and {previous}",
@@ -1352,6 +1353,53 @@ fn sdl_type(t: &cst::Definition) -> Result<TypeDef> {
     }
 }
 
+/// Rejects a member name repeated inside one SDL definition (#163), with the
+/// same wording as [`extend`] uses for a duplicate added by an extension.
+fn ensure_unique<T>(
+    items: &[T],
+    key: impl Fn(&T) -> &str,
+    what: &str,
+    owner: &str,
+    label: &str,
+) -> Result<()> {
+    let mut seen = BTreeSet::new();
+    for item in items {
+        anyhow::ensure!(
+            seen.insert(key(item)),
+            "Duplicate GraphQL {what} {owner}.{} in {label}",
+            key(item)
+        );
+    }
+    Ok(())
+}
+
+/// Rejects duplicate argument names on each of `fields` of type `owner`.
+fn ensure_unique_args(fields: &[FieldDef], owner: &str, label: &str) -> Result<()> {
+    for f in fields {
+        ensure_unique(
+            &f.args,
+            |a| &a.name,
+            "argument",
+            &format!("{owner}.{}", f.name),
+            label,
+        )?;
+    }
+    Ok(())
+}
+
+/// Rejects duplicate fields, arguments, input fields, enum values, interfaces
+/// and union members inside a single SDL type definition, matching what
+/// [`extend`] already rejects across `extend` blocks.
+fn ensure_unique_members(def: &TypeDef, label: &str) -> Result<()> {
+    let owner = def.name.as_str();
+    ensure_unique(&def.fields, |f| &f.name, "field", owner, label)?;
+    ensure_unique_args(&def.fields, owner, label)?;
+    ensure_unique(&def.input_fields, |f| &f.name, "input field", owner, label)?;
+    ensure_unique(&def.values, |v| &v.name, "enum value", owner, label)?;
+    ensure_unique(&def.interfaces, |i| i, "interface", owner, label)?;
+    ensure_unique(&def.members, |m| m, "union member", owner, label)
+}
+
 fn extend<T>(
     list: &mut Vec<T>,
     items: impl IntoIterator<Item = T>,
@@ -1416,14 +1464,9 @@ fn apply_extension(
     match extension {
         X::ScalarTypeExtension(_) => {}
         X::ObjectTypeExtension(e) => {
-            extend(
-                &mut def.fields,
-                sdl_fields(e.fields_definition())?,
-                field_name,
-                "field",
-                &name,
-                label,
-            )?;
+            let fields = sdl_fields(e.fields_definition())?;
+            ensure_unique_args(&fields, &name, label)?;
+            extend(&mut def.fields, fields, field_name, "field", &name, label)?;
             extend(
                 &mut def.interfaces,
                 sdl_interfaces(e.implements_interfaces()),
@@ -1434,14 +1477,9 @@ fn apply_extension(
             )?;
         }
         X::InterfaceTypeExtension(e) => {
-            extend(
-                &mut def.fields,
-                sdl_fields(e.fields_definition())?,
-                field_name,
-                "field",
-                &name,
-                label,
-            )?;
+            let fields = sdl_fields(e.fields_definition())?;
+            ensure_unique_args(&fields, &name, label)?;
+            extend(&mut def.fields, fields, field_name, "field", &name, label)?;
             extend(
                 &mut def.interfaces,
                 sdl_interfaces(e.implements_interfaces()),

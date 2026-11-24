@@ -9,7 +9,8 @@ use crate::utils::extract_content_type;
 
 use super::examples::write_examples;
 use super::schema::{
-    SchemaContext, first_success_response, request_body_schema, response_schema, write_schema_table,
+    SchemaContext, first_success_response, request_schema_roots, response_schema,
+    write_schema_roots_table, write_schema_table,
 };
 
 /// Writes a single endpoint section; the amount of detail depends on `config.detail_level`.
@@ -134,13 +135,14 @@ pub(super) fn write_endpoint<W: Write>(
         }
 
         // Add schemas if configured. Roots match `rendered_endpoint_schemas`
-        // (request body + first 2xx) so pre-discovery and rendering stay aligned.
+        // (request roots + first 2xx) so pre-discovery and rendering stay aligned.
         if config.include_schemas && config.detail_level == DetailLevel::Full {
             writeln!(writer, "\n#### Request Schema")?;
-            if let Some(schema) = request_body_schema(endpoint) {
-                write_schema_table(writer, schema, "request", ctx)?;
-            } else {
+            let roots = request_schema_roots(endpoint);
+            if roots.is_empty() {
                 writeln!(writer, "*No request schema available*")?;
+            } else {
+                write_schema_roots_table(writer, &roots, ctx)?;
             }
 
             writeln!(writer, "\n#### Response Schema")?;
