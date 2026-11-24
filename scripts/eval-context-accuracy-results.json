@@ -2,99 +2,573 @@
   "meta": {
     "model": "claude-haiku-5-5",
     "vimanam_version": "vimanam 2.2.0",
+    "trials_per_cell": 3,
+    "raw_large_spec_trials": 1,
     "task_count": 10,
     "fitting_task_count": 8,
     "grading": "deterministic programmatic JSON assertions (no LLM judge)",
-    "isolation": "claude -p --tools '' --strict-mcp-config --setting-sources ''"
+    "isolation": "claude -p --tools '' --strict-mcp-config --setting-sources ''",
+    "stripe_prompt_too_long_count": 2
+  },
+  "summary_8_fitting_tasks_apples_to_apples": {
+    "no_spec": {
+      "tasks_total": 8,
+      "mean_task_pass_rate": 0.208,
+      "mean_assertions_passed": 9.33,
+      "assertions_total": 42,
+      "mean_assertion_rate": 0.222,
+      "sum_api_input_tokens_median": 10234,
+      "sum_cost_usd_mean": 0.002577,
+      "sum_duration_api_ms_median": 20232,
+      "tasks_ok": 8,
+      "tasks_prompt_too_long": 0
+    },
+    "summary": {
+      "tasks_total": 8,
+      "mean_task_pass_rate": 0.208,
+      "mean_assertions_passed": 13.0,
+      "assertions_total": 42,
+      "mean_assertion_rate": 0.31,
+      "sum_api_input_tokens_median": 21047,
+      "sum_cost_usd_mean": 0.00383,
+      "sum_duration_api_ms_median": 25947,
+      "tasks_ok": 8,
+      "tasks_prompt_too_long": 0
+    },
+    "routed_e2e": {
+      "tasks_total": 8,
+      "mean_task_pass_rate": 0.833,
+      "mean_assertions_passed": 40.33,
+      "assertions_total": 42,
+      "mean_assertion_rate": 0.96,
+      "sum_api_input_tokens_median": 98473,
+      "sum_cost_usd_mean": 0.011815,
+      "sum_duration_api_ms_median": 43671,
+      "mean_turns": 2,
+      "mean_followup_rate": 0.0,
+      "mean_route_cmd_ok_rate": 1.0,
+      "tasks_ok": 8,
+      "tasks_prompt_too_long": 0
+    },
+    "oracle_slice": {
+      "tasks_total": 8,
+      "mean_task_pass_rate": 0.458,
+      "mean_assertions_passed": 32.0,
+      "assertions_total": 42,
+      "mean_assertion_rate": 0.762,
+      "sum_api_input_tokens_median": 26253,
+      "sum_cost_usd_mean": 0.003905,
+      "sum_duration_api_ms_median": 79137,
+      "tasks_ok": 8,
+      "tasks_prompt_too_long": 0
+    },
+    "raw_spec": {
+      "tasks_total": 8,
+      "mean_task_pass_rate": 1.0,
+      "mean_assertions_passed": 42,
+      "assertions_total": 42,
+      "mean_assertion_rate": 1.0,
+      "sum_api_input_tokens_median": 1741037,
+      "sum_cost_usd_mean": 1.319705,
+      "sum_duration_api_ms_median": 19333,
+      "tasks_ok": 8,
+      "tasks_prompt_too_long": 0
+    }
+  },
+  "summary_2_stripe_7_9mb_tasks": {
+    "no_spec": {
+      "tasks_total": 2,
+      "mean_task_pass_rate": 0.0,
+      "mean_assertions_passed": 0,
+      "assertions_total": 8,
+      "mean_assertion_rate": 0.0,
+      "sum_api_input_tokens_median": 2517,
+      "sum_cost_usd_mean": 0.000683,
+      "sum_duration_api_ms_median": 5702,
+      "tasks_ok": 2,
+      "tasks_prompt_too_long": 0
+    },
+    "summary": {
+      "tasks_total": 2,
+      "mean_task_pass_rate": 0.0,
+      "mean_assertions_passed": 2,
+      "assertions_total": 8,
+      "mean_assertion_rate": 0.25,
+      "sum_api_input_tokens_median": 24057,
+      "sum_cost_usd_mean": 0.002217,
+      "sum_duration_api_ms_median": 5306,
+      "tasks_ok": 2,
+      "tasks_prompt_too_long": 0
+    },
+    "routed_e2e": {
+      "tasks_total": 2,
+      "mean_task_pass_rate": 0.5,
+      "mean_assertions_passed": 7,
+      "assertions_total": 8,
+      "mean_assertion_rate": 0.875,
+      "sum_api_input_tokens_median": 598784,
+      "sum_cost_usd_mean": 0.199837,
+      "sum_duration_api_ms_median": 12855,
+      "mean_turns": 2,
+      "mean_followup_rate": 0.0,
+      "mean_route_cmd_ok_rate": 1.0,
+      "tasks_ok": 2,
+      "tasks_prompt_too_long": 0
+    },
+    "oracle_slice": {
+      "tasks_total": 2,
+      "mean_task_pass_rate": 0.834,
+      "mean_assertions_passed": 7.67,
+      "assertions_total": 8,
+      "mean_assertion_rate": 0.959,
+      "sum_api_input_tokens_median": 34031,
+      "sum_cost_usd_mean": 0.002958,
+      "sum_duration_api_ms_median": 5238,
+      "tasks_ok": 2,
+      "tasks_prompt_too_long": 0
+    },
+    "raw_spec": {
+      "tasks_total": 2,
+      "mean_task_pass_rate": 0.0,
+      "mean_assertions_passed": 0.0,
+      "assertions_total": 8,
+      "mean_assertion_rate": 0.0,
+      "sum_api_input_tokens_median": 0,
+      "sum_cost_usd_mean": 0,
+      "sum_duration_api_ms_median": 0,
+      "tasks_ok": 0,
+      "tasks_prompt_too_long": 2
+    }
   },
   "summary_all_10_tasks": {
     "no_spec": {
-      "tasks_passed": 2,
       "tasks_total": 10,
-      "assertions_passed": 12,
+      "mean_task_pass_rate": 0.167,
+      "mean_assertions_passed": 9.33,
       "assertions_total": 50,
-      "context_overflow_tasks": 0,
-      "total_bpe_o200k": 0,
-      "total_api_input_tokens": 12751,
-      "total_duration_api_ms": 29609,
-      "total_cost_usd": 0.00496
+      "mean_assertion_rate": 0.187,
+      "sum_api_input_tokens_median": 12751,
+      "sum_cost_usd_mean": 0.00326,
+      "sum_duration_api_ms_median": 25934,
+      "tasks_ok": 10,
+      "tasks_prompt_too_long": 0
     },
     "summary": {
-      "tasks_passed": 3,
       "tasks_total": 10,
-      "assertions_passed": 25,
+      "mean_task_pass_rate": 0.167,
+      "mean_assertions_passed": 15.0,
       "assertions_total": 50,
-      "context_overflow_tasks": 0,
-      "total_bpe_o200k": 15788,
-      "total_api_input_tokens": 45104,
-      "total_duration_api_ms": 34009,
-      "total_cost_usd": 0.012137
+      "mean_assertion_rate": 0.3,
+      "sum_api_input_tokens_median": 45104,
+      "sum_cost_usd_mean": 0.006047,
+      "sum_duration_api_ms_median": 31253,
+      "tasks_ok": 10,
+      "tasks_prompt_too_long": 0
+    },
+    "routed_e2e": {
+      "tasks_total": 10,
+      "mean_task_pass_rate": 0.767,
+      "mean_assertions_passed": 47.33,
+      "assertions_total": 50,
+      "mean_assertion_rate": 0.947,
+      "sum_api_input_tokens_median": 697257,
+      "sum_cost_usd_mean": 0.211652,
+      "sum_duration_api_ms_median": 56526,
+      "mean_turns": 2,
+      "mean_followup_rate": 0.0,
+      "mean_route_cmd_ok_rate": 1.0,
+      "tasks_ok": 10,
+      "tasks_prompt_too_long": 0
+    },
+    "oracle_slice": {
+      "tasks_total": 10,
+      "mean_task_pass_rate": 0.533,
+      "mean_assertions_passed": 39.67,
+      "assertions_total": 50,
+      "mean_assertion_rate": 0.793,
+      "sum_api_input_tokens_median": 60284,
+      "sum_cost_usd_mean": 0.006863,
+      "sum_duration_api_ms_median": 84375,
+      "tasks_ok": 10,
+      "tasks_prompt_too_long": 0
     },
     "raw_spec": {
-      "tasks_passed": 8,
       "tasks_total": 10,
-      "assertions_passed": 42,
+      "mean_task_pass_rate": 0.8,
+      "mean_assertions_passed": 42.0,
       "assertions_total": 50,
-      "context_overflow_tasks": 2,
-      "total_bpe_o200k": 3987803,
-      "total_api_input_tokens": 1741037,
-      "total_duration_api_ms": 18175,
-      "total_cost_usd": 1.711876
-    },
-    "focused_slice": {
-      "tasks_passed": 6,
-      "tasks_total": 10,
-      "assertions_passed": 42,
-      "assertions_total": 50,
-      "context_overflow_tasks": 0,
-      "total_bpe_o200k": 28642,
-      "total_api_input_tokens": 58664,
-      "total_duration_api_ms": 28545,
-      "total_cost_usd": 0.014297
+      "mean_assertion_rate": 0.84,
+      "sum_api_input_tokens_median": 1741037,
+      "sum_cost_usd_mean": 1.319705,
+      "sum_duration_api_ms_median": 19333,
+      "tasks_ok": 8,
+      "tasks_prompt_too_long": 2
     }
   },
-  "summary_8_tasks_where_raw_fits": {
-    "no_spec": {
-      "tasks_passed": 2,
-      "tasks_total": 8,
-      "assertions_passed": 12,
-      "assertions_total": 42,
-      "total_bpe_o200k": 0,
-      "total_api_input_tokens": 10234,
-      "total_duration_api_ms": 24242,
-      "total_cost_usd": 0.004024
+  "claude_vs_o200k_calibration_summary": {
+    "GraphQL SDL": {
+      "samples": 2,
+      "median_chars_per_o200k": 3.83,
+      "median_chars_per_claude": 2.38,
+      "median_claude_over_o200k": 1.6
     },
-    "summary": {
-      "tasks_passed": 3,
-      "tasks_total": 8,
-      "assertions_passed": 23,
-      "assertions_total": 42,
-      "total_bpe_o200k": 5806,
-      "total_api_input_tokens": 21047,
-      "total_duration_api_ms": 28628,
-      "total_cost_usd": 0.006887
+    "Markdown": {
+      "samples": 16,
+      "median_chars_per_o200k": 4.11,
+      "median_chars_per_claude": 2.4,
+      "median_claude_over_o200k": 1.65
     },
-    "raw_spec": {
-      "tasks_passed": 8,
-      "tasks_total": 8,
-      "assertions_passed": 42,
-      "assertions_total": 42,
-      "total_bpe_o200k": 1151315,
-      "total_api_input_tokens": 1741037,
-      "total_duration_api_ms": 18175,
-      "total_cost_usd": 1.711876
+    "OpenAPI YAML": {
+      "samples": 3,
+      "median_chars_per_o200k": 4.89,
+      "median_chars_per_claude": 3.38,
+      "median_claude_over_o200k": 1.45
     },
-    "focused_slice": {
-      "tasks_passed": 4,
-      "tasks_total": 8,
-      "assertions_passed": 34,
-      "assertions_total": 42,
-      "total_bpe_o200k": 9762,
-      "total_api_input_tokens": 26253,
-      "total_duration_api_ms": 23613,
-      "total_cost_usd": 0.007412
+    "Protobuf / gRPC": {
+      "samples": 3,
+      "median_chars_per_o200k": 4.26,
+      "median_chars_per_claude": 2.72,
+      "median_claude_over_o200k": 1.57
     }
   },
+  "claude_vs_o200k_calibration_rows": [
+    {
+      "task": "oa_embeddings",
+      "condition": "summary",
+      "format": "Markdown",
+      "chars": 3692,
+      "chars_div_4": 923,
+      "o200k_bpe": 1041,
+      "claude_tokens": 1668,
+      "chars_per_o200k": 3.55,
+      "chars_per_claude": 2.21,
+      "claude_over_o200k": 1.6
+    },
+    {
+      "task": "oa_embeddings",
+      "condition": "oracle_slice",
+      "format": "Markdown",
+      "chars": 4123,
+      "chars_div_4": 1031,
+      "o200k_bpe": 988,
+      "claude_tokens": 1658,
+      "chars_per_o200k": 4.17,
+      "chars_per_claude": 2.49,
+      "claude_over_o200k": 1.68
+    },
+    {
+      "task": "oa_embeddings",
+      "condition": "raw_spec",
+      "format": "OpenAPI YAML",
+      "chars": 1375985,
+      "chars_div_4": 343997,
+      "o200k_bpe": 281146,
+      "claude_tokens": 406737,
+      "chars_per_o200k": 4.89,
+      "chars_per_claude": 3.38,
+      "claude_over_o200k": 1.45
+    },
+    {
+      "task": "oa_batches",
+      "condition": "summary",
+      "format": "Markdown",
+      "chars": 3692,
+      "chars_div_4": 923,
+      "o200k_bpe": 1041,
+      "claude_tokens": 1668,
+      "chars_per_o200k": 3.55,
+      "chars_per_claude": 2.21,
+      "claude_over_o200k": 1.6
+    },
+    {
+      "task": "oa_batches",
+      "condition": "oracle_slice",
+      "format": "Markdown",
+      "chars": 5929,
+      "chars_div_4": 1483,
+      "o200k_bpe": 1480,
+      "claude_tokens": 2289,
+      "chars_per_o200k": 4.01,
+      "chars_per_claude": 2.59,
+      "claude_over_o200k": 1.55
+    },
+    {
+      "task": "oa_batches",
+      "condition": "raw_spec",
+      "format": "OpenAPI YAML",
+      "chars": 1375985,
+      "chars_div_4": 343997,
+      "o200k_bpe": 281146,
+      "claude_tokens": 406737,
+      "chars_per_o200k": 4.89,
+      "chars_per_claude": 3.38,
+      "claude_over_o200k": 1.45
+    },
+    {
+      "task": "oa_files",
+      "condition": "summary",
+      "format": "Markdown",
+      "chars": 3692,
+      "chars_div_4": 923,
+      "o200k_bpe": 1041,
+      "claude_tokens": 1668,
+      "chars_per_o200k": 3.55,
+      "chars_per_claude": 2.21,
+      "claude_over_o200k": 1.6
+    },
+    {
+      "task": "oa_files",
+      "condition": "oracle_slice",
+      "format": "Markdown",
+      "chars": 4067,
+      "chars_div_4": 1017,
+      "o200k_bpe": 1050,
+      "claude_tokens": 1585,
+      "chars_per_o200k": 3.87,
+      "chars_per_claude": 2.57,
+      "claude_over_o200k": 1.51
+    },
+    {
+      "task": "oa_files",
+      "condition": "raw_spec",
+      "format": "OpenAPI YAML",
+      "chars": 1375985,
+      "chars_div_4": 343997,
+      "o200k_bpe": 281146,
+      "claude_tokens": 406737,
+      "chars_per_o200k": 4.89,
+      "chars_per_claude": 3.38,
+      "claude_over_o200k": 1.45
+    },
+    {
+      "task": "oa_stripe_customers",
+      "condition": "summary",
+      "format": "Markdown",
+      "chars": 20594,
+      "chars_div_4": 5149,
+      "o200k_bpe": 4991,
+      "claude_tokens": 10770,
+      "chars_per_o200k": 4.13,
+      "chars_per_claude": 1.91,
+      "claude_over_o200k": 2.16
+    },
+    {
+      "task": "oa_stripe_customers",
+      "condition": "oracle_slice",
+      "format": "Markdown",
+      "chars": 15819,
+      "chars_div_4": 3955,
+      "o200k_bpe": 3825,
+      "claude_tokens": 5997,
+      "chars_per_o200k": 4.14,
+      "chars_per_claude": 2.64,
+      "claude_over_o200k": 1.57
+    },
+    {
+      "task": "oa_stripe_payment_intents",
+      "condition": "summary",
+      "format": "Markdown",
+      "chars": 20594,
+      "chars_div_4": 5149,
+      "o200k_bpe": 4991,
+      "claude_tokens": 10770,
+      "chars_per_o200k": 4.13,
+      "chars_per_claude": 1.91,
+      "claude_over_o200k": 2.16
+    },
+    {
+      "task": "oa_stripe_payment_intents",
+      "condition": "oracle_slice",
+      "format": "Markdown",
+      "chars": 63561,
+      "chars_div_4": 15891,
+      "o200k_bpe": 15865,
+      "claude_tokens": 25517,
+      "chars_per_o200k": 4.01,
+      "chars_per_claude": 2.49,
+      "claude_over_o200k": 1.61
+    },
+    {
+      "task": "pb_health_watch",
+      "condition": "summary",
+      "format": "Markdown",
+      "chars": 265,
+      "chars_div_4": 67,
+      "o200k_bpe": 62,
+      "claude_tokens": 116,
+      "chars_per_o200k": 4.27,
+      "chars_per_claude": 2.28,
+      "claude_over_o200k": 1.87
+    },
+    {
+      "task": "pb_health_watch",
+      "condition": "oracle_slice",
+      "format": "Markdown",
+      "chars": 3474,
+      "chars_div_4": 869,
+      "o200k_bpe": 825,
+      "claude_tokens": 1429,
+      "chars_per_o200k": 4.21,
+      "chars_per_claude": 2.43,
+      "claude_over_o200k": 1.73
+    },
+    {
+      "task": "pb_health_watch",
+      "condition": "raw_spec",
+      "format": "Protobuf / gRPC",
+      "chars": 2416,
+      "chars_div_4": 604,
+      "o200k_bpe": 549,
+      "claude_tokens": 889,
+      "chars_per_o200k": 4.4,
+      "chars_per_claude": 2.72,
+      "claude_over_o200k": 1.62
+    },
+    {
+      "task": "pb_otel_trace",
+      "condition": "summary",
+      "format": "Markdown",
+      "chars": 294,
+      "chars_div_4": 74,
+      "o200k_bpe": 66,
+      "claude_tokens": 122,
+      "chars_per_o200k": 4.45,
+      "chars_per_claude": 2.41,
+      "claude_over_o200k": 1.85
+    },
+    {
+      "task": "pb_otel_trace",
+      "condition": "oracle_slice",
+      "format": "Markdown",
+      "chars": 5731,
+      "chars_div_4": 1433,
+      "o200k_bpe": 1393,
+      "claude_tokens": 2372,
+      "chars_per_o200k": 4.11,
+      "chars_per_claude": 2.42,
+      "claude_over_o200k": 1.7
+    },
+    {
+      "task": "pb_otel_trace",
+      "condition": "raw_spec",
+      "format": "Protobuf / gRPC",
+      "chars": 28249,
+      "chars_div_4": 7063,
+      "o200k_bpe": 6717,
+      "claude_tokens": 10525,
+      "chars_per_o200k": 4.21,
+      "chars_per_claude": 2.68,
+      "claude_over_o200k": 1.57
+    },
+    {
+      "task": "pb_otel_metrics",
+      "condition": "summary",
+      "format": "Markdown",
+      "chars": 302,
+      "chars_div_4": 76,
+      "o200k_bpe": 68,
+      "claude_tokens": 126,
+      "chars_per_o200k": 4.44,
+      "chars_per_claude": 2.4,
+      "claude_over_o200k": 1.85
+    },
+    {
+      "task": "pb_otel_metrics",
+      "condition": "oracle_slice",
+      "format": "Markdown",
+      "chars": 5834,
+      "chars_div_4": 1459,
+      "o200k_bpe": 1376,
+      "claude_tokens": 2442,
+      "chars_per_o200k": 4.24,
+      "chars_per_claude": 2.39,
+      "claude_over_o200k": 1.77
+    },
+    {
+      "task": "pb_otel_metrics",
+      "condition": "raw_spec",
+      "format": "Protobuf / gRPC",
+      "chars": 43704,
+      "chars_div_4": 10926,
+      "o200k_bpe": 10266,
+      "claude_tokens": 15932,
+      "chars_per_o200k": 4.26,
+      "chars_per_claude": 2.74,
+      "claude_over_o200k": 1.55
+    },
+    {
+      "task": "gql_spacex_launches",
+      "condition": "summary",
+      "format": "Markdown",
+      "chars": 855,
+      "chars_div_4": 214,
+      "o200k_bpe": 251,
+      "claude_tokens": 393,
+      "chars_per_o200k": 3.41,
+      "chars_per_claude": 2.18,
+      "claude_over_o200k": 1.57
+    },
+    {
+      "task": "gql_spacex_launches",
+      "condition": "oracle_slice",
+      "format": "Markdown",
+      "chars": 6021,
+      "chars_div_4": 1506,
+      "o200k_bpe": 1746,
+      "claude_tokens": 2695,
+      "chars_per_o200k": 3.45,
+      "chars_per_claude": 2.23,
+      "claude_over_o200k": 1.54
+    },
+    {
+      "task": "gql_spacex_launches",
+      "condition": "raw_spec",
+      "format": "GraphQL SDL",
+      "chars": 12439,
+      "chars_div_4": 3110,
+      "o200k_bpe": 3672,
+      "claude_tokens": 5623,
+      "chars_per_o200k": 3.39,
+      "chars_per_claude": 2.21,
+      "claude_over_o200k": 1.53
+    },
+    {
+      "task": "gql_github_create_issue",
+      "condition": "summary",
+      "format": "Markdown",
+      "chars": 10135,
+      "chars_div_4": 2534,
+      "o200k_bpe": 2236,
+      "claude_tokens": 5052,
+      "chars_per_o200k": 4.53,
+      "chars_per_claude": 2.01,
+      "claude_over_o200k": 2.26
+    },
+    {
+      "task": "gql_github_create_issue",
+      "condition": "oracle_slice",
+      "format": "Markdown",
+      "chars": 3715,
+      "chars_div_4": 929,
+      "o200k_bpe": 904,
+      "claude_tokens": 1549,
+      "chars_per_o200k": 4.11,
+      "chars_per_claude": 2.4,
+      "claude_over_o200k": 1.71
+    },
+    {
+      "task": "gql_github_create_issue",
+      "condition": "raw_spec",
+      "format": "GraphQL SDL",
+      "chars": 1223834,
+      "chars_div_4": 305959,
+      "o200k_bpe": 286673,
+      "claude_tokens": 477623,
+      "chars_per_o200k": 4.27,
+      "chars_per_claude": 2.56,
+      "claude_over_o200k": 1.67
+    }
+  ],
   "tasks": [
     {
       "id": "oa_embeddings",
@@ -103,79 +577,375 @@
       "conditions": {
         "no_spec": {
           "status": "ok",
-          "context_bpe_o200k": 0,
-          "context_chars_div_4": 0,
-          "api_input_tokens": 1267,
-          "api_output_tokens": 277,
-          "duration_api_ms": 1910,
-          "cost_usd": 0.000392,
-          "task_passed": false,
-          "assertions_passed": 0,
+          "trials": 3,
+          "tasks_passed": 0,
+          "task_pass_rate": 0.0,
+          "assertions_mean": 0,
+          "assertions_min": 0,
+          "assertions_max": 0,
           "assertions_total": 5,
-          "checks": {
-            "operation_id": false,
-            "required_fields": false,
-            "encoding_format_enum": false,
-            "dimensions_type": false,
-            "response_schema": false
-          }
+          "api_input_tokens_median": 1267,
+          "duration_api_ms_median": 1558,
+          "cost_usd_mean": 0.000131,
+          "trial_details": [
+            {
+              "status": "ok",
+              "model": "claude-haiku-5-5",
+              "api_input_tokens": 1267,
+              "api_output_tokens": 247,
+              "duration_api_ms": 1871,
+              "cost_usd": 0.000136,
+              "task_passed": false,
+              "assertions_passed": 0,
+              "assertions_total": 5,
+              "checks": {
+                "operation_id": false,
+                "required_fields": false,
+                "encoding_format_enum": false,
+                "dimensions_type": false,
+                "response_schema": false
+              }
+            },
+            {
+              "status": "ok",
+              "model": "claude-haiku-5-5",
+              "api_input_tokens": 1267,
+              "api_output_tokens": 243,
+              "duration_api_ms": 1558,
+              "cost_usd": 0.000134,
+              "task_passed": false,
+              "assertions_passed": 0,
+              "assertions_total": 5,
+              "checks": {
+                "operation_id": false,
+                "required_fields": false,
+                "encoding_format_enum": false,
+                "dimensions_type": false,
+                "response_schema": false
+              }
+            },
+            {
+              "status": "ok",
+              "model": "claude-haiku-5-5",
+              "api_input_tokens": 1267,
+              "api_output_tokens": 221,
+              "duration_api_ms": 1558,
+              "cost_usd": 0.000123,
+              "task_passed": false,
+              "assertions_passed": 0,
+              "assertions_total": 5,
+              "checks": {
+                "operation_id": false,
+                "required_fields": false,
+                "encoding_format_enum": false,
+                "dimensions_type": false,
+                "response_schema": false
+              }
+            }
+          ],
+          "context_bpe_o200k": 0,
+          "context_chars": 0,
+          "context_chars_div_4": 0
         },
         "summary": {
           "status": "ok",
-          "context_bpe_o200k": 1041,
-          "context_chars_div_4": 923,
-          "api_input_tokens": 2935,
-          "api_output_tokens": 393,
-          "duration_api_ms": 2290,
-          "cost_usd": 0.000783,
-          "task_passed": false,
-          "assertions_passed": 1,
+          "trials": 3,
+          "tasks_passed": 0,
+          "task_pass_rate": 0.0,
+          "assertions_mean": 1,
+          "assertions_min": 1,
+          "assertions_max": 1,
           "assertions_total": 5,
-          "checks": {
-            "operation_id": true,
-            "required_fields": false,
-            "encoding_format_enum": false,
-            "dimensions_type": false,
-            "response_schema": false
-          }
+          "api_input_tokens_median": 2935,
+          "duration_api_ms_median": 2266,
+          "cost_usd_mean": 0.000212,
+          "trial_details": [
+            {
+              "status": "ok",
+              "model": "claude-haiku-5-5",
+              "api_input_tokens": 2935,
+              "api_output_tokens": 321,
+              "duration_api_ms": 2208,
+              "cost_usd": 0.00019,
+              "task_passed": false,
+              "assertions_passed": 1,
+              "assertions_total": 5,
+              "checks": {
+                "operation_id": true,
+                "required_fields": false,
+                "encoding_format_enum": false,
+                "dimensions_type": false,
+                "response_schema": false
+              }
+            },
+            {
+              "status": "ok",
+              "model": "claude-haiku-5-5",
+              "api_input_tokens": 2935,
+              "api_output_tokens": 338,
+              "duration_api_ms": 2266,
+              "cost_usd": 0.000199,
+              "task_passed": false,
+              "assertions_passed": 1,
+              "assertions_total": 5,
+              "checks": {
+                "operation_id": true,
+                "required_fields": false,
+                "encoding_format_enum": false,
+                "dimensions_type": false,
+                "response_schema": false
+              }
+            },
+            {
+              "status": "ok",
+              "model": "claude-haiku-5-5",
+              "api_input_tokens": 2935,
+              "api_output_tokens": 436,
+              "duration_api_ms": 2764,
+              "cost_usd": 0.000248,
+              "task_passed": false,
+              "assertions_passed": 1,
+              "assertions_total": 5,
+              "checks": {
+                "operation_id": true,
+                "required_fields": false,
+                "encoding_format_enum": false,
+                "dimensions_type": false,
+                "response_schema": false
+              }
+            }
+          ],
+          "context_bpe_o200k": 1041,
+          "context_chars": 3692,
+          "context_chars_div_4": 923,
+          "claude_context_tokens_est": 1668,
+          "claude_vs_o200k_ratio": 1.6,
+          "chars_per_claude_token": 2.21
+        },
+        "routed_e2e": {
+          "status": "ok",
+          "trials": 3,
+          "tasks_passed": 3,
+          "task_pass_rate": 1.0,
+          "assertions_mean": 5,
+          "assertions_min": 5,
+          "assertions_max": 5,
+          "assertions_total": 5,
+          "api_input_tokens_median": 8729,
+          "duration_api_ms_median": 5179,
+          "cost_usd_mean": 0.000562,
+          "trial_details": [
+            {
+              "status": "ok",
+              "model": "claude-haiku-5-5",
+              "turns": 2,
+              "routed_cmd_ok": true,
+              "followup_used": false,
+              "route_choice": {
+                "operation_id": "createEmbedding",
+                "operation": null,
+                "schemas": [
+                  "CreateEmbeddingRequest",
+                  "CreateEmbeddingResponse",
+                  "Embedding"
+                ]
+              },
+              "total_context_bpe_o200k": 3504,
+              "api_input_tokens": 8729,
+              "api_output_tokens": 931,
+              "duration_api_ms": 4998,
+              "cost_usd": 0.000553,
+              "task_passed": true,
+              "assertions_passed": 5,
+              "assertions_total": 5,
+              "checks": {
+                "operation_id": true,
+                "required_fields": true,
+                "encoding_format_enum": true,
+                "dimensions_type": true,
+                "response_schema": true
+              }
+            },
+            {
+              "status": "ok",
+              "model": "claude-haiku-5-5",
+              "turns": 2,
+              "routed_cmd_ok": true,
+              "followup_used": false,
+              "route_choice": {
+                "operation_id": "createEmbedding",
+                "operation": null,
+                "schemas": [
+                  "CreateEmbeddingRequest",
+                  "CreateEmbeddingResponse",
+                  "Embedding"
+                ]
+              },
+              "total_context_bpe_o200k": 3504,
+              "api_input_tokens": 8729,
+              "api_output_tokens": 880,
+              "duration_api_ms": 5179,
+              "cost_usd": 0.000528,
+              "task_passed": true,
+              "assertions_passed": 5,
+              "assertions_total": 5,
+              "checks": {
+                "operation_id": true,
+                "required_fields": true,
+                "encoding_format_enum": true,
+                "dimensions_type": true,
+                "response_schema": true
+              }
+            },
+            {
+              "status": "ok",
+              "model": "claude-haiku-5-5",
+              "turns": 2,
+              "routed_cmd_ok": true,
+              "followup_used": false,
+              "route_choice": {
+                "operation_id": "createEmbedding",
+                "operation": null,
+                "schemas": [
+                  "CreateEmbeddingRequest",
+                  "CreateEmbeddingResponse"
+                ]
+              },
+              "total_context_bpe_o200k": 3260,
+              "api_input_tokens": 8336,
+              "api_output_tokens": 1044,
+              "duration_api_ms": 5660,
+              "cost_usd": 0.000606,
+              "task_passed": true,
+              "assertions_passed": 5,
+              "assertions_total": 5,
+              "checks": {
+                "operation_id": true,
+                "required_fields": true,
+                "encoding_format_enum": true,
+                "dimensions_type": true,
+                "response_schema": true
+              }
+            }
+          ],
+          "turns_mean": 2,
+          "followup_rate": 0.0,
+          "route_cmd_ok_rate": 1.0,
+          "total_context_bpe_o200k_median": 3504
+        },
+        "oracle_slice": {
+          "status": "ok",
+          "trials": 3,
+          "tasks_passed": 2,
+          "task_pass_rate": 0.667,
+          "assertions_mean": 4.67,
+          "assertions_min": 4,
+          "assertions_max": 5,
+          "assertions_total": 5,
+          "api_input_tokens_median": 2925,
+          "duration_api_ms_median": 2665,
+          "cost_usd_mean": 0.000274,
+          "trial_details": [
+            {
+              "status": "ok",
+              "model": "claude-haiku-5-5",
+              "api_input_tokens": 2925,
+              "api_output_tokens": 408,
+              "duration_api_ms": 2314,
+              "cost_usd": 0.000233,
+              "task_passed": true,
+              "assertions_passed": 5,
+              "assertions_total": 5,
+              "checks": {
+                "operation_id": true,
+                "required_fields": true,
+                "encoding_format_enum": true,
+                "dimensions_type": true,
+                "response_schema": true
+              }
+            },
+            {
+              "status": "ok",
+              "model": "claude-haiku-5-5",
+              "api_input_tokens": 2925,
+              "api_output_tokens": 499,
+              "duration_api_ms": 2665,
+              "cost_usd": 0.000279,
+              "task_passed": true,
+              "assertions_passed": 5,
+              "assertions_total": 5,
+              "checks": {
+                "operation_id": true,
+                "required_fields": true,
+                "encoding_format_enum": true,
+                "dimensions_type": true,
+                "response_schema": true
+              }
+            },
+            {
+              "status": "ok",
+              "model": "claude-haiku-5-5",
+              "api_input_tokens": 2925,
+              "api_output_tokens": 559,
+              "duration_api_ms": 2976,
+              "cost_usd": 0.000309,
+              "task_passed": false,
+              "assertions_passed": 4,
+              "assertions_total": 5,
+              "checks": {
+                "operation_id": true,
+                "required_fields": true,
+                "encoding_format_enum": true,
+                "dimensions_type": true,
+                "response_schema": false
+              }
+            }
+          ],
+          "context_bpe_o200k": 988,
+          "context_chars": 4123,
+          "context_chars_div_4": 1031,
+          "claude_context_tokens_est": 1658,
+          "claude_vs_o200k_ratio": 1.68,
+          "chars_per_claude_token": 2.49
         },
         "raw_spec": {
           "status": "ok",
+          "trials": 1,
+          "tasks_passed": 1,
+          "task_pass_rate": 1.0,
+          "assertions_mean": 5,
+          "assertions_min": 5,
+          "assertions_max": 5,
+          "assertions_total": 5,
+          "api_input_tokens_median": 408004,
+          "duration_api_ms_median": 3392,
+          "cost_usd_mean": 0.020609,
+          "trial_details": [
+            {
+              "status": "ok",
+              "model": "claude-haiku-5-5",
+              "api_input_tokens": 408004,
+              "api_output_tokens": 83,
+              "duration_api_ms": 3392,
+              "cost_usd": 0.020609,
+              "task_passed": true,
+              "assertions_passed": 5,
+              "assertions_total": 5,
+              "checks": {
+                "operation_id": true,
+                "required_fields": true,
+                "encoding_format_enum": true,
+                "dimensions_type": true,
+                "response_schema": true
+              }
+            }
+          ],
           "context_bpe_o200k": 281146,
+          "context_chars": 1375985,
           "context_chars_div_4": 343997,
-          "api_input_tokens": 408004,
-          "api_output_tokens": 83,
-          "duration_api_ms": 3221,
-          "cost_usd": 0.40821,
-          "task_passed": true,
-          "assertions_passed": 5,
-          "assertions_total": 5,
-          "checks": {
-            "operation_id": true,
-            "required_fields": true,
-            "encoding_format_enum": true,
-            "dimensions_type": true,
-            "response_schema": true
-          }
-        },
-        "focused_slice": {
-          "status": "ok",
-          "context_bpe_o200k": 988,
-          "context_chars_div_4": 1031,
-          "api_input_tokens": 2925,
-          "api_output_tokens": 379,
-          "duration_api_ms": 2372,
-          "cost_usd": 0.000774,
-          "task_passed": true,
-          "assertions_passed": 5,
-          "assertions_total": 5,
-          "checks": {
-            "operation_id": true,
-            "required_fields": true,
-            "encoding_format_enum": true,
-            "dimensions_type": true,
-            "response_schema": true
-          }
+          "claude_context_tokens_est": 406737,
+          "claude_vs_o200k_ratio": 1.45,
+          "chars_per_claude_token": 3.38
         }
       }
     },
@@ -186,79 +956,367 @@
       "conditions": {
         "no_spec": {
           "status": "ok",
-          "context_bpe_o200k": 0,
-          "context_chars_div_4": 0,
-          "api_input_tokens": 1261,
-          "api_output_tokens": 289,
-          "duration_api_ms": 1946,
-          "cost_usd": 0.000396,
-          "task_passed": false,
-          "assertions_passed": 0,
+          "trials": 3,
+          "tasks_passed": 0,
+          "task_pass_rate": 0.0,
+          "assertions_mean": 0,
+          "assertions_min": 0,
+          "assertions_max": 0,
           "assertions_total": 5,
-          "checks": {
-            "operation_id": false,
-            "required_fields": false,
-            "completion_window_value": false,
-            "supported_endpoints": false,
-            "response_schema": false
-          }
+          "api_input_tokens_median": 1261,
+          "duration_api_ms_median": 1793,
+          "cost_usd_mean": 0.000136,
+          "trial_details": [
+            {
+              "status": "ok",
+              "model": "claude-haiku-5-5",
+              "api_input_tokens": 1261,
+              "api_output_tokens": 210,
+              "duration_api_ms": 1635,
+              "cost_usd": 0.000118,
+              "task_passed": false,
+              "assertions_passed": 0,
+              "assertions_total": 5,
+              "checks": {
+                "operation_id": false,
+                "required_fields": false,
+                "completion_window_value": false,
+                "supported_endpoints": false,
+                "response_schema": false
+              }
+            },
+            {
+              "status": "ok",
+              "model": "claude-haiku-5-5",
+              "api_input_tokens": 1261,
+              "api_output_tokens": 277,
+              "duration_api_ms": 1793,
+              "cost_usd": 0.000151,
+              "task_passed": false,
+              "assertions_passed": 0,
+              "assertions_total": 5,
+              "checks": {
+                "operation_id": false,
+                "required_fields": false,
+                "completion_window_value": false,
+                "supported_endpoints": false,
+                "response_schema": false
+              }
+            },
+            {
+              "status": "ok",
+              "model": "claude-haiku-5-5",
+              "api_input_tokens": 1261,
+              "api_output_tokens": 254,
+              "duration_api_ms": 3542,
+              "cost_usd": 0.00014,
+              "task_passed": false,
+              "assertions_passed": 0,
+              "assertions_total": 5,
+              "checks": {
+                "operation_id": false,
+                "required_fields": false,
+                "completion_window_value": false,
+                "supported_endpoints": false,
+                "response_schema": false
+              }
+            }
+          ],
+          "context_bpe_o200k": 0,
+          "context_chars": 0,
+          "context_chars_div_4": 0
         },
         "summary": {
           "status": "ok",
-          "context_bpe_o200k": 1041,
-          "context_chars_div_4": 923,
-          "api_input_tokens": 2929,
-          "api_output_tokens": 498,
-          "duration_api_ms": 2866,
-          "cost_usd": 0.000835,
-          "task_passed": false,
-          "assertions_passed": 1,
+          "trials": 3,
+          "tasks_passed": 0,
+          "task_pass_rate": 0.0,
+          "assertions_mean": 1,
+          "assertions_min": 1,
+          "assertions_max": 1,
           "assertions_total": 5,
-          "checks": {
-            "operation_id": true,
-            "required_fields": false,
-            "completion_window_value": false,
-            "supported_endpoints": false,
-            "response_schema": false
-          }
+          "api_input_tokens_median": 2929,
+          "duration_api_ms_median": 2439,
+          "cost_usd_mean": 0.000228,
+          "trial_details": [
+            {
+              "status": "ok",
+              "model": "claude-haiku-5-5",
+              "api_input_tokens": 2929,
+              "api_output_tokens": 377,
+              "duration_api_ms": 2354,
+              "cost_usd": 0.000218,
+              "task_passed": false,
+              "assertions_passed": 1,
+              "assertions_total": 5,
+              "checks": {
+                "operation_id": true,
+                "required_fields": false,
+                "completion_window_value": false,
+                "supported_endpoints": false,
+                "response_schema": false
+              }
+            },
+            {
+              "status": "ok",
+              "model": "claude-haiku-5-5",
+              "api_input_tokens": 2929,
+              "api_output_tokens": 463,
+              "duration_api_ms": 3012,
+              "cost_usd": 0.000261,
+              "task_passed": false,
+              "assertions_passed": 1,
+              "assertions_total": 5,
+              "checks": {
+                "operation_id": true,
+                "required_fields": false,
+                "completion_window_value": false,
+                "supported_endpoints": false,
+                "response_schema": false
+              }
+            },
+            {
+              "status": "ok",
+              "model": "claude-haiku-5-5",
+              "api_input_tokens": 2929,
+              "api_output_tokens": 354,
+              "duration_api_ms": 2439,
+              "cost_usd": 0.000206,
+              "task_passed": false,
+              "assertions_passed": 1,
+              "assertions_total": 5,
+              "checks": {
+                "operation_id": true,
+                "required_fields": false,
+                "completion_window_value": false,
+                "supported_endpoints": false,
+                "response_schema": false
+              }
+            }
+          ],
+          "context_bpe_o200k": 1041,
+          "context_chars": 3692,
+          "context_chars_div_4": 923,
+          "claude_context_tokens_est": 1668,
+          "claude_vs_o200k_ratio": 1.6,
+          "chars_per_claude_token": 2.21
+        },
+        "routed_e2e": {
+          "status": "ok",
+          "trials": 3,
+          "tasks_passed": 0,
+          "task_pass_rate": 0.0,
+          "assertions_mean": 4,
+          "assertions_min": 4,
+          "assertions_max": 4,
+          "assertions_total": 5,
+          "api_input_tokens_median": 6906,
+          "duration_api_ms_median": 5299,
+          "cost_usd_mean": 0.00086,
+          "trial_details": [
+            {
+              "status": "ok",
+              "model": "claude-haiku-5-5",
+              "turns": 2,
+              "routed_cmd_ok": true,
+              "followup_used": false,
+              "route_choice": {
+                "operation_id": "createBatch",
+                "operation": null,
+                "schemas": [
+                  "CreateBatchRequest",
+                  "Batch"
+                ]
+              },
+              "total_context_bpe_o200k": 3578,
+              "api_input_tokens": 8526,
+              "api_output_tokens": 1040,
+              "duration_api_ms": 6060,
+              "cost_usd": 0.001618,
+              "task_passed": false,
+              "assertions_passed": 4,
+              "assertions_total": 5,
+              "checks": {
+                "operation_id": true,
+                "required_fields": false,
+                "completion_window_value": true,
+                "supported_endpoints": true,
+                "response_schema": true
+              }
+            },
+            {
+              "status": "ok",
+              "model": "claude-haiku-5-5",
+              "turns": 2,
+              "routed_cmd_ok": true,
+              "followup_used": false,
+              "route_choice": {
+                "operation_id": "createBatch",
+                "operation": null,
+                "schemas": []
+              },
+              "total_context_bpe_o200k": 2521,
+              "api_input_tokens": 6906,
+              "api_output_tokens": 686,
+              "duration_api_ms": 4320,
+              "cost_usd": 0.000413,
+              "task_passed": false,
+              "assertions_passed": 4,
+              "assertions_total": 5,
+              "checks": {
+                "operation_id": true,
+                "required_fields": false,
+                "completion_window_value": true,
+                "supported_endpoints": true,
+                "response_schema": true
+              }
+            },
+            {
+              "status": "ok",
+              "model": "claude-haiku-5-5",
+              "turns": 2,
+              "routed_cmd_ok": true,
+              "followup_used": false,
+              "route_choice": {
+                "operation_id": "createBatch",
+                "operation": null,
+                "schemas": []
+              },
+              "total_context_bpe_o200k": 2521,
+              "api_input_tokens": 6906,
+              "api_output_tokens": 957,
+              "duration_api_ms": 5299,
+              "cost_usd": 0.000548,
+              "task_passed": false,
+              "assertions_passed": 4,
+              "assertions_total": 5,
+              "checks": {
+                "operation_id": true,
+                "required_fields": false,
+                "completion_window_value": true,
+                "supported_endpoints": true,
+                "response_schema": true
+              }
+            }
+          ],
+          "turns_mean": 2,
+          "followup_rate": 0.0,
+          "route_cmd_ok_rate": 1.0,
+          "total_context_bpe_o200k_median": 2521
+        },
+        "oracle_slice": {
+          "status": "ok",
+          "trials": 3,
+          "tasks_passed": 0,
+          "task_pass_rate": 0.0,
+          "assertions_mean": 3,
+          "assertions_min": 3,
+          "assertions_max": 3,
+          "assertions_total": 5,
+          "api_input_tokens_median": 3550,
+          "duration_api_ms_median": 3137,
+          "cost_usd_mean": 0.00058,
+          "trial_details": [
+            {
+              "status": "ok",
+              "model": "claude-haiku-5-5",
+              "api_input_tokens": 3550,
+              "api_output_tokens": 588,
+              "duration_api_ms": 3137,
+              "cost_usd": 0.001004,
+              "task_passed": false,
+              "assertions_passed": 3,
+              "assertions_total": 5,
+              "checks": {
+                "operation_id": true,
+                "required_fields": false,
+                "completion_window_value": true,
+                "supported_endpoints": true,
+                "response_schema": false
+              }
+            },
+            {
+              "status": "ok",
+              "model": "claude-haiku-5-5",
+              "api_input_tokens": 3550,
+              "api_output_tokens": 591,
+              "duration_api_ms": 2844,
+              "cost_usd": 0.000331,
+              "task_passed": false,
+              "assertions_passed": 3,
+              "assertions_total": 5,
+              "checks": {
+                "operation_id": true,
+                "required_fields": false,
+                "completion_window_value": true,
+                "supported_endpoints": true,
+                "response_schema": false
+              }
+            },
+            {
+              "status": "ok",
+              "model": "claude-haiku-5-5",
+              "api_input_tokens": 3550,
+              "api_output_tokens": 736,
+              "duration_api_ms": 3357,
+              "cost_usd": 0.000404,
+              "task_passed": false,
+              "assertions_passed": 3,
+              "assertions_total": 5,
+              "checks": {
+                "operation_id": true,
+                "required_fields": false,
+                "completion_window_value": true,
+                "supported_endpoints": true,
+                "response_schema": false
+              }
+            }
+          ],
+          "context_bpe_o200k": 1480,
+          "context_chars": 5929,
+          "context_chars_div_4": 1483,
+          "claude_context_tokens_est": 2289,
+          "claude_vs_o200k_ratio": 1.55,
+          "chars_per_claude_token": 2.59
         },
         "raw_spec": {
           "status": "ok",
+          "trials": 1,
+          "tasks_passed": 1,
+          "task_pass_rate": 1.0,
+          "assertions_mean": 5,
+          "assertions_min": 5,
+          "assertions_max": 5,
+          "assertions_total": 5,
+          "api_input_tokens_median": 407998,
+          "duration_api_ms_median": 3606,
+          "cost_usd_mean": 0.408282,
+          "trial_details": [
+            {
+              "status": "ok",
+              "model": "claude-haiku-5-5",
+              "api_input_tokens": 407998,
+              "api_output_tokens": 114,
+              "duration_api_ms": 3606,
+              "cost_usd": 0.408282,
+              "task_passed": true,
+              "assertions_passed": 5,
+              "assertions_total": 5,
+              "checks": {
+                "operation_id": true,
+                "required_fields": true,
+                "completion_window_value": true,
+                "supported_endpoints": true,
+                "response_schema": true
+              }
+            }
+          ],
           "context_bpe_o200k": 281146,
+          "context_chars": 1375985,
           "context_chars_div_4": 343997,
-          "api_input_tokens": 407998,
-          "api_output_tokens": 114,
-          "duration_api_ms": 2217,
-          "cost_usd": 0.408282,
-          "task_passed": true,
-          "assertions_passed": 5,
-          "assertions_total": 5,
-          "checks": {
-            "operation_id": true,
-            "required_fields": true,
-            "completion_window_value": true,
-            "supported_endpoints": true,
-            "response_schema": true
-          }
-        },
-        "focused_slice": {
-          "status": "ok",
-          "context_bpe_o200k": 1480,
-          "context_chars_div_4": 1483,
-          "api_input_tokens": 3550,
-          "api_output_tokens": 446,
-          "duration_api_ms": 2420,
-          "cost_usd": 0.000933,
-          "task_passed": false,
-          "assertions_passed": 4,
-          "assertions_total": 5,
-          "checks": {
-            "operation_id": true,
-            "required_fields": false,
-            "completion_window_value": true,
-            "supported_endpoints": true,
-            "response_schema": true
-          }
+          "claude_context_tokens_est": 406737,
+          "claude_vs_o200k_ratio": 1.45,
+          "chars_per_claude_token": 3.38
         }
       }
     },
@@ -269,75 +1327,354 @@
       "conditions": {
         "no_spec": {
           "status": "ok",
-          "context_bpe_o200k": 0,
-          "context_chars_div_4": 0,
-          "api_input_tokens": 1249,
-          "api_output_tokens": 250,
-          "duration_api_ms": 1867,
-          "cost_usd": 0.000375,
-          "task_passed": false,
-          "assertions_passed": 0,
+          "trials": 3,
+          "tasks_passed": 0,
+          "task_pass_rate": 0.0,
+          "assertions_mean": 0,
+          "assertions_min": 0,
+          "assertions_max": 0,
           "assertions_total": 4,
-          "checks": {
-            "operation_id": false,
-            "required_fields": false,
-            "purpose_enum": false,
-            "response_schema": false
-          }
+          "api_input_tokens_median": 1249,
+          "duration_api_ms_median": 1802,
+          "cost_usd_mean": 0.000212,
+          "trial_details": [
+            {
+              "status": "ok",
+              "model": "claude-haiku-5-5",
+              "api_input_tokens": 1249,
+              "api_output_tokens": 298,
+              "duration_api_ms": 2158,
+              "cost_usd": 0.000399,
+              "task_passed": false,
+              "assertions_passed": 0,
+              "assertions_total": 4,
+              "checks": {
+                "operation_id": false,
+                "required_fields": false,
+                "purpose_enum": false,
+                "response_schema": false
+              }
+            },
+            {
+              "status": "ok",
+              "model": "claude-haiku-5-5",
+              "api_input_tokens": 1249,
+              "api_output_tokens": 220,
+              "duration_api_ms": 1802,
+              "cost_usd": 0.000123,
+              "task_passed": false,
+              "assertions_passed": 0,
+              "assertions_total": 4,
+              "checks": {
+                "operation_id": false,
+                "required_fields": false,
+                "purpose_enum": false,
+                "response_schema": false
+              }
+            },
+            {
+              "status": "ok",
+              "model": "claude-haiku-5-5",
+              "api_input_tokens": 1249,
+              "api_output_tokens": 203,
+              "duration_api_ms": 1700,
+              "cost_usd": 0.000114,
+              "task_passed": false,
+              "assertions_passed": 0,
+              "assertions_total": 4,
+              "checks": {
+                "operation_id": false,
+                "required_fields": false,
+                "purpose_enum": false,
+                "response_schema": false
+              }
+            }
+          ],
+          "context_bpe_o200k": 0,
+          "context_chars": 0,
+          "context_chars_div_4": 0
         },
         "summary": {
           "status": "ok",
-          "context_bpe_o200k": 1041,
-          "context_chars_div_4": 923,
-          "api_input_tokens": 2917,
-          "api_output_tokens": 655,
-          "duration_api_ms": 3533,
-          "cost_usd": 0.000911,
-          "task_passed": false,
-          "assertions_passed": 3,
+          "trials": 3,
+          "tasks_passed": 0,
+          "task_pass_rate": 0.0,
+          "assertions_mean": 1,
+          "assertions_min": 1,
+          "assertions_max": 1,
           "assertions_total": 4,
-          "checks": {
-            "operation_id": true,
-            "required_fields": true,
-            "purpose_enum": true,
-            "response_schema": false
-          }
+          "api_input_tokens_median": 2917,
+          "duration_api_ms_median": 2458,
+          "cost_usd_mean": 0.000428,
+          "trial_details": [
+            {
+              "status": "ok",
+              "model": "claude-haiku-5-5",
+              "api_input_tokens": 2917,
+              "api_output_tokens": 364,
+              "duration_api_ms": 2458,
+              "cost_usd": 0.000765,
+              "task_passed": false,
+              "assertions_passed": 1,
+              "assertions_total": 4,
+              "checks": {
+                "operation_id": true,
+                "required_fields": false,
+                "purpose_enum": false,
+                "response_schema": false
+              }
+            },
+            {
+              "status": "ok",
+              "model": "claude-haiku-5-5",
+              "api_input_tokens": 2917,
+              "api_output_tokens": 559,
+              "duration_api_ms": 3137,
+              "cost_usd": 0.000309,
+              "task_passed": false,
+              "assertions_passed": 1,
+              "assertions_total": 4,
+              "checks": {
+                "operation_id": true,
+                "required_fields": false,
+                "purpose_enum": false,
+                "response_schema": false
+              }
+            },
+            {
+              "status": "ok",
+              "model": "claude-haiku-5-5",
+              "api_input_tokens": 2917,
+              "api_output_tokens": 359,
+              "duration_api_ms": 2224,
+              "cost_usd": 0.000209,
+              "task_passed": false,
+              "assertions_passed": 1,
+              "assertions_total": 4,
+              "checks": {
+                "operation_id": true,
+                "required_fields": false,
+                "purpose_enum": false,
+                "response_schema": false
+              }
+            }
+          ],
+          "context_bpe_o200k": 1041,
+          "context_chars": 3692,
+          "context_chars_div_4": 923,
+          "claude_context_tokens_est": 1668,
+          "claude_vs_o200k_ratio": 1.6,
+          "chars_per_claude_token": 2.21
+        },
+        "routed_e2e": {
+          "status": "ok",
+          "trials": 3,
+          "tasks_passed": 3,
+          "task_pass_rate": 1.0,
+          "assertions_mean": 4,
+          "assertions_min": 4,
+          "assertions_max": 4,
+          "assertions_total": 4,
+          "api_input_tokens_median": 6178,
+          "duration_api_ms_median": 4304,
+          "cost_usd_mean": 0.00111,
+          "trial_details": [
+            {
+              "status": "ok",
+              "model": "claude-haiku-5-5",
+              "turns": 2,
+              "routed_cmd_ok": true,
+              "followup_used": false,
+              "route_choice": {
+                "operation_id": "createFile",
+                "operation": null,
+                "schemas": []
+              },
+              "total_context_bpe_o200k": 2091,
+              "api_input_tokens": 6178,
+              "api_output_tokens": 872,
+              "duration_api_ms": 5074,
+              "cost_usd": 0.001671,
+              "task_passed": true,
+              "assertions_passed": 4,
+              "assertions_total": 4,
+              "checks": {
+                "operation_id": true,
+                "required_fields": true,
+                "purpose_enum": true,
+                "response_schema": true
+              }
+            },
+            {
+              "status": "ok",
+              "model": "claude-haiku-5-5",
+              "turns": 2,
+              "routed_cmd_ok": true,
+              "followup_used": false,
+              "route_choice": {
+                "operation_id": "createFile",
+                "operation": null,
+                "schemas": []
+              },
+              "total_context_bpe_o200k": 2091,
+              "api_input_tokens": 6178,
+              "api_output_tokens": 748,
+              "duration_api_ms": 4304,
+              "cost_usd": 0.000437,
+              "task_passed": true,
+              "assertions_passed": 4,
+              "assertions_total": 4,
+              "checks": {
+                "operation_id": true,
+                "required_fields": true,
+                "purpose_enum": true,
+                "response_schema": true
+              }
+            },
+            {
+              "status": "ok",
+              "model": "claude-haiku-5-5",
+              "turns": 2,
+              "routed_cmd_ok": true,
+              "followup_used": false,
+              "route_choice": {
+                "operation_id": "createFile",
+                "operation": "POST /files",
+                "schemas": [
+                  "CreateFileRequest",
+                  "OpenAIFile"
+                ]
+              },
+              "total_context_bpe_o200k": 2834,
+              "api_input_tokens": 7351,
+              "api_output_tokens": 715,
+              "duration_api_ms": 4033,
+              "cost_usd": 0.001222,
+              "task_passed": true,
+              "assertions_passed": 4,
+              "assertions_total": 4,
+              "checks": {
+                "operation_id": true,
+                "required_fields": true,
+                "purpose_enum": true,
+                "response_schema": true
+              }
+            }
+          ],
+          "turns_mean": 2,
+          "followup_rate": 0.0,
+          "route_cmd_ok_rate": 1.0,
+          "total_context_bpe_o200k_median": 2091
+        },
+        "oracle_slice": {
+          "status": "ok",
+          "trials": 3,
+          "tasks_passed": 0,
+          "task_pass_rate": 0.0,
+          "assertions_mean": 3,
+          "assertions_min": 3,
+          "assertions_max": 3,
+          "assertions_total": 4,
+          "api_input_tokens_median": 2834,
+          "duration_api_ms_median": 2484,
+          "cost_usd_mean": 0.000464,
+          "trial_details": [
+            {
+              "status": "ok",
+              "model": "claude-haiku-5-5",
+              "api_input_tokens": 2834,
+              "api_output_tokens": 419,
+              "duration_api_ms": 2117,
+              "cost_usd": 0.000776,
+              "task_passed": false,
+              "assertions_passed": 3,
+              "assertions_total": 4,
+              "checks": {
+                "operation_id": true,
+                "required_fields": true,
+                "purpose_enum": true,
+                "response_schema": false
+              }
+            },
+            {
+              "status": "ok",
+              "model": "claude-haiku-5-5",
+              "api_input_tokens": 2834,
+              "api_output_tokens": 485,
+              "duration_api_ms": 2484,
+              "cost_usd": 0.000271,
+              "task_passed": false,
+              "assertions_passed": 3,
+              "assertions_total": 4,
+              "checks": {
+                "operation_id": true,
+                "required_fields": true,
+                "purpose_enum": true,
+                "response_schema": false
+              }
+            },
+            {
+              "status": "ok",
+              "model": "claude-haiku-5-5",
+              "api_input_tokens": 2834,
+              "api_output_tokens": 631,
+              "duration_api_ms": 2824,
+              "cost_usd": 0.000344,
+              "task_passed": false,
+              "assertions_passed": 3,
+              "assertions_total": 4,
+              "checks": {
+                "operation_id": true,
+                "required_fields": true,
+                "purpose_enum": true,
+                "response_schema": false
+              }
+            }
+          ],
+          "context_bpe_o200k": 1050,
+          "context_chars": 4067,
+          "context_chars_div_4": 1017,
+          "claude_context_tokens_est": 1585,
+          "claude_vs_o200k_ratio": 1.51,
+          "chars_per_claude_token": 2.57
         },
         "raw_spec": {
           "status": "ok",
+          "trials": 1,
+          "tasks_passed": 1,
+          "task_pass_rate": 1.0,
+          "assertions_mean": 4,
+          "assertions_min": 4,
+          "assertions_max": 4,
+          "assertions_total": 4,
+          "api_input_tokens_median": 407986,
+          "duration_api_ms_median": 1314,
+          "cost_usd_mean": 0.408197,
+          "trial_details": [
+            {
+              "status": "ok",
+              "model": "claude-haiku-5-5",
+              "api_input_tokens": 407986,
+              "api_output_tokens": 85,
+              "duration_api_ms": 1314,
+              "cost_usd": 0.408197,
+              "task_passed": true,
+              "assertions_passed": 4,
+              "assertions_total": 4,
+              "checks": {
+                "operation_id": true,
+                "required_fields": true,
+                "purpose_enum": true,
+                "response_schema": true
+              }
+            }
+          ],
           "context_bpe_o200k": 281146,
+          "context_chars": 1375985,
           "context_chars_div_4": 343997,
-          "api_input_tokens": 407986,
-          "api_output_tokens": 85,
-          "duration_api_ms": 2747,
-          "cost_usd": 0.408197,
-          "task_passed": true,
-          "assertions_passed": 4,
-          "assertions_total": 4,
-          "checks": {
-            "operation_id": true,
-            "required_fields": true,
-            "purpose_enum": true,
-            "response_schema": true
-          }
-        },
-        "focused_slice": {
-          "status": "ok",
-          "context_bpe_o200k": 1050,
-          "context_chars_div_4": 1017,
-          "api_input_tokens": 2834,
-          "api_output_tokens": 503,
-          "duration_api_ms": 2552,
-          "cost_usd": 0.000818,
-          "task_passed": false,
-          "assertions_passed": 3,
-          "assertions_total": 4,
-          "checks": {
-            "operation_id": true,
-            "required_fields": true,
-            "purpose_enum": true,
-            "response_schema": false
-          }
+          "claude_context_tokens_est": 406737,
+          "claude_vs_o200k_ratio": 1.45,
+          "chars_per_claude_token": 3.38
         }
       }
     },
@@ -348,66 +1685,350 @@
       "conditions": {
         "no_spec": {
           "status": "ok",
-          "context_bpe_o200k": 0,
-          "context_chars_div_4": 0,
-          "api_input_tokens": 1259,
-          "api_output_tokens": 454,
-          "duration_api_ms": 2889,
-          "cost_usd": 0.000479,
-          "task_passed": false,
-          "assertions_passed": 0,
+          "trials": 3,
+          "tasks_passed": 0,
+          "task_pass_rate": 0.0,
+          "assertions_mean": 0,
+          "assertions_min": 0,
+          "assertions_max": 0,
           "assertions_total": 4,
-          "checks": {
-            "operation_id": false,
-            "tax_exempt_enum": false,
-            "invoice_prefix_max_len": false,
-            "response_schema": false
-          }
+          "api_input_tokens_median": 1259,
+          "duration_api_ms_median": 3025,
+          "cost_usd_mean": 0.000307,
+          "trial_details": [
+            {
+              "status": "ok",
+              "model": "claude-haiku-5-5",
+              "api_input_tokens": 1259,
+              "api_output_tokens": 480,
+              "duration_api_ms": 3025,
+              "cost_usd": 0.000253,
+              "task_passed": false,
+              "assertions_passed": 0,
+              "assertions_total": 4,
+              "checks": {
+                "operation_id": false,
+                "tax_exempt_enum": false,
+                "invoice_prefix_max_len": false,
+                "response_schema": false
+              }
+            },
+            {
+              "status": "ok",
+              "model": "claude-haiku-5-5",
+              "api_input_tokens": 1259,
+              "api_output_tokens": 400,
+              "duration_api_ms": 2651,
+              "cost_usd": 0.000213,
+              "task_passed": false,
+              "assertions_passed": 0,
+              "assertions_total": 4,
+              "checks": {
+                "operation_id": false,
+                "tax_exempt_enum": false,
+                "invoice_prefix_max_len": false,
+                "response_schema": false
+              }
+            },
+            {
+              "status": "ok",
+              "model": "claude-haiku-5-5",
+              "api_input_tokens": 1259,
+              "api_output_tokens": 409,
+              "duration_api_ms": 3059,
+              "cost_usd": 0.000456,
+              "task_passed": false,
+              "assertions_passed": 0,
+              "assertions_total": 4,
+              "checks": {
+                "operation_id": false,
+                "tax_exempt_enum": false,
+                "invoice_prefix_max_len": false,
+                "response_schema": false
+              }
+            }
+          ],
+          "context_bpe_o200k": 0,
+          "context_chars": 0,
+          "context_chars_div_4": 0
         },
         "summary": {
           "status": "ok",
-          "context_bpe_o200k": 4991,
-          "context_chars_div_4": 5149,
-          "api_input_tokens": 12029,
-          "api_output_tokens": 511,
-          "duration_api_ms": 3086,
-          "cost_usd": 0.002661,
-          "task_passed": false,
-          "assertions_passed": 1,
+          "trials": 3,
+          "tasks_passed": 0,
+          "task_pass_rate": 0.0,
+          "assertions_mean": 1,
+          "assertions_min": 1,
+          "assertions_max": 1,
           "assertions_total": 4,
-          "checks": {
-            "operation_id": true,
-            "tax_exempt_enum": false,
-            "invoice_prefix_max_len": false,
-            "response_schema": false
-          }
+          "api_input_tokens_median": 12029,
+          "duration_api_ms_median": 3049,
+          "cost_usd_mean": 0.001164,
+          "trial_details": [
+            {
+              "status": "ok",
+              "model": "claude-haiku-5-5",
+              "api_input_tokens": 12029,
+              "api_output_tokens": 479,
+              "duration_api_ms": 3049,
+              "cost_usd": 0.00036,
+              "task_passed": false,
+              "assertions_passed": 1,
+              "assertions_total": 4,
+              "checks": {
+                "operation_id": true,
+                "tax_exempt_enum": false,
+                "invoice_prefix_max_len": false,
+                "response_schema": false
+              }
+            },
+            {
+              "status": "ok",
+              "model": "claude-haiku-5-5",
+              "api_input_tokens": 12029,
+              "api_output_tokens": 493,
+              "duration_api_ms": 2778,
+              "cost_usd": 0.000367,
+              "task_passed": false,
+              "assertions_passed": 1,
+              "assertions_total": 4,
+              "checks": {
+                "operation_id": true,
+                "tax_exempt_enum": false,
+                "invoice_prefix_max_len": false,
+                "response_schema": false
+              }
+            },
+            {
+              "status": "ok",
+              "model": "claude-haiku-5-5",
+              "api_input_tokens": 12029,
+              "api_output_tokens": 716,
+              "duration_api_ms": 3996,
+              "cost_usd": 0.002764,
+              "task_passed": false,
+              "assertions_passed": 1,
+              "assertions_total": 4,
+              "checks": {
+                "operation_id": true,
+                "tax_exempt_enum": false,
+                "invoice_prefix_max_len": false,
+                "response_schema": false
+              }
+            }
+          ],
+          "context_bpe_o200k": 4991,
+          "context_chars": 20594,
+          "context_chars_div_4": 5149,
+          "claude_context_tokens_est": 10770,
+          "claude_vs_o200k_ratio": 2.16,
+          "chars_per_claude_token": 1.91
+        },
+        "routed_e2e": {
+          "status": "ok",
+          "trials": 3,
+          "tasks_passed": 3,
+          "task_pass_rate": 1.0,
+          "assertions_mean": 4,
+          "assertions_min": 4,
+          "assertions_max": 4,
+          "assertions_total": 4,
+          "api_input_tokens_median": 559554,
+          "duration_api_ms_median": 6894,
+          "cost_usd_mean": 0.194867,
+          "trial_details": [
+            {
+              "status": "ok",
+              "model": "claude-haiku-5-5",
+              "turns": 2,
+              "routed_cmd_ok": true,
+              "followup_used": false,
+              "route_choice": {
+                "operation_id": "PostCustomers",
+                "operation": null,
+                "schemas": [
+                  "customer"
+                ]
+              },
+              "total_context_bpe_o200k": 344014,
+              "api_input_tokens": 559554,
+              "api_output_tokens": 978,
+              "duration_api_ms": 7834,
+              "cost_usd": 0.551059,
+              "task_passed": true,
+              "assertions_passed": 4,
+              "assertions_total": 4,
+              "checks": {
+                "operation_id": true,
+                "tax_exempt_enum": true,
+                "invoice_prefix_max_len": true,
+                "response_schema": true
+              }
+            },
+            {
+              "status": "ok",
+              "model": "claude-haiku-5-5",
+              "turns": 2,
+              "routed_cmd_ok": true,
+              "followup_used": false,
+              "route_choice": {
+                "operation_id": "PostCustomers",
+                "operation": null,
+                "schemas": []
+              },
+              "total_context_bpe_o200k": 8792,
+              "api_input_tokens": 19712,
+              "api_output_tokens": 1125,
+              "duration_api_ms": 6374,
+              "cost_usd": 0.004504,
+              "task_passed": true,
+              "assertions_passed": 4,
+              "assertions_total": 4,
+              "checks": {
+                "operation_id": true,
+                "tax_exempt_enum": true,
+                "invoice_prefix_max_len": true,
+                "response_schema": true
+              }
+            },
+            {
+              "status": "ok",
+              "model": "claude-haiku-5-5",
+              "turns": 2,
+              "routed_cmd_ok": true,
+              "followup_used": false,
+              "route_choice": {
+                "operation_id": "PostCustomers",
+                "operation": null,
+                "schemas": [
+                  "customer"
+                ]
+              },
+              "total_context_bpe_o200k": 344014,
+              "api_input_tokens": 559554,
+              "api_output_tokens": 1123,
+              "duration_api_ms": 6894,
+              "cost_usd": 0.029038,
+              "task_passed": true,
+              "assertions_passed": 4,
+              "assertions_total": 4,
+              "checks": {
+                "operation_id": true,
+                "tax_exempt_enum": true,
+                "invoice_prefix_max_len": true,
+                "response_schema": true
+              }
+            }
+          ],
+          "turns_mean": 2,
+          "followup_rate": 0.0,
+          "route_cmd_ok_rate": 1.0,
+          "total_context_bpe_o200k_median": 344014
+        },
+        "oracle_slice": {
+          "status": "ok",
+          "trials": 3,
+          "tasks_passed": 2,
+          "task_pass_rate": 0.667,
+          "assertions_mean": 3.67,
+          "assertions_min": 3,
+          "assertions_max": 4,
+          "assertions_total": 4,
+          "api_input_tokens_median": 7256,
+          "duration_api_ms_median": 1832,
+          "cost_usd_mean": 0.000716,
+          "trial_details": [
+            {
+              "status": "ok",
+              "model": "claude-haiku-5-5",
+              "api_input_tokens": 7256,
+              "api_output_tokens": 502,
+              "duration_api_ms": 2937,
+              "cost_usd": 0.001702,
+              "task_passed": false,
+              "assertions_passed": 3,
+              "assertions_total": 4,
+              "checks": {
+                "operation_id": true,
+                "tax_exempt_enum": true,
+                "invoice_prefix_max_len": true,
+                "response_schema": false
+              }
+            },
+            {
+              "status": "ok",
+              "model": "claude-haiku-5-5",
+              "api_input_tokens": 7256,
+              "api_output_tokens": 317,
+              "duration_api_ms": 1832,
+              "cost_usd": 0.000231,
+              "task_passed": true,
+              "assertions_passed": 4,
+              "assertions_total": 4,
+              "checks": {
+                "operation_id": true,
+                "tax_exempt_enum": true,
+                "invoice_prefix_max_len": true,
+                "response_schema": true
+              }
+            },
+            {
+              "status": "ok",
+              "model": "claude-haiku-5-5",
+              "api_input_tokens": 7256,
+              "api_output_tokens": 284,
+              "duration_api_ms": 1822,
+              "cost_usd": 0.000215,
+              "task_passed": true,
+              "assertions_passed": 4,
+              "assertions_total": 4,
+              "checks": {
+                "operation_id": true,
+                "tax_exempt_enum": true,
+                "invoice_prefix_max_len": true,
+                "response_schema": true
+              }
+            }
+          ],
+          "context_bpe_o200k": 3825,
+          "context_chars": 15819,
+          "context_chars_div_4": 3955,
+          "claude_context_tokens_est": 5997,
+          "claude_vs_o200k_ratio": 1.57,
+          "chars_per_claude_token": 2.64
         },
         "raw_spec": {
-          "status": "context_overflow",
-          "note": "Raw 7.9 MB JSON (1,418,244 o200k_base tokens) exceeds 1,000,000-token context window",
-          "context_bpe_o200k": 1418244,
-          "context_chars_div_4": 2079211,
-          "task_passed": false,
-          "assertions_passed": 0,
-          "assertions_total": 4
-        },
-        "focused_slice": {
-          "status": "ok",
-          "context_bpe_o200k": 3693,
-          "context_chars_div_4": 3834,
-          "api_input_tokens": 6992,
-          "api_output_tokens": 329,
-          "duration_api_ms": 2064,
-          "cost_usd": 0.001563,
-          "task_passed": true,
-          "assertions_passed": 4,
+          "status": "prompt_too_long",
+          "trials": 1,
+          "tasks_passed": 0,
+          "task_pass_rate": 0.0,
+          "assertions_mean": 0.0,
+          "assertions_min": 0,
+          "assertions_max": 0,
           "assertions_total": 4,
-          "checks": {
-            "operation_id": true,
-            "tax_exempt_enum": true,
-            "invoice_prefix_max_len": true,
-            "response_schema": true
-          }
+          "api_input_tokens_median": 0,
+          "duration_api_ms_median": 0,
+          "cost_usd_mean": 0.0,
+          "context_bpe_o200k": 1418244,
+          "context_chars": 8316842,
+          "context_chars_div_4": 2079211,
+          "trial_details": [
+            {
+              "status": "prompt_too_long",
+              "error": "Prompt is too long",
+              "exit_code": 1,
+              "terminal_reason": "blocking_limit",
+              "duration_ms": 618,
+              "wall_ms": 10358,
+              "task_passed": false,
+              "assertions_passed": 0,
+              "assertions_total": 4,
+              "api_input_tokens": 0,
+              "api_output_tokens": 0,
+              "duration_api_ms": 0,
+              "cost_usd": 0.0
+            }
+          ]
         }
       }
     },
@@ -418,66 +2039,352 @@
       "conditions": {
         "no_spec": {
           "status": "ok",
-          "context_bpe_o200k": 0,
-          "context_chars_div_4": 0,
-          "api_input_tokens": 1258,
-          "api_output_tokens": 411,
-          "duration_api_ms": 2478,
-          "cost_usd": 0.000457,
-          "task_passed": false,
-          "assertions_passed": 0,
+          "trials": 3,
+          "tasks_passed": 0,
+          "task_pass_rate": 0.0,
+          "assertions_mean": 0,
+          "assertions_min": 0,
+          "assertions_max": 0,
           "assertions_total": 4,
-          "checks": {
-            "operation_id": false,
-            "required_fields": false,
-            "amount_max_digits": false,
-            "currency_type": false
-          }
+          "api_input_tokens_median": 1258,
+          "duration_api_ms_median": 2677,
+          "cost_usd_mean": 0.000376,
+          "trial_details": [
+            {
+              "status": "ok",
+              "model": "claude-haiku-5-5",
+              "api_input_tokens": 1258,
+              "api_output_tokens": 373,
+              "duration_api_ms": 2468,
+              "cost_usd": 0.000438,
+              "task_passed": false,
+              "assertions_passed": 0,
+              "assertions_total": 4,
+              "checks": {
+                "operation_id": false,
+                "required_fields": false,
+                "amount_max_digits": false,
+                "currency_type": false
+              }
+            },
+            {
+              "status": "ok",
+              "model": "claude-haiku-5-5",
+              "api_input_tokens": 1258,
+              "api_output_tokens": 370,
+              "duration_api_ms": 2677,
+              "cost_usd": 0.000436,
+              "task_passed": false,
+              "assertions_passed": 0,
+              "assertions_total": 4,
+              "checks": {
+                "operation_id": false,
+                "required_fields": false,
+                "amount_max_digits": false,
+                "currency_type": false
+              }
+            },
+            {
+              "status": "ok",
+              "model": "claude-haiku-5-5",
+              "api_input_tokens": 1258,
+              "api_output_tokens": 483,
+              "duration_api_ms": 2878,
+              "cost_usd": 0.000254,
+              "task_passed": false,
+              "assertions_passed": 0,
+              "assertions_total": 4,
+              "checks": {
+                "operation_id": false,
+                "required_fields": false,
+                "amount_max_digits": false,
+                "currency_type": false
+              }
+            }
+          ],
+          "context_bpe_o200k": 0,
+          "context_chars": 0,
+          "context_chars_div_4": 0
         },
         "summary": {
           "status": "ok",
-          "context_bpe_o200k": 4991,
-          "context_chars_div_4": 5149,
-          "api_input_tokens": 12028,
-          "api_output_tokens": 367,
-          "duration_api_ms": 2295,
-          "cost_usd": 0.002589,
-          "task_passed": false,
-          "assertions_passed": 1,
+          "trials": 3,
+          "tasks_passed": 0,
+          "task_pass_rate": 0.0,
+          "assertions_mean": 1,
+          "assertions_min": 1,
+          "assertions_max": 1,
           "assertions_total": 4,
-          "checks": {
-            "operation_id": true,
-            "required_fields": false,
-            "amount_max_digits": false,
-            "currency_type": false
-          }
+          "api_input_tokens_median": 12028,
+          "duration_api_ms_median": 2257,
+          "cost_usd_mean": 0.001053,
+          "trial_details": [
+            {
+              "status": "ok",
+              "model": "claude-haiku-5-5",
+              "api_input_tokens": 12028,
+              "api_output_tokens": 327,
+              "duration_api_ms": 2123,
+              "cost_usd": 0.000284,
+              "task_passed": false,
+              "assertions_passed": 1,
+              "assertions_total": 4,
+              "checks": {
+                "operation_id": true,
+                "required_fields": false,
+                "amount_max_digits": false,
+                "currency_type": false
+              }
+            },
+            {
+              "status": "ok",
+              "model": "claude-haiku-5-5",
+              "api_input_tokens": 12028,
+              "api_output_tokens": 349,
+              "duration_api_ms": 2257,
+              "cost_usd": 0.00258,
+              "task_passed": false,
+              "assertions_passed": 1,
+              "assertions_total": 4,
+              "checks": {
+                "operation_id": true,
+                "required_fields": false,
+                "amount_max_digits": false,
+                "currency_type": false
+              }
+            },
+            {
+              "status": "ok",
+              "model": "claude-haiku-5-5",
+              "api_input_tokens": 12028,
+              "api_output_tokens": 349,
+              "duration_api_ms": 2360,
+              "cost_usd": 0.000295,
+              "task_passed": false,
+              "assertions_passed": 1,
+              "assertions_total": 4,
+              "checks": {
+                "operation_id": true,
+                "required_fields": false,
+                "amount_max_digits": false,
+                "currency_type": false
+              }
+            }
+          ],
+          "context_bpe_o200k": 4991,
+          "context_chars": 20594,
+          "context_chars_div_4": 5149,
+          "claude_context_tokens_est": 10770,
+          "claude_vs_o200k_ratio": 2.16,
+          "chars_per_claude_token": 1.91
+        },
+        "routed_e2e": {
+          "status": "ok",
+          "trials": 3,
+          "tasks_passed": 0,
+          "task_pass_rate": 0.0,
+          "assertions_mean": 3,
+          "assertions_min": 3,
+          "assertions_max": 3,
+          "assertions_total": 4,
+          "api_input_tokens_median": 39230,
+          "duration_api_ms_median": 5961,
+          "cost_usd_mean": 0.00497,
+          "trial_details": [
+            {
+              "status": "ok",
+              "model": "claude-haiku-5-5",
+              "turns": 2,
+              "routed_cmd_ok": true,
+              "followup_used": false,
+              "route_choice": {
+                "operation_id": "PostPaymentIntents",
+                "operation": null,
+                "schemas": [
+                  "PaymentIntent"
+                ]
+              },
+              "total_context_bpe_o200k": 20678,
+              "api_input_tokens": 39230,
+              "api_output_tokens": 1068,
+              "duration_api_ms": 6256,
+              "cost_usd": 0.003263,
+              "task_passed": false,
+              "assertions_passed": 3,
+              "assertions_total": 4,
+              "checks": {
+                "operation_id": true,
+                "required_fields": false,
+                "amount_max_digits": true,
+                "currency_type": true
+              }
+            },
+            {
+              "status": "ok",
+              "model": "claude-haiku-5-5",
+              "turns": 2,
+              "routed_cmd_ok": true,
+              "followup_used": false,
+              "route_choice": {
+                "operation_id": "PostPaymentIntents",
+                "operation": null,
+                "schemas": [
+                  "PaymentIntent"
+                ]
+              },
+              "total_context_bpe_o200k": 20678,
+              "api_input_tokens": 39230,
+              "api_output_tokens": 1000,
+              "duration_api_ms": 5643,
+              "cost_usd": 0.008346,
+              "task_passed": false,
+              "assertions_passed": 3,
+              "assertions_total": 4,
+              "checks": {
+                "operation_id": true,
+                "required_fields": false,
+                "amount_max_digits": true,
+                "currency_type": true
+              }
+            },
+            {
+              "status": "ok",
+              "model": "claude-haiku-5-5",
+              "turns": 2,
+              "routed_cmd_ok": true,
+              "followup_used": false,
+              "route_choice": {
+                "operation_id": "PostPaymentIntents",
+                "operation": null,
+                "schemas": [
+                  "PaymentIntent"
+                ]
+              },
+              "total_context_bpe_o200k": 20678,
+              "api_input_tokens": 39230,
+              "api_output_tokens": 1142,
+              "duration_api_ms": 5961,
+              "cost_usd": 0.0033,
+              "task_passed": false,
+              "assertions_passed": 3,
+              "assertions_total": 4,
+              "checks": {
+                "operation_id": true,
+                "required_fields": false,
+                "amount_max_digits": true,
+                "currency_type": true
+              }
+            }
+          ],
+          "turns_mean": 2,
+          "followup_rate": 0.0,
+          "route_cmd_ok_rate": 1.0,
+          "total_context_bpe_o200k_median": 20678
+        },
+        "oracle_slice": {
+          "status": "ok",
+          "trials": 3,
+          "tasks_passed": 3,
+          "task_pass_rate": 1.0,
+          "assertions_mean": 4,
+          "assertions_min": 4,
+          "assertions_max": 4,
+          "assertions_total": 4,
+          "api_input_tokens_median": 26775,
+          "duration_api_ms_median": 3406,
+          "cost_usd_mean": 0.002242,
+          "trial_details": [
+            {
+              "status": "ok",
+              "model": "claude-haiku-5-5",
+              "api_input_tokens": 26775,
+              "api_output_tokens": 522,
+              "duration_api_ms": 3599,
+              "cost_usd": 0.005616,
+              "task_passed": true,
+              "assertions_passed": 4,
+              "assertions_total": 4,
+              "checks": {
+                "operation_id": true,
+                "required_fields": true,
+                "amount_max_digits": true,
+                "currency_type": true
+              }
+            },
+            {
+              "status": "ok",
+              "model": "claude-haiku-5-5",
+              "api_input_tokens": 26775,
+              "api_output_tokens": 668,
+              "duration_api_ms": 3406,
+              "cost_usd": 0.000602,
+              "task_passed": true,
+              "assertions_passed": 4,
+              "assertions_total": 4,
+              "checks": {
+                "operation_id": true,
+                "required_fields": true,
+                "amount_max_digits": true,
+                "currency_type": true
+              }
+            },
+            {
+              "status": "ok",
+              "model": "claude-haiku-5-5",
+              "api_input_tokens": 26775,
+              "api_output_tokens": 483,
+              "duration_api_ms": 2780,
+              "cost_usd": 0.000509,
+              "task_passed": true,
+              "assertions_passed": 4,
+              "assertions_total": 4,
+              "checks": {
+                "operation_id": true,
+                "required_fields": true,
+                "amount_max_digits": true,
+                "currency_type": true
+              }
+            }
+          ],
+          "context_bpe_o200k": 15865,
+          "context_chars": 63561,
+          "context_chars_div_4": 15891,
+          "claude_context_tokens_est": 25517,
+          "claude_vs_o200k_ratio": 1.61,
+          "chars_per_claude_token": 2.49
         },
         "raw_spec": {
-          "status": "context_overflow",
-          "note": "Raw 7.9 MB JSON (1,418,244 o200k_base tokens) exceeds 1,000,000-token context window",
-          "context_bpe_o200k": 1418244,
-          "context_chars_div_4": 2079211,
-          "task_passed": false,
-          "assertions_passed": 0,
-          "assertions_total": 4
-        },
-        "focused_slice": {
-          "status": "ok",
-          "context_bpe_o200k": 15187,
-          "context_chars_div_4": 15269,
-          "api_input_tokens": 25419,
-          "api_output_tokens": 477,
-          "duration_api_ms": 2868,
-          "cost_usd": 0.005322,
-          "task_passed": true,
-          "assertions_passed": 4,
+          "status": "prompt_too_long",
+          "trials": 1,
+          "tasks_passed": 0,
+          "task_pass_rate": 0.0,
+          "assertions_mean": 0.0,
+          "assertions_min": 0,
+          "assertions_max": 0,
           "assertions_total": 4,
-          "checks": {
-            "operation_id": true,
-            "required_fields": true,
-            "amount_max_digits": true,
-            "currency_type": true
-          }
+          "api_input_tokens_median": 0,
+          "duration_api_ms_median": 0,
+          "cost_usd_mean": 0.0,
+          "context_bpe_o200k": 1418244,
+          "context_chars": 8316842,
+          "context_chars_div_4": 2079211,
+          "trial_details": [
+            {
+              "status": "prompt_too_long",
+              "error": "Prompt is too long",
+              "exit_code": 1,
+              "terminal_reason": "blocking_limit",
+              "duration_ms": 749,
+              "wall_ms": 12564,
+              "task_passed": false,
+              "assertions_passed": 0,
+              "assertions_total": 4,
+              "api_input_tokens": 0,
+              "api_output_tokens": 0,
+              "duration_api_ms": 0,
+              "cost_usd": 0.0
+            }
+          ]
         }
       }
     },
@@ -488,83 +2395,427 @@
       "conditions": {
         "no_spec": {
           "status": "ok",
-          "context_bpe_o200k": 0,
-          "context_chars_div_4": 0,
-          "api_input_tokens": 1278,
-          "api_output_tokens": 1144,
-          "duration_api_ms": 6372,
-          "cost_usd": 0.000827,
-          "task_passed": false,
-          "assertions_passed": 0,
+          "trials": 3,
+          "tasks_passed": 1,
+          "task_pass_rate": 0.333,
+          "assertions_mean": 2,
+          "assertions_min": 0,
+          "assertions_max": 6,
           "assertions_total": 6,
-          "checks": {
-            "streaming_mode": false,
-            "request_message": false,
-            "response_message": false,
-            "status_field_number": false,
-            "watch_only_enum_name": false,
-            "watch_only_enum_number": false
-          }
+          "api_input_tokens_median": 1278,
+          "duration_api_ms_median": 3117,
+          "cost_usd_mean": 0.000464,
+          "trial_details": [
+            {
+              "status": "ok",
+              "model": "claude-haiku-5-5",
+              "api_input_tokens": 1278,
+              "api_output_tokens": 639,
+              "duration_api_ms": 4917,
+              "cost_usd": 0.000332,
+              "task_passed": false,
+              "assertions_passed": 0,
+              "assertions_total": 6,
+              "checks": {
+                "streaming_mode": false,
+                "request_message": false,
+                "response_message": false,
+                "status_field_number": false,
+                "watch_only_enum_name": false,
+                "watch_only_enum_number": false
+              }
+            },
+            {
+              "status": "ok",
+              "model": "claude-haiku-5-5",
+              "api_input_tokens": 1278,
+              "api_output_tokens": 499,
+              "duration_api_ms": 3117,
+              "cost_usd": 0.000505,
+              "task_passed": false,
+              "assertions_passed": 0,
+              "assertions_total": 6,
+              "checks": {
+                "streaming_mode": false,
+                "request_message": false,
+                "response_message": false,
+                "status_field_number": false,
+                "watch_only_enum_name": false,
+                "watch_only_enum_number": false
+              }
+            },
+            {
+              "status": "ok",
+              "model": "claude-haiku-5-5",
+              "api_input_tokens": 1278,
+              "api_output_tokens": 601,
+              "duration_api_ms": 2974,
+              "cost_usd": 0.000556,
+              "task_passed": true,
+              "assertions_passed": 6,
+              "assertions_total": 6,
+              "checks": {
+                "streaming_mode": true,
+                "request_message": true,
+                "response_message": true,
+                "status_field_number": true,
+                "watch_only_enum_name": true,
+                "watch_only_enum_number": true
+              }
+            }
+          ],
+          "context_bpe_o200k": 0,
+          "context_chars": 0,
+          "context_chars_div_4": 0
         },
         "summary": {
           "status": "ok",
-          "context_bpe_o200k": 62,
-          "context_chars_div_4": 67,
-          "api_input_tokens": 1394,
-          "api_output_tokens": 1389,
-          "duration_api_ms": 6313,
-          "cost_usd": 0.000973,
-          "task_passed": true,
-          "assertions_passed": 6,
+          "trials": 3,
+          "tasks_passed": 3,
+          "task_pass_rate": 1.0,
+          "assertions_mean": 6,
+          "assertions_min": 6,
+          "assertions_max": 6,
           "assertions_total": 6,
-          "checks": {
-            "streaming_mode": true,
-            "request_message": true,
-            "response_message": true,
-            "status_field_number": true,
-            "watch_only_enum_name": true,
-            "watch_only_enum_number": true
-          }
+          "api_input_tokens_median": 1394,
+          "duration_api_ms_median": 4903,
+          "cost_usd_mean": 0.000758,
+          "trial_details": [
+            {
+              "status": "ok",
+              "model": "claude-haiku-5-5",
+              "api_input_tokens": 1394,
+              "api_output_tokens": 959,
+              "duration_api_ms": 4484,
+              "cost_usd": 0.000758,
+              "task_passed": true,
+              "assertions_passed": 6,
+              "assertions_total": 6,
+              "checks": {
+                "streaming_mode": true,
+                "request_message": true,
+                "response_message": true,
+                "status_field_number": true,
+                "watch_only_enum_name": true,
+                "watch_only_enum_number": true
+              }
+            },
+            {
+              "status": "ok",
+              "model": "claude-haiku-5-5",
+              "api_input_tokens": 1394,
+              "api_output_tokens": 1082,
+              "duration_api_ms": 4903,
+              "cost_usd": 0.00082,
+              "task_passed": true,
+              "assertions_passed": 6,
+              "assertions_total": 6,
+              "checks": {
+                "streaming_mode": true,
+                "request_message": true,
+                "response_message": true,
+                "status_field_number": true,
+                "watch_only_enum_name": true,
+                "watch_only_enum_number": true
+              }
+            },
+            {
+              "status": "ok",
+              "model": "claude-haiku-5-5",
+              "api_input_tokens": 1394,
+              "api_output_tokens": 1364,
+              "duration_api_ms": 6131,
+              "cost_usd": 0.000696,
+              "task_passed": true,
+              "assertions_passed": 6,
+              "assertions_total": 6,
+              "checks": {
+                "streaming_mode": true,
+                "request_message": true,
+                "response_message": true,
+                "status_field_number": true,
+                "watch_only_enum_name": true,
+                "watch_only_enum_number": true
+              }
+            }
+          ],
+          "context_bpe_o200k": 62,
+          "context_chars": 265,
+          "context_chars_div_4": 67,
+          "claude_context_tokens_est": 116,
+          "claude_vs_o200k_ratio": 1.87,
+          "chars_per_claude_token": 2.28
+        },
+        "routed_e2e": {
+          "status": "ok",
+          "trials": 3,
+          "tasks_passed": 3,
+          "task_pass_rate": 1.0,
+          "assertions_mean": 6,
+          "assertions_min": 6,
+          "assertions_max": 6,
+          "assertions_total": 6,
+          "api_input_tokens_median": 5881,
+          "duration_api_ms_median": 5065,
+          "cost_usd_mean": 0.001011,
+          "trial_details": [
+            {
+              "status": "ok",
+              "model": "claude-haiku-5-5",
+              "turns": 2,
+              "routed_cmd_ok": true,
+              "followup_used": false,
+              "route_choice": {
+                "operation_id": "grpc.health.v1.Health.Watch",
+                "operation": null,
+                "schemas": [
+                  "grpc.health.v1.HealthCheckRequest",
+                  "grpc.health.v1.HealthCheckResponse",
+                  "grpc.health.v1.HealthCheckResponse.ServingStatus"
+                ]
+              },
+              "total_context_bpe_o200k": 1609,
+              "api_input_tokens": 5881,
+              "api_output_tokens": 937,
+              "duration_api_ms": 5065,
+              "cost_usd": 0.000844,
+              "task_passed": true,
+              "assertions_passed": 6,
+              "assertions_total": 6,
+              "checks": {
+                "streaming_mode": true,
+                "request_message": true,
+                "response_message": true,
+                "status_field_number": true,
+                "watch_only_enum_name": true,
+                "watch_only_enum_number": true
+              }
+            },
+            {
+              "status": "ok",
+              "model": "claude-haiku-5-5",
+              "turns": 2,
+              "routed_cmd_ok": true,
+              "followup_used": false,
+              "route_choice": {
+                "operation_id": "grpc.health.v1.Health.Watch",
+                "operation": null,
+                "schemas": [
+                  "grpc.health.v1.HealthCheckRequest",
+                  "grpc.health.v1.HealthCheckResponse",
+                  "grpc.health.v1.HealthCheckResponse.ServingStatus"
+                ]
+              },
+              "total_context_bpe_o200k": 1609,
+              "api_input_tokens": 5881,
+              "api_output_tokens": 1076,
+              "duration_api_ms": 5626,
+              "cost_usd": 0.001714,
+              "task_passed": true,
+              "assertions_passed": 6,
+              "assertions_total": 6,
+              "checks": {
+                "streaming_mode": true,
+                "request_message": true,
+                "response_message": true,
+                "status_field_number": true,
+                "watch_only_enum_name": true,
+                "watch_only_enum_number": true
+              }
+            },
+            {
+              "status": "ok",
+              "model": "claude-haiku-5-5",
+              "turns": 2,
+              "routed_cmd_ok": true,
+              "followup_used": false,
+              "route_choice": {
+                "operation_id": "grpc.health.v1.Health.Watch",
+                "operation": null,
+                "schemas": [
+                  "grpc.health.v1.HealthCheckRequest",
+                  "grpc.health.v1.HealthCheckResponse",
+                  "grpc.health.v1.HealthCheckResponse.ServingStatus"
+                ]
+              },
+              "total_context_bpe_o200k": 1609,
+              "api_input_tokens": 5881,
+              "api_output_tokens": 830,
+              "duration_api_ms": 4528,
+              "cost_usd": 0.000474,
+              "task_passed": true,
+              "assertions_passed": 6,
+              "assertions_total": 6,
+              "checks": {
+                "streaming_mode": true,
+                "request_message": true,
+                "response_message": true,
+                "status_field_number": true,
+                "watch_only_enum_name": true,
+                "watch_only_enum_number": true
+              }
+            }
+          ],
+          "turns_mean": 2,
+          "followup_rate": 0.0,
+          "route_cmd_ok_rate": 1.0,
+          "total_context_bpe_o200k_median": 1609
+        },
+        "oracle_slice": {
+          "status": "ok",
+          "trials": 3,
+          "tasks_passed": 3,
+          "task_pass_rate": 1.0,
+          "assertions_mean": 6,
+          "assertions_min": 6,
+          "assertions_max": 6,
+          "assertions_total": 6,
+          "api_input_tokens_median": 2707,
+          "duration_api_ms_median": 1570,
+          "cost_usd_mean": 0.000303,
+          "trial_details": [
+            {
+              "status": "ok",
+              "model": "claude-haiku-5-5",
+              "api_input_tokens": 2707,
+              "api_output_tokens": 253,
+              "duration_api_ms": 1602,
+              "cost_usd": 0.000668,
+              "task_passed": true,
+              "assertions_passed": 6,
+              "assertions_total": 6,
+              "checks": {
+                "streaming_mode": true,
+                "request_message": true,
+                "response_message": true,
+                "status_field_number": true,
+                "watch_only_enum_name": true,
+                "watch_only_enum_number": true
+              }
+            },
+            {
+              "status": "ok",
+              "model": "claude-haiku-5-5",
+              "api_input_tokens": 2707,
+              "api_output_tokens": 114,
+              "duration_api_ms": 1048,
+              "cost_usd": 8.4e-05,
+              "task_passed": true,
+              "assertions_passed": 6,
+              "assertions_total": 6,
+              "checks": {
+                "streaming_mode": true,
+                "request_message": true,
+                "response_message": true,
+                "status_field_number": true,
+                "watch_only_enum_name": true,
+                "watch_only_enum_number": true
+              }
+            },
+            {
+              "status": "ok",
+              "model": "claude-haiku-5-5",
+              "api_input_tokens": 2707,
+              "api_output_tokens": 260,
+              "duration_api_ms": 1570,
+              "cost_usd": 0.000157,
+              "task_passed": true,
+              "assertions_passed": 6,
+              "assertions_total": 6,
+              "checks": {
+                "streaming_mode": true,
+                "request_message": true,
+                "response_message": true,
+                "status_field_number": true,
+                "watch_only_enum_name": true,
+                "watch_only_enum_number": true
+              }
+            }
+          ],
+          "context_bpe_o200k": 825,
+          "context_chars": 3474,
+          "context_chars_div_4": 869,
+          "claude_context_tokens_est": 1429,
+          "claude_vs_o200k_ratio": 1.73,
+          "chars_per_claude_token": 2.43
         },
         "raw_spec": {
           "status": "ok",
+          "trials": 3,
+          "tasks_passed": 3,
+          "task_pass_rate": 1.0,
+          "assertions_mean": 6,
+          "assertions_min": 6,
+          "assertions_max": 6,
+          "assertions_total": 6,
+          "api_input_tokens_median": 2167,
+          "duration_api_ms_median": 1651,
+          "cost_usd_mean": 0.000453,
+          "trial_details": [
+            {
+              "status": "ok",
+              "model": "claude-haiku-5-5",
+              "api_input_tokens": 2167,
+              "api_output_tokens": 392,
+              "duration_api_ms": 2198,
+              "cost_usd": 0.000629,
+              "task_passed": true,
+              "assertions_passed": 6,
+              "assertions_total": 6,
+              "checks": {
+                "streaming_mode": true,
+                "request_message": true,
+                "response_message": true,
+                "status_field_number": true,
+                "watch_only_enum_name": true,
+                "watch_only_enum_number": true
+              }
+            },
+            {
+              "status": "ok",
+              "model": "claude-haiku-5-5",
+              "api_input_tokens": 2167,
+              "api_output_tokens": 239,
+              "duration_api_ms": 1434,
+              "cost_usd": 0.000141,
+              "task_passed": true,
+              "assertions_passed": 6,
+              "assertions_total": 6,
+              "checks": {
+                "streaming_mode": true,
+                "request_message": true,
+                "response_message": true,
+                "status_field_number": true,
+                "watch_only_enum_name": true,
+                "watch_only_enum_number": true
+              }
+            },
+            {
+              "status": "ok",
+              "model": "claude-haiku-5-5",
+              "api_input_tokens": 2167,
+              "api_output_tokens": 311,
+              "duration_api_ms": 1651,
+              "cost_usd": 0.000589,
+              "task_passed": true,
+              "assertions_passed": 6,
+              "assertions_total": 6,
+              "checks": {
+                "streaming_mode": true,
+                "request_message": true,
+                "response_message": true,
+                "status_field_number": true,
+                "watch_only_enum_name": true,
+                "watch_only_enum_number": true
+              }
+            }
+          ],
           "context_bpe_o200k": 549,
+          "context_chars": 2416,
           "context_chars_div_4": 604,
-          "api_input_tokens": 2167,
-          "api_output_tokens": 244,
-          "duration_api_ms": 1474,
-          "cost_usd": 0.000555,
-          "task_passed": true,
-          "assertions_passed": 6,
-          "assertions_total": 6,
-          "checks": {
-            "streaming_mode": true,
-            "request_message": true,
-            "response_message": true,
-            "status_field_number": true,
-            "watch_only_enum_name": true,
-            "watch_only_enum_number": true
-          }
-        },
-        "focused_slice": {
-          "status": "ok",
-          "context_bpe_o200k": 825,
-          "context_chars_div_4": 869,
-          "api_input_tokens": 2707,
-          "api_output_tokens": 388,
-          "duration_api_ms": 2069,
-          "cost_usd": 0.000735,
-          "task_passed": true,
-          "assertions_passed": 6,
-          "assertions_total": 6,
-          "checks": {
-            "streaming_mode": true,
-            "request_message": true,
-            "response_message": true,
-            "status_field_number": true,
-            "watch_only_enum_name": true,
-            "watch_only_enum_number": true
-          }
+          "claude_context_tokens_est": 889,
+          "claude_vs_o200k_ratio": 1.62,
+          "chars_per_claude_token": 2.72
         }
       }
     },
@@ -575,87 +2826,442 @@
       "conditions": {
         "no_spec": {
           "status": "ok",
-          "context_bpe_o200k": 0,
-          "context_chars_div_4": 0,
-          "api_input_tokens": 1319,
-          "api_output_tokens": 849,
-          "duration_api_ms": 4380,
-          "cost_usd": 0.000688,
-          "task_passed": true,
-          "assertions_passed": 7,
+          "trials": 3,
+          "tasks_passed": 1,
+          "task_pass_rate": 0.333,
+          "assertions_mean": 2.33,
+          "assertions_min": 0,
+          "assertions_max": 7,
           "assertions_total": 7,
-          "checks": {
-            "streaming_mode": true,
-            "request_field_1_name": true,
-            "request_field_1_json_name": true,
-            "partial_success_field_1_name": true,
-            "partial_success_field_1_type": true,
-            "partial_success_field_2_name": true,
-            "partial_success_field_2_number": true
-          }
+          "api_input_tokens_median": 1319,
+          "duration_api_ms_median": 4031,
+          "cost_usd_mean": 0.000628,
+          "trial_details": [
+            {
+              "status": "ok",
+              "model": "claude-haiku-5-5",
+              "api_input_tokens": 1319,
+              "api_output_tokens": 799,
+              "duration_api_ms": 4631,
+              "cost_usd": 0.000663,
+              "task_passed": true,
+              "assertions_passed": 7,
+              "assertions_total": 7,
+              "checks": {
+                "streaming_mode": true,
+                "request_field_1_name": true,
+                "request_field_1_json_name": true,
+                "partial_success_field_1_name": true,
+                "partial_success_field_1_type": true,
+                "partial_success_field_2_name": true,
+                "partial_success_field_2_number": true
+              }
+            },
+            {
+              "status": "ok",
+              "model": "claude-haiku-5-5",
+              "api_input_tokens": 1319,
+              "api_output_tokens": 657,
+              "duration_api_ms": 3828,
+              "cost_usd": 0.000592,
+              "task_passed": false,
+              "assertions_passed": 0,
+              "assertions_total": 7,
+              "checks": {
+                "streaming_mode": false,
+                "request_field_1_name": false,
+                "request_field_1_json_name": false,
+                "partial_success_field_1_name": false,
+                "partial_success_field_1_type": false,
+                "partial_success_field_2_name": false,
+                "partial_success_field_2_number": false
+              }
+            },
+            {
+              "status": "ok",
+              "model": "claude-haiku-5-5",
+              "api_input_tokens": 1319,
+              "api_output_tokens": 733,
+              "duration_api_ms": 4031,
+              "cost_usd": 0.00063,
+              "task_passed": false,
+              "assertions_passed": 0,
+              "assertions_total": 7,
+              "checks": {
+                "streaming_mode": false,
+                "request_field_1_name": false,
+                "request_field_1_json_name": false,
+                "partial_success_field_1_name": false,
+                "partial_success_field_1_type": false,
+                "partial_success_field_2_name": false,
+                "partial_success_field_2_number": false
+              }
+            }
+          ],
+          "context_bpe_o200k": 0,
+          "context_chars": 0,
+          "context_chars_div_4": 0
         },
         "summary": {
           "status": "ok",
-          "context_bpe_o200k": 66,
-          "context_chars_div_4": 74,
-          "api_input_tokens": 1441,
-          "api_output_tokens": 982,
-          "duration_api_ms": 4830,
-          "cost_usd": 0.000779,
-          "task_passed": true,
-          "assertions_passed": 7,
+          "trials": 3,
+          "tasks_passed": 1,
+          "task_pass_rate": 0.333,
+          "assertions_mean": 2.33,
+          "assertions_min": 0,
+          "assertions_max": 7,
           "assertions_total": 7,
-          "checks": {
-            "streaming_mode": true,
-            "request_field_1_name": true,
-            "request_field_1_json_name": true,
-            "partial_success_field_1_name": true,
-            "partial_success_field_1_type": true,
-            "partial_success_field_2_name": true,
-            "partial_success_field_2_number": true
-          }
+          "api_input_tokens_median": 1441,
+          "duration_api_ms_median": 4054,
+          "cost_usd_mean": 0.000596,
+          "trial_details": [
+            {
+              "status": "ok",
+              "model": "claude-haiku-5-5",
+              "api_input_tokens": 1441,
+              "api_output_tokens": 743,
+              "duration_api_ms": 3598,
+              "cost_usd": 0.000386,
+              "task_passed": true,
+              "assertions_passed": 7,
+              "assertions_total": 7,
+              "checks": {
+                "streaming_mode": true,
+                "request_field_1_name": true,
+                "request_field_1_json_name": true,
+                "partial_success_field_1_name": true,
+                "partial_success_field_1_type": true,
+                "partial_success_field_2_name": true,
+                "partial_success_field_2_number": true
+              }
+            },
+            {
+              "status": "ok",
+              "model": "claude-haiku-5-5",
+              "api_input_tokens": 1441,
+              "api_output_tokens": 742,
+              "duration_api_ms": 4054,
+              "cost_usd": 0.000659,
+              "task_passed": false,
+              "assertions_passed": 0,
+              "assertions_total": 7,
+              "checks": {
+                "streaming_mode": false,
+                "request_field_1_name": false,
+                "request_field_1_json_name": false,
+                "partial_success_field_1_name": false,
+                "partial_success_field_1_type": false,
+                "partial_success_field_2_name": false,
+                "partial_success_field_2_number": false
+              }
+            },
+            {
+              "status": "ok",
+              "model": "claude-haiku-5-5",
+              "api_input_tokens": 1441,
+              "api_output_tokens": 1458,
+              "duration_api_ms": 7484,
+              "cost_usd": 0.000744,
+              "task_passed": false,
+              "assertions_passed": 0,
+              "assertions_total": 7,
+              "checks": {
+                "streaming_mode": false,
+                "request_field_1_name": false,
+                "request_field_1_json_name": false,
+                "partial_success_field_1_name": false,
+                "partial_success_field_1_type": false,
+                "partial_success_field_2_name": false,
+                "partial_success_field_2_number": false
+              }
+            }
+          ],
+          "context_bpe_o200k": 66,
+          "context_chars": 294,
+          "context_chars_div_4": 74,
+          "claude_context_tokens_est": 122,
+          "claude_vs_o200k_ratio": 1.85,
+          "chars_per_claude_token": 2.41
+        },
+        "routed_e2e": {
+          "status": "ok",
+          "trials": 3,
+          "tasks_passed": 2,
+          "task_pass_rate": 0.667,
+          "assertions_mean": 6.33,
+          "assertions_min": 5,
+          "assertions_max": 7,
+          "assertions_total": 7,
+          "api_input_tokens_median": 21153,
+          "duration_api_ms_median": 4774,
+          "cost_usd_mean": 0.00211,
+          "trial_details": [
+            {
+              "status": "ok",
+              "model": "claude-haiku-5-5",
+              "turns": 2,
+              "routed_cmd_ok": true,
+              "followup_used": false,
+              "route_choice": {
+                "operation_id": "opentelemetry.proto.collector.trace.v1.TraceService.Export",
+                "operation": null,
+                "schemas": [
+                  "opentelemetry.proto.collector.trace.v1.ExportTraceServiceRequest",
+                  "opentelemetry.proto.collector.trace.v1.ExportTraceServiceResponse",
+                  "opentelemetry.proto.collector.trace.v1.ExportTracePartialSuccess"
+                ]
+              },
+              "total_context_bpe_o200k": 11012,
+              "api_input_tokens": 21153,
+              "api_output_tokens": 900,
+              "duration_api_ms": 4774,
+              "cost_usd": 0.00468,
+              "task_passed": false,
+              "assertions_passed": 5,
+              "assertions_total": 7,
+              "checks": {
+                "streaming_mode": true,
+                "request_field_1_name": true,
+                "request_field_1_json_name": true,
+                "partial_success_field_1_name": false,
+                "partial_success_field_1_type": false,
+                "partial_success_field_2_name": true,
+                "partial_success_field_2_number": true
+              }
+            },
+            {
+              "status": "ok",
+              "model": "claude-haiku-5-5",
+              "turns": 2,
+              "routed_cmd_ok": true,
+              "followup_used": false,
+              "route_choice": {
+                "operation_id": "opentelemetry.proto.collector.trace.v1.TraceService.Export",
+                "operation": null,
+                "schemas": [
+                  "opentelemetry.proto.collector.trace.v1.ExportTraceServiceRequest",
+                  "opentelemetry.proto.collector.trace.v1.ExportTraceServiceResponse",
+                  "opentelemetry.proto.collector.trace.v1.ExportTracePartialSuccess"
+                ]
+              },
+              "total_context_bpe_o200k": 11012,
+              "api_input_tokens": 21153,
+              "api_output_tokens": 1028,
+              "duration_api_ms": 5142,
+              "cost_usd": 0.001051,
+              "task_passed": true,
+              "assertions_passed": 7,
+              "assertions_total": 7,
+              "checks": {
+                "streaming_mode": true,
+                "request_field_1_name": true,
+                "request_field_1_json_name": true,
+                "partial_success_field_1_name": true,
+                "partial_success_field_1_type": true,
+                "partial_success_field_2_name": true,
+                "partial_success_field_2_number": true
+              }
+            },
+            {
+              "status": "ok",
+              "model": "claude-haiku-5-5",
+              "turns": 2,
+              "routed_cmd_ok": true,
+              "followup_used": false,
+              "route_choice": {
+                "operation_id": "opentelemetry.proto.collector.trace.v1.TraceService.Export",
+                "operation": null,
+                "schemas": [
+                  "opentelemetry.proto.collector.trace.v1.ExportTraceServiceRequest",
+                  "opentelemetry.proto.collector.trace.v1.ExportTraceServiceResponse",
+                  "opentelemetry.proto.collector.trace.v1.ExportTracePartialSuccess"
+                ]
+              },
+              "total_context_bpe_o200k": 11012,
+              "api_input_tokens": 21153,
+              "api_output_tokens": 771,
+              "duration_api_ms": 4267,
+              "cost_usd": 0.000598,
+              "task_passed": true,
+              "assertions_passed": 7,
+              "assertions_total": 7,
+              "checks": {
+                "streaming_mode": true,
+                "request_field_1_name": true,
+                "request_field_1_json_name": true,
+                "partial_success_field_1_name": true,
+                "partial_success_field_1_type": true,
+                "partial_success_field_2_name": true,
+                "partial_success_field_2_number": true
+              }
+            }
+          ],
+          "turns_mean": 2,
+          "followup_rate": 0.0,
+          "route_cmd_ok_rate": 1.0,
+          "total_context_bpe_o200k_median": 11012
+        },
+        "oracle_slice": {
+          "status": "ok",
+          "trials": 3,
+          "tasks_passed": 0,
+          "task_pass_rate": 0.0,
+          "assertions_mean": 3,
+          "assertions_min": 3,
+          "assertions_max": 3,
+          "assertions_total": 7,
+          "api_input_tokens_median": 3691,
+          "duration_api_ms_median": 3510,
+          "cost_usd_mean": 0.000692,
+          "trial_details": [
+            {
+              "status": "ok",
+              "model": "claude-haiku-5-5",
+              "api_input_tokens": 3691,
+              "api_output_tokens": 579,
+              "duration_api_ms": 2856,
+              "cost_usd": 0.001027,
+              "task_passed": false,
+              "assertions_passed": 3,
+              "assertions_total": 7,
+              "checks": {
+                "streaming_mode": true,
+                "request_field_1_name": true,
+                "request_field_1_json_name": true,
+                "partial_success_field_1_name": false,
+                "partial_success_field_1_type": false,
+                "partial_success_field_2_name": false,
+                "partial_success_field_2_number": false
+              }
+            },
+            {
+              "status": "ok",
+              "model": "claude-haiku-5-5",
+              "api_input_tokens": 3691,
+              "api_output_tokens": 692,
+              "duration_api_ms": 3510,
+              "cost_usd": 0.000383,
+              "task_passed": false,
+              "assertions_passed": 3,
+              "assertions_total": 7,
+              "checks": {
+                "streaming_mode": true,
+                "request_field_1_name": true,
+                "request_field_1_json_name": true,
+                "partial_success_field_1_name": false,
+                "partial_success_field_1_type": false,
+                "partial_success_field_2_name": false,
+                "partial_success_field_2_number": false
+              }
+            },
+            {
+              "status": "ok",
+              "model": "claude-haiku-5-5",
+              "api_input_tokens": 3691,
+              "api_output_tokens": 1260,
+              "duration_api_ms": 5861,
+              "cost_usd": 0.000667,
+              "task_passed": false,
+              "assertions_passed": 3,
+              "assertions_total": 7,
+              "checks": {
+                "streaming_mode": true,
+                "request_field_1_name": true,
+                "request_field_1_json_name": true,
+                "partial_success_field_1_name": false,
+                "partial_success_field_1_type": false,
+                "partial_success_field_2_name": false,
+                "partial_success_field_2_number": false
+              }
+            }
+          ],
+          "context_bpe_o200k": 1393,
+          "context_chars": 5731,
+          "context_chars_div_4": 1433,
+          "claude_context_tokens_est": 2372,
+          "claude_vs_o200k_ratio": 1.7,
+          "chars_per_claude_token": 2.42
         },
         "raw_spec": {
           "status": "ok",
+          "trials": 3,
+          "tasks_passed": 3,
+          "task_pass_rate": 1.0,
+          "assertions_mean": 7,
+          "assertions_min": 7,
+          "assertions_max": 7,
+          "assertions_total": 7,
+          "api_input_tokens_median": 11844,
+          "duration_api_ms_median": 2194,
+          "cost_usd_mean": 0.00103,
+          "trial_details": [
+            {
+              "status": "ok",
+              "model": "claude-haiku-5-5",
+              "api_input_tokens": 11844,
+              "api_output_tokens": 437,
+              "duration_api_ms": 2285,
+              "cost_usd": 0.002587,
+              "task_passed": true,
+              "assertions_passed": 7,
+              "assertions_total": 7,
+              "checks": {
+                "streaming_mode": true,
+                "request_field_1_name": true,
+                "request_field_1_json_name": true,
+                "partial_success_field_1_name": true,
+                "partial_success_field_1_type": true,
+                "partial_success_field_2_name": true,
+                "partial_success_field_2_number": true
+              }
+            },
+            {
+              "status": "ok",
+              "model": "claude-haiku-5-5",
+              "api_input_tokens": 11844,
+              "api_output_tokens": 118,
+              "duration_api_ms": 1158,
+              "cost_usd": 0.000178,
+              "task_passed": true,
+              "assertions_passed": 7,
+              "assertions_total": 7,
+              "checks": {
+                "streaming_mode": true,
+                "request_field_1_name": true,
+                "request_field_1_json_name": true,
+                "partial_success_field_1_name": true,
+                "partial_success_field_1_type": true,
+                "partial_success_field_2_name": true,
+                "partial_success_field_2_number": true
+              }
+            },
+            {
+              "status": "ok",
+              "model": "claude-haiku-5-5",
+              "api_input_tokens": 11844,
+              "api_output_tokens": 411,
+              "duration_api_ms": 2194,
+              "cost_usd": 0.000324,
+              "task_passed": true,
+              "assertions_passed": 7,
+              "assertions_total": 7,
+              "checks": {
+                "streaming_mode": true,
+                "request_field_1_name": true,
+                "request_field_1_json_name": true,
+                "partial_success_field_1_name": true,
+                "partial_success_field_1_type": true,
+                "partial_success_field_2_name": true,
+                "partial_success_field_2_number": true
+              }
+            }
+          ],
           "context_bpe_o200k": 6717,
+          "context_chars": 28249,
           "context_chars_div_4": 7063,
-          "api_input_tokens": 11844,
-          "api_output_tokens": 118,
-          "duration_api_ms": 1013,
-          "cost_usd": 0.002428,
-          "task_passed": true,
-          "assertions_passed": 7,
-          "assertions_total": 7,
-          "checks": {
-            "streaming_mode": true,
-            "request_field_1_name": true,
-            "request_field_1_json_name": true,
-            "partial_success_field_1_name": true,
-            "partial_success_field_1_type": true,
-            "partial_success_field_2_name": true,
-            "partial_success_field_2_number": true
-          }
-        },
-        "focused_slice": {
-          "status": "ok",
-          "context_bpe_o200k": 1393,
-          "context_chars_div_4": 1433,
-          "api_input_tokens": 3691,
-          "api_output_tokens": 637,
-          "duration_api_ms": 3649,
-          "cost_usd": 0.001057,
-          "task_passed": false,
-          "assertions_passed": 3,
-          "assertions_total": 7,
-          "checks": {
-            "streaming_mode": true,
-            "request_field_1_name": true,
-            "request_field_1_json_name": true,
-            "partial_success_field_1_name": false,
-            "partial_success_field_1_type": false,
-            "partial_success_field_2_name": false,
-            "partial_success_field_2_number": false
-          }
+          "claude_context_tokens_est": 10525,
+          "claude_vs_o200k_ratio": 1.57,
+          "chars_per_claude_token": 2.68
         }
       }
     },
@@ -666,79 +3272,412 @@
       "conditions": {
         "no_spec": {
           "status": "ok",
-          "context_bpe_o200k": 0,
-          "context_chars_div_4": 0,
-          "api_input_tokens": 1298,
-          "api_output_tokens": 633,
-          "duration_api_ms": 3639,
-          "cost_usd": 0.000576,
-          "task_passed": true,
-          "assertions_passed": 5,
+          "trials": 3,
+          "tasks_passed": 3,
+          "task_pass_rate": 1.0,
+          "assertions_mean": 5,
+          "assertions_min": 5,
+          "assertions_max": 5,
           "assertions_total": 5,
-          "checks": {
-            "request_field_1_name": true,
-            "request_field_1_json_name": true,
-            "partial_success_field_1_name": true,
-            "partial_success_field_1_json_name": true,
-            "partial_success_field_2_name": true
-          }
+          "api_input_tokens_median": 1298,
+          "duration_api_ms_median": 3572,
+          "cost_usd_mean": 0.000415,
+          "trial_details": [
+            {
+              "status": "ok",
+              "model": "claude-haiku-5-5",
+              "api_input_tokens": 1298,
+              "api_output_tokens": 685,
+              "duration_api_ms": 3714,
+              "cost_usd": 0.000602,
+              "task_passed": true,
+              "assertions_passed": 5,
+              "assertions_total": 5,
+              "checks": {
+                "request_field_1_name": true,
+                "request_field_1_json_name": true,
+                "partial_success_field_1_name": true,
+                "partial_success_field_1_json_name": true,
+                "partial_success_field_2_name": true
+              }
+            },
+            {
+              "status": "ok",
+              "model": "claude-haiku-5-5",
+              "api_input_tokens": 1298,
+              "api_output_tokens": 681,
+              "duration_api_ms": 3572,
+              "cost_usd": 0.000354,
+              "task_passed": true,
+              "assertions_passed": 5,
+              "assertions_total": 5,
+              "checks": {
+                "request_field_1_name": true,
+                "request_field_1_json_name": true,
+                "partial_success_field_1_name": true,
+                "partial_success_field_1_json_name": true,
+                "partial_success_field_2_name": true
+              }
+            },
+            {
+              "status": "ok",
+              "model": "claude-haiku-5-5",
+              "api_input_tokens": 1298,
+              "api_output_tokens": 552,
+              "duration_api_ms": 3015,
+              "cost_usd": 0.000289,
+              "task_passed": true,
+              "assertions_passed": 5,
+              "assertions_total": 5,
+              "checks": {
+                "request_field_1_name": true,
+                "request_field_1_json_name": true,
+                "partial_success_field_1_name": true,
+                "partial_success_field_1_json_name": true,
+                "partial_success_field_2_name": true
+              }
+            }
+          ],
+          "context_bpe_o200k": 0,
+          "context_chars": 0,
+          "context_chars_div_4": 0
         },
         "summary": {
           "status": "ok",
-          "context_bpe_o200k": 68,
-          "context_chars_div_4": 76,
-          "api_input_tokens": 1424,
-          "api_output_tokens": 523,
-          "duration_api_ms": 2894,
-          "cost_usd": 0.000546,
-          "task_passed": true,
-          "assertions_passed": 5,
+          "trials": 3,
+          "tasks_passed": 1,
+          "task_pass_rate": 0.333,
+          "assertions_mean": 1.67,
+          "assertions_min": 0,
+          "assertions_max": 5,
           "assertions_total": 5,
-          "checks": {
-            "request_field_1_name": true,
-            "request_field_1_json_name": true,
-            "partial_success_field_1_name": true,
-            "partial_success_field_1_json_name": true,
-            "partial_success_field_2_name": true
-          }
+          "api_input_tokens_median": 1424,
+          "duration_api_ms_median": 4730,
+          "cost_usd_mean": 0.000495,
+          "trial_details": [
+            {
+              "status": "ok",
+              "model": "claude-haiku-5-5",
+              "api_input_tokens": 1424,
+              "api_output_tokens": 923,
+              "duration_api_ms": 4798,
+              "cost_usd": 0.000746,
+              "task_passed": false,
+              "assertions_passed": 0,
+              "assertions_total": 5,
+              "checks": {
+                "request_field_1_name": false,
+                "request_field_1_json_name": false,
+                "partial_success_field_1_name": false,
+                "partial_success_field_1_json_name": false,
+                "partial_success_field_2_name": false
+              }
+            },
+            {
+              "status": "ok",
+              "model": "claude-haiku-5-5",
+              "api_input_tokens": 1424,
+              "api_output_tokens": 677,
+              "duration_api_ms": 3687,
+              "cost_usd": 0.000353,
+              "task_passed": true,
+              "assertions_passed": 5,
+              "assertions_total": 5,
+              "checks": {
+                "request_field_1_name": true,
+                "request_field_1_json_name": true,
+                "partial_success_field_1_name": true,
+                "partial_success_field_1_json_name": true,
+                "partial_success_field_2_name": true
+              }
+            },
+            {
+              "status": "ok",
+              "model": "claude-haiku-5-5",
+              "api_input_tokens": 1424,
+              "api_output_tokens": 741,
+              "duration_api_ms": 4730,
+              "cost_usd": 0.000385,
+              "task_passed": false,
+              "assertions_passed": 0,
+              "assertions_total": 5,
+              "checks": {
+                "request_field_1_name": false,
+                "request_field_1_json_name": false,
+                "partial_success_field_1_name": false,
+                "partial_success_field_1_json_name": false,
+                "partial_success_field_2_name": false
+              }
+            }
+          ],
+          "context_bpe_o200k": 68,
+          "context_chars": 302,
+          "context_chars_div_4": 76,
+          "claude_context_tokens_est": 126,
+          "claude_vs_o200k_ratio": 1.85,
+          "chars_per_claude_token": 2.4
+        },
+        "routed_e2e": {
+          "status": "ok",
+          "trials": 3,
+          "tasks_passed": 3,
+          "task_pass_rate": 1.0,
+          "assertions_mean": 5,
+          "assertions_min": 5,
+          "assertions_max": 5,
+          "assertions_total": 5,
+          "api_input_tokens_median": 33959,
+          "duration_api_ms_median": 11841,
+          "cost_usd_mean": 0.003098,
+          "trial_details": [
+            {
+              "status": "ok",
+              "model": "claude-haiku-5-5",
+              "turns": 2,
+              "routed_cmd_ok": true,
+              "followup_used": false,
+              "route_choice": {
+                "operation_id": "opentelemetry.proto.collector.metrics.v1.MetricsService.Export",
+                "operation": null,
+                "schemas": [
+                  "opentelemetry.proto.collector.metrics.v1.ExportMetricsServiceRequest",
+                  "opentelemetry.proto.collector.metrics.v1.ExportMetricsServiceResponse",
+                  "opentelemetry.proto.collector.metrics.v1.ExportMetricsPartialSuccess"
+                ]
+              },
+              "total_context_bpe_o200k": 18626,
+              "api_input_tokens": 33959,
+              "api_output_tokens": 998,
+              "duration_api_ms": 11841,
+              "cost_usd": 0.007291,
+              "task_passed": true,
+              "assertions_passed": 5,
+              "assertions_total": 5,
+              "checks": {
+                "request_field_1_name": true,
+                "request_field_1_json_name": true,
+                "partial_success_field_1_name": true,
+                "partial_success_field_1_json_name": true,
+                "partial_success_field_2_name": true
+              }
+            },
+            {
+              "status": "ok",
+              "model": "claude-haiku-5-5",
+              "turns": 2,
+              "routed_cmd_ok": true,
+              "followup_used": false,
+              "route_choice": {
+                "operation_id": "opentelemetry.proto.collector.metrics.v1.MetricsService.Export",
+                "operation": null,
+                "schemas": [
+                  "opentelemetry.proto.collector.metrics.v1.ExportMetricsServiceRequest",
+                  "opentelemetry.proto.collector.metrics.v1.ExportMetricsServiceResponse",
+                  "opentelemetry.proto.collector.metrics.v1.ExportMetricsPartialSuccess"
+                ]
+              },
+              "total_context_bpe_o200k": 18626,
+              "api_input_tokens": 33959,
+              "api_output_tokens": 1062,
+              "duration_api_ms": 11853,
+              "cost_usd": 0.000871,
+              "task_passed": true,
+              "assertions_passed": 5,
+              "assertions_total": 5,
+              "checks": {
+                "request_field_1_name": true,
+                "request_field_1_json_name": true,
+                "partial_success_field_1_name": true,
+                "partial_success_field_1_json_name": true,
+                "partial_success_field_2_name": true
+              }
+            },
+            {
+              "status": "ok",
+              "model": "claude-haiku-5-5",
+              "turns": 2,
+              "routed_cmd_ok": true,
+              "followup_used": false,
+              "route_choice": {
+                "operation_id": "opentelemetry.proto.collector.metrics.v1.MetricsService.Export",
+                "operation": null,
+                "schemas": [
+                  "opentelemetry.proto.collector.metrics.v1.ExportMetricsServiceRequest",
+                  "opentelemetry.proto.collector.metrics.v1.ExportMetricsServiceResponse",
+                  "opentelemetry.proto.collector.metrics.v1.ExportMetricsPartialSuccess"
+                ]
+              },
+              "total_context_bpe_o200k": 18626,
+              "api_input_tokens": 33959,
+              "api_output_tokens": 943,
+              "duration_api_ms": 8587,
+              "cost_usd": 0.001133,
+              "task_passed": true,
+              "assertions_passed": 5,
+              "assertions_total": 5,
+              "checks": {
+                "request_field_1_name": true,
+                "request_field_1_json_name": true,
+                "partial_success_field_1_name": true,
+                "partial_success_field_1_json_name": true,
+                "partial_success_field_2_name": true
+              }
+            }
+          ],
+          "turns_mean": 2,
+          "followup_rate": 0.0,
+          "route_cmd_ok_rate": 1.0,
+          "total_context_bpe_o200k_median": 18626
+        },
+        "oracle_slice": {
+          "status": "ok",
+          "trials": 3,
+          "tasks_passed": 0,
+          "task_pass_rate": 0.0,
+          "assertions_mean": 2.33,
+          "assertions_min": 2,
+          "assertions_max": 3,
+          "assertions_total": 5,
+          "api_input_tokens_median": 3740,
+          "duration_api_ms_median": 62930,
+          "cost_usd_mean": 0.000701,
+          "trial_details": [
+            {
+              "status": "ok",
+              "model": "claude-haiku-5-5",
+              "api_input_tokens": 3740,
+              "api_output_tokens": 694,
+              "duration_api_ms": 7178,
+              "cost_usd": 0.001095,
+              "task_passed": false,
+              "assertions_passed": 2,
+              "assertions_total": 5,
+              "checks": {
+                "request_field_1_name": true,
+                "request_field_1_json_name": true,
+                "partial_success_field_1_name": false,
+                "partial_success_field_1_json_name": false,
+                "partial_success_field_2_name": false
+              }
+            },
+            {
+              "status": "ok",
+              "model": "claude-haiku-5-5",
+              "api_input_tokens": 3740,
+              "api_output_tokens": 1331,
+              "duration_api_ms": 84355,
+              "cost_usd": 0.000703,
+              "task_passed": false,
+              "assertions_passed": 3,
+              "assertions_total": 5,
+              "checks": {
+                "request_field_1_name": true,
+                "request_field_1_json_name": true,
+                "partial_success_field_1_name": false,
+                "partial_success_field_1_json_name": false,
+                "partial_success_field_2_name": true
+              }
+            },
+            {
+              "status": "ok",
+              "model": "claude-haiku-5-5",
+              "api_input_tokens": 3740,
+              "api_output_tokens": 533,
+              "duration_api_ms": 62930,
+              "cost_usd": 0.000304,
+              "task_passed": false,
+              "assertions_passed": 2,
+              "assertions_total": 5,
+              "checks": {
+                "request_field_1_name": true,
+                "request_field_1_json_name": true,
+                "partial_success_field_1_name": false,
+                "partial_success_field_1_json_name": false,
+                "partial_success_field_2_name": false
+              }
+            }
+          ],
+          "context_bpe_o200k": 1376,
+          "context_chars": 5834,
+          "context_chars_div_4": 1459,
+          "claude_context_tokens_est": 2442,
+          "claude_vs_o200k_ratio": 1.77,
+          "chars_per_claude_token": 2.39
         },
         "raw_spec": {
           "status": "ok",
+          "trials": 3,
+          "tasks_passed": 3,
+          "task_pass_rate": 1.0,
+          "assertions_mean": 5,
+          "assertions_min": 5,
+          "assertions_max": 5,
+          "assertions_total": 5,
+          "api_input_tokens_median": 17230,
+          "duration_api_ms_median": 2119,
+          "cost_usd_mean": 0.001429,
+          "trial_details": [
+            {
+              "status": "ok",
+              "model": "claude-haiku-5-5",
+              "api_input_tokens": 17230,
+              "api_output_tokens": 400,
+              "duration_api_ms": 58945,
+              "cost_usd": 0.000372,
+              "task_passed": true,
+              "assertions_passed": 5,
+              "assertions_total": 5,
+              "checks": {
+                "request_field_1_name": true,
+                "request_field_1_json_name": true,
+                "partial_success_field_1_name": true,
+                "partial_success_field_1_json_name": true,
+                "partial_success_field_2_name": true
+              }
+            },
+            {
+              "status": "ok",
+              "model": "claude-haiku-5-5",
+              "api_input_tokens": 17230,
+              "api_output_tokens": 369,
+              "duration_api_ms": 2119,
+              "cost_usd": 0.00363,
+              "task_passed": true,
+              "assertions_passed": 5,
+              "assertions_total": 5,
+              "checks": {
+                "request_field_1_name": true,
+                "request_field_1_json_name": true,
+                "partial_success_field_1_name": true,
+                "partial_success_field_1_json_name": true,
+                "partial_success_field_2_name": true
+              }
+            },
+            {
+              "status": "ok",
+              "model": "claude-haiku-5-5",
+              "api_input_tokens": 17230,
+              "api_output_tokens": 227,
+              "duration_api_ms": 1423,
+              "cost_usd": 0.000286,
+              "task_passed": true,
+              "assertions_passed": 5,
+              "assertions_total": 5,
+              "checks": {
+                "request_field_1_name": true,
+                "request_field_1_json_name": true,
+                "partial_success_field_1_name": true,
+                "partial_success_field_1_json_name": true,
+                "partial_success_field_2_name": true
+              }
+            }
+          ],
           "context_bpe_o200k": 10266,
+          "context_chars": 43704,
           "context_chars_div_4": 10926,
-          "api_input_tokens": 17230,
-          "api_output_tokens": 366,
-          "duration_api_ms": 1957,
-          "cost_usd": 0.003629,
-          "task_passed": true,
-          "assertions_passed": 5,
-          "assertions_total": 5,
-          "checks": {
-            "request_field_1_name": true,
-            "request_field_1_json_name": true,
-            "partial_success_field_1_name": true,
-            "partial_success_field_1_json_name": true,
-            "partial_success_field_2_name": true
-          }
-        },
-        "focused_slice": {
-          "status": "ok",
-          "context_bpe_o200k": 1376,
-          "context_chars_div_4": 1459,
-          "api_input_tokens": 3740,
-          "api_output_tokens": 1517,
-          "duration_api_ms": 7369,
-          "cost_usd": 0.001506,
-          "task_passed": false,
-          "assertions_passed": 3,
-          "assertions_total": 5,
-          "checks": {
-            "request_field_1_name": true,
-            "request_field_1_json_name": true,
-            "partial_success_field_1_name": false,
-            "partial_success_field_1_json_name": false,
-            "partial_success_field_2_name": true
-          }
+          "claude_context_tokens_est": 15932,
+          "claude_vs_o200k_ratio": 1.55,
+          "chars_per_claude_token": 2.74
         }
       }
     },
@@ -749,79 +3688,407 @@
       "conditions": {
         "no_spec": {
           "status": "ok",
-          "context_bpe_o200k": 0,
-          "context_chars_div_4": 0,
-          "api_input_tokens": 1283,
-          "api_output_tokens": 311,
-          "duration_api_ms": 2511,
-          "cost_usd": 0.000412,
-          "task_passed": false,
-          "assertions_passed": 0,
+          "trials": 3,
+          "tasks_passed": 0,
+          "task_pass_rate": 0.0,
+          "assertions_mean": 0,
+          "assertions_min": 0,
+          "assertions_max": 0,
           "assertions_total": 5,
-          "checks": {
-            "argument_names": false,
-            "return_type": false,
-            "apoapsis_km_type": false,
-            "fairings_recovery_attempt_type": false,
-            "core_flight_type": false
-          }
+          "api_input_tokens_median": 1283,
+          "duration_api_ms_median": 2798,
+          "cost_usd_mean": 0.000304,
+          "trial_details": [
+            {
+              "status": "ok",
+              "model": "claude-haiku-5-5",
+              "api_input_tokens": 1283,
+              "api_output_tokens": 516,
+              "duration_api_ms": 3297,
+              "cost_usd": 0.000514,
+              "task_passed": false,
+              "assertions_passed": 0,
+              "assertions_total": 5,
+              "checks": {
+                "argument_names": false,
+                "return_type": false,
+                "apoapsis_km_type": false,
+                "fairings_recovery_attempt_type": false,
+                "core_flight_type": false
+              }
+            },
+            {
+              "status": "ok",
+              "model": "claude-haiku-5-5",
+              "api_input_tokens": 1283,
+              "api_output_tokens": 340,
+              "duration_api_ms": 2383,
+              "cost_usd": 0.000183,
+              "task_passed": false,
+              "assertions_passed": 0,
+              "assertions_total": 5,
+              "checks": {
+                "argument_names": false,
+                "return_type": false,
+                "apoapsis_km_type": false,
+                "fairings_recovery_attempt_type": false,
+                "core_flight_type": false
+              }
+            },
+            {
+              "status": "ok",
+              "model": "claude-haiku-5-5",
+              "api_input_tokens": 1283,
+              "api_output_tokens": 403,
+              "duration_api_ms": 2798,
+              "cost_usd": 0.000215,
+              "task_passed": false,
+              "assertions_passed": 0,
+              "assertions_total": 5,
+              "checks": {
+                "argument_names": false,
+                "return_type": false,
+                "apoapsis_km_type": false,
+                "fairings_recovery_attempt_type": false,
+                "core_flight_type": false
+              }
+            }
+          ],
+          "context_bpe_o200k": 0,
+          "context_chars": 0,
+          "context_chars_div_4": 0
         },
         "summary": {
           "status": "ok",
-          "context_bpe_o200k": 251,
-          "context_chars_div_4": 214,
-          "api_input_tokens": 1676,
-          "api_output_tokens": 436,
-          "duration_api_ms": 2744,
-          "cost_usd": 0.000553,
-          "task_passed": false,
-          "assertions_passed": 0,
+          "trials": 3,
+          "tasks_passed": 0,
+          "task_pass_rate": 0.0,
+          "assertions_mean": 0,
+          "assertions_min": 0,
+          "assertions_max": 0,
           "assertions_total": 5,
-          "checks": {
-            "argument_names": false,
-            "return_type": false,
-            "apoapsis_km_type": false,
-            "fairings_recovery_attempt_type": false,
-            "core_flight_type": false
-          }
+          "api_input_tokens_median": 1676,
+          "duration_api_ms_median": 2071,
+          "cost_usd_mean": 0.000409,
+          "trial_details": [
+            {
+              "status": "ok",
+              "model": "claude-haiku-5-5",
+              "api_input_tokens": 1676,
+              "api_output_tokens": 326,
+              "duration_api_ms": 2071,
+              "cost_usd": 0.000498,
+              "task_passed": false,
+              "assertions_passed": 0,
+              "assertions_total": 5,
+              "checks": {
+                "argument_names": false,
+                "return_type": false,
+                "apoapsis_km_type": false,
+                "fairings_recovery_attempt_type": false,
+                "core_flight_type": false
+              }
+            },
+            {
+              "status": "ok",
+              "model": "claude-haiku-5-5",
+              "api_input_tokens": 1676,
+              "api_output_tokens": 458,
+              "duration_api_ms": 2821,
+              "cost_usd": 0.000564,
+              "task_passed": false,
+              "assertions_passed": 0,
+              "assertions_total": 5,
+              "checks": {
+                "argument_names": false,
+                "return_type": false,
+                "apoapsis_km_type": false,
+                "fairings_recovery_attempt_type": false,
+                "core_flight_type": false
+              }
+            },
+            {
+              "status": "ok",
+              "model": "claude-haiku-5-5",
+              "api_input_tokens": 1676,
+              "api_output_tokens": 297,
+              "duration_api_ms": 1916,
+              "cost_usd": 0.000165,
+              "task_passed": false,
+              "assertions_passed": 0,
+              "assertions_total": 5,
+              "checks": {
+                "argument_names": false,
+                "return_type": false,
+                "apoapsis_km_type": false,
+                "fairings_recovery_attempt_type": false,
+                "core_flight_type": false
+              }
+            }
+          ],
+          "context_bpe_o200k": 251,
+          "context_chars": 855,
+          "context_chars_div_4": 214,
+          "claude_context_tokens_est": 393,
+          "claude_vs_o200k_ratio": 1.57,
+          "chars_per_claude_token": 2.18
+        },
+        "routed_e2e": {
+          "status": "ok",
+          "trials": 3,
+          "tasks_passed": 3,
+          "task_pass_rate": 1.0,
+          "assertions_mean": 5,
+          "assertions_min": 5,
+          "assertions_max": 5,
+          "assertions_total": 5,
+          "api_input_tokens_median": 6081,
+          "duration_api_ms_median": 3848,
+          "cost_usd_mean": 0.001694,
+          "trial_details": [
+            {
+              "status": "ok",
+              "model": "claude-haiku-5-5",
+              "turns": 2,
+              "routed_cmd_ok": true,
+              "followup_used": false,
+              "route_choice": {
+                "operation_id": "Query.launchesPastResult",
+                "operation": null,
+                "schemas": [
+                  "LaunchFind",
+                  "LaunchesPastResult"
+                ]
+              },
+              "total_context_bpe_o200k": 7233,
+              "api_input_tokens": 14557,
+              "api_output_tokens": 703,
+              "duration_api_ms": 3986,
+              "cost_usd": 0.003263,
+              "task_passed": true,
+              "assertions_passed": 5,
+              "assertions_total": 5,
+              "checks": {
+                "argument_names": true,
+                "return_type": true,
+                "apoapsis_km_type": true,
+                "fairings_recovery_attempt_type": true,
+                "core_flight_type": true
+              }
+            },
+            {
+              "status": "ok",
+              "model": "claude-haiku-5-5",
+              "turns": 2,
+              "routed_cmd_ok": true,
+              "followup_used": false,
+              "route_choice": {
+                "operation_id": "Query.launchesPastResult",
+                "operation": null,
+                "schemas": [
+                  "LaunchFind"
+                ]
+              },
+              "total_context_bpe_o200k": 1997,
+              "api_input_tokens": 6081,
+              "api_output_tokens": 633,
+              "duration_api_ms": 3848,
+              "cost_usd": 0.000378,
+              "task_passed": true,
+              "assertions_passed": 5,
+              "assertions_total": 5,
+              "checks": {
+                "argument_names": true,
+                "return_type": true,
+                "apoapsis_km_type": true,
+                "fairings_recovery_attempt_type": true,
+                "core_flight_type": true
+              }
+            },
+            {
+              "status": "ok",
+              "model": "claude-haiku-5-5",
+              "turns": 2,
+              "routed_cmd_ok": true,
+              "followup_used": false,
+              "route_choice": {
+                "operation_id": "Query.launchesPastResult",
+                "operation": null,
+                "schemas": [
+                  "LaunchFind"
+                ]
+              },
+              "total_context_bpe_o200k": 1997,
+              "api_input_tokens": 6081,
+              "api_output_tokens": 452,
+              "duration_api_ms": 3123,
+              "cost_usd": 0.001442,
+              "task_passed": true,
+              "assertions_passed": 5,
+              "assertions_total": 5,
+              "checks": {
+                "argument_names": true,
+                "return_type": true,
+                "apoapsis_km_type": true,
+                "fairings_recovery_attempt_type": true,
+                "core_flight_type": true
+              }
+            }
+          ],
+          "turns_mean": 2,
+          "followup_rate": 0.0,
+          "route_cmd_ok_rate": 1.0,
+          "total_context_bpe_o200k_median": 1997
+        },
+        "oracle_slice": {
+          "status": "ok",
+          "trials": 3,
+          "tasks_passed": 3,
+          "task_pass_rate": 1.0,
+          "assertions_mean": 5,
+          "assertions_min": 5,
+          "assertions_max": 5,
+          "assertions_total": 5,
+          "api_input_tokens_median": 3978,
+          "duration_api_ms_median": 1388,
+          "cost_usd_mean": 0.000395,
+          "trial_details": [
+            {
+              "status": "ok",
+              "model": "claude-haiku-5-5",
+              "api_input_tokens": 3978,
+              "api_output_tokens": 229,
+              "duration_api_ms": 1388,
+              "cost_usd": 0.000154,
+              "task_passed": true,
+              "assertions_passed": 5,
+              "assertions_total": 5,
+              "checks": {
+                "argument_names": true,
+                "return_type": true,
+                "apoapsis_km_type": true,
+                "fairings_recovery_attempt_type": true,
+                "core_flight_type": true
+              }
+            },
+            {
+              "status": "ok",
+              "model": "claude-haiku-5-5",
+              "api_input_tokens": 3978,
+              "api_output_tokens": 194,
+              "duration_api_ms": 1403,
+              "cost_usd": 0.000892,
+              "task_passed": true,
+              "assertions_passed": 5,
+              "assertions_total": 5,
+              "checks": {
+                "argument_names": true,
+                "return_type": true,
+                "apoapsis_km_type": true,
+                "fairings_recovery_attempt_type": true,
+                "core_flight_type": true
+              }
+            },
+            {
+              "status": "ok",
+              "model": "claude-haiku-5-5",
+              "api_input_tokens": 3978,
+              "api_output_tokens": 199,
+              "duration_api_ms": 1319,
+              "cost_usd": 0.000139,
+              "task_passed": true,
+              "assertions_passed": 5,
+              "assertions_total": 5,
+              "checks": {
+                "argument_names": true,
+                "return_type": true,
+                "apoapsis_km_type": true,
+                "fairings_recovery_attempt_type": true,
+                "core_flight_type": true
+              }
+            }
+          ],
+          "context_bpe_o200k": 1746,
+          "context_chars": 6021,
+          "context_chars_div_4": 1506,
+          "claude_context_tokens_est": 2695,
+          "claude_vs_o200k_ratio": 1.54,
+          "chars_per_claude_token": 2.23
         },
         "raw_spec": {
           "status": "ok",
+          "trials": 3,
+          "tasks_passed": 3,
+          "task_pass_rate": 1.0,
+          "assertions_mean": 5,
+          "assertions_min": 5,
+          "assertions_max": 5,
+          "assertions_total": 5,
+          "api_input_tokens_median": 6906,
+          "duration_api_ms_median": 1453,
+          "cost_usd_mean": 0.000617,
+          "trial_details": [
+            {
+              "status": "ok",
+              "model": "claude-haiku-5-5",
+              "api_input_tokens": 6906,
+              "api_output_tokens": 260,
+              "duration_api_ms": 1488,
+              "cost_usd": 0.000199,
+              "task_passed": true,
+              "assertions_passed": 5,
+              "assertions_total": 5,
+              "checks": {
+                "argument_names": true,
+                "return_type": true,
+                "apoapsis_km_type": true,
+                "fairings_recovery_attempt_type": true,
+                "core_flight_type": true
+              }
+            },
+            {
+              "status": "ok",
+              "model": "claude-haiku-5-5",
+              "api_input_tokens": 6906,
+              "api_output_tokens": 199,
+              "duration_api_ms": 1453,
+              "cost_usd": 0.001481,
+              "task_passed": true,
+              "assertions_passed": 5,
+              "assertions_total": 5,
+              "checks": {
+                "argument_names": true,
+                "return_type": true,
+                "apoapsis_km_type": true,
+                "fairings_recovery_attempt_type": true,
+                "core_flight_type": true
+              }
+            },
+            {
+              "status": "ok",
+              "model": "claude-haiku-5-5",
+              "api_input_tokens": 6906,
+              "api_output_tokens": 203,
+              "duration_api_ms": 1448,
+              "cost_usd": 0.000171,
+              "task_passed": true,
+              "assertions_passed": 5,
+              "assertions_total": 5,
+              "checks": {
+                "argument_names": true,
+                "return_type": true,
+                "apoapsis_km_type": true,
+                "fairings_recovery_attempt_type": true,
+                "core_flight_type": true
+              }
+            }
+          ],
           "context_bpe_o200k": 3672,
+          "context_chars": 12439,
           "context_chars_div_4": 3110,
-          "api_input_tokens": 6906,
-          "api_output_tokens": 212,
-          "duration_api_ms": 1439,
-          "cost_usd": 0.001487,
-          "task_passed": true,
-          "assertions_passed": 5,
-          "assertions_total": 5,
-          "checks": {
-            "argument_names": true,
-            "return_type": true,
-            "apoapsis_km_type": true,
-            "fairings_recovery_attempt_type": true,
-            "core_flight_type": true
-          }
-        },
-        "focused_slice": {
-          "status": "ok",
-          "context_bpe_o200k": 1746,
-          "context_chars_div_4": 1506,
-          "api_input_tokens": 3978,
-          "api_output_tokens": 240,
-          "duration_api_ms": 1706,
-          "cost_usd": 0.000915,
-          "task_passed": true,
-          "assertions_passed": 5,
-          "assertions_total": 5,
-          "checks": {
-            "argument_names": true,
-            "return_type": true,
-            "apoapsis_km_type": true,
-            "fairings_recovery_attempt_type": true,
-            "core_flight_type": true
-          }
+          "claude_context_tokens_est": 5623,
+          "claude_vs_o200k_ratio": 1.53,
+          "chars_per_claude_token": 2.21
         }
       }
     },
@@ -832,79 +4099,370 @@
       "conditions": {
         "no_spec": {
           "status": "ok",
-          "context_bpe_o200k": 0,
-          "context_chars_div_4": 0,
-          "api_input_tokens": 1279,
-          "api_output_tokens": 204,
-          "duration_api_ms": 1617,
-          "cost_usd": 0.000358,
-          "task_passed": false,
-          "assertions_passed": 0,
+          "trials": 3,
+          "tasks_passed": 0,
+          "task_pass_rate": 0.0,
+          "assertions_mean": 0,
+          "assertions_min": 0,
+          "assertions_max": 0,
           "assertions_total": 5,
-          "checks": {
-            "argument_name": false,
-            "return_type": false,
-            "required_input_fields": false,
-            "issue_template_type": false,
-            "parent_issue_id_type": false
-          }
+          "api_input_tokens_median": 1279,
+          "duration_api_ms_median": 1561,
+          "cost_usd_mean": 0.000287,
+          "trial_details": [
+            {
+              "status": "ok",
+              "model": "claude-haiku-5-5",
+              "api_input_tokens": 1279,
+              "api_output_tokens": 295,
+              "duration_api_ms": 2054,
+              "cost_usd": 0.00016,
+              "task_passed": false,
+              "assertions_passed": 0,
+              "assertions_total": 5,
+              "checks": {
+                "argument_name": false,
+                "return_type": false,
+                "required_input_fields": false,
+                "issue_template_type": false,
+                "parent_issue_id_type": false
+              }
+            },
+            {
+              "status": "ok",
+              "model": "claude-haiku-5-5",
+              "api_input_tokens": 1279,
+              "api_output_tokens": 197,
+              "duration_api_ms": 1561,
+              "cost_usd": 0.000354,
+              "task_passed": false,
+              "assertions_passed": 0,
+              "assertions_total": 5,
+              "checks": {
+                "argument_name": false,
+                "return_type": false,
+                "required_input_fields": false,
+                "issue_template_type": false,
+                "parent_issue_id_type": false
+              }
+            },
+            {
+              "status": "ok",
+              "model": "claude-haiku-5-5",
+              "api_input_tokens": 1279,
+              "api_output_tokens": 181,
+              "duration_api_ms": 1418,
+              "cost_usd": 0.000346,
+              "task_passed": false,
+              "assertions_passed": 0,
+              "assertions_total": 5,
+              "checks": {
+                "argument_name": false,
+                "return_type": false,
+                "required_input_fields": false,
+                "issue_template_type": false,
+                "parent_issue_id_type": false
+              }
+            }
+          ],
+          "context_bpe_o200k": 0,
+          "context_chars": 0,
+          "context_chars_div_4": 0
         },
         "summary": {
           "status": "ok",
-          "context_bpe_o200k": 2236,
-          "context_chars_div_4": 2534,
-          "api_input_tokens": 6331,
-          "api_output_tokens": 481,
-          "duration_api_ms": 3158,
-          "cost_usd": 0.001507,
-          "task_passed": false,
-          "assertions_passed": 0,
+          "trials": 3,
+          "tasks_passed": 0,
+          "task_pass_rate": 0.0,
+          "assertions_mean": 0,
+          "assertions_min": 0,
+          "assertions_max": 0,
           "assertions_total": 5,
-          "checks": {
-            "argument_name": false,
-            "return_type": false,
-            "required_input_fields": false,
-            "issue_template_type": false,
-            "parent_issue_id_type": false
-          }
+          "api_input_tokens_median": 6331,
+          "duration_api_ms_median": 3026,
+          "cost_usd_mean": 0.000704,
+          "trial_details": [
+            {
+              "status": "ok",
+              "model": "claude-haiku-5-5",
+              "api_input_tokens": 6331,
+              "api_output_tokens": 427,
+              "duration_api_ms": 3026,
+              "cost_usd": 0.000277,
+              "task_passed": false,
+              "assertions_passed": 0,
+              "assertions_total": 5,
+              "checks": {
+                "argument_name": false,
+                "return_type": false,
+                "required_input_fields": false,
+                "issue_template_type": false,
+                "parent_issue_id_type": false
+              }
+            },
+            {
+              "status": "ok",
+              "model": "claude-haiku-5-5",
+              "api_input_tokens": 6331,
+              "api_output_tokens": 415,
+              "duration_api_ms": 2879,
+              "cost_usd": 0.001473,
+              "task_passed": false,
+              "assertions_passed": 0,
+              "assertions_total": 5,
+              "checks": {
+                "argument_name": false,
+                "return_type": false,
+                "required_input_fields": false,
+                "issue_template_type": false,
+                "parent_issue_id_type": false
+              }
+            },
+            {
+              "status": "ok",
+              "model": "claude-haiku-5-5",
+              "api_input_tokens": 6331,
+              "api_output_tokens": 599,
+              "duration_api_ms": 3265,
+              "cost_usd": 0.000363,
+              "task_passed": false,
+              "assertions_passed": 0,
+              "assertions_total": 5,
+              "checks": {
+                "argument_name": false,
+                "return_type": false,
+                "required_input_fields": false,
+                "issue_template_type": false,
+                "parent_issue_id_type": false
+              }
+            }
+          ],
+          "context_bpe_o200k": 2236,
+          "context_chars": 10135,
+          "context_chars_div_4": 2534,
+          "claude_context_tokens_est": 5052,
+          "claude_vs_o200k_ratio": 2.26,
+          "chars_per_claude_token": 2.01
+        },
+        "routed_e2e": {
+          "status": "ok",
+          "trials": 3,
+          "tasks_passed": 3,
+          "task_pass_rate": 1.0,
+          "assertions_mean": 5,
+          "assertions_min": 5,
+          "assertions_max": 5,
+          "assertions_total": 5,
+          "api_input_tokens_median": 9586,
+          "duration_api_ms_median": 3361,
+          "cost_usd_mean": 0.00137,
+          "trial_details": [
+            {
+              "status": "ok",
+              "model": "claude-haiku-5-5",
+              "turns": 2,
+              "routed_cmd_ok": true,
+              "followup_used": false,
+              "route_choice": {
+                "operation_id": "Mutation.createIssue",
+                "operation": null,
+                "schemas": [
+                  "CreateIssueInput"
+                ]
+              },
+              "total_context_bpe_o200k": 3140,
+              "api_input_tokens": 9586,
+              "api_output_tokens": 506,
+              "duration_api_ms": 3361,
+              "cost_usd": 0.001603,
+              "task_passed": true,
+              "assertions_passed": 5,
+              "assertions_total": 5,
+              "checks": {
+                "argument_name": true,
+                "return_type": true,
+                "required_input_fields": true,
+                "issue_template_type": true,
+                "parent_issue_id_type": true
+              }
+            },
+            {
+              "status": "ok",
+              "model": "claude-haiku-5-5",
+              "turns": 2,
+              "routed_cmd_ok": true,
+              "followup_used": false,
+              "route_choice": {
+                "operation_id": "Mutation.createIssue",
+                "operation": null,
+                "schemas": [
+                  "CreateIssueInput"
+                ]
+              },
+              "total_context_bpe_o200k": 3140,
+              "api_input_tokens": 9586,
+              "api_output_tokens": 500,
+              "duration_api_ms": 3473,
+              "cost_usd": 0.001601,
+              "task_passed": true,
+              "assertions_passed": 5,
+              "assertions_total": 5,
+              "checks": {
+                "argument_name": true,
+                "return_type": true,
+                "required_input_fields": true,
+                "issue_template_type": true,
+                "parent_issue_id_type": true
+              }
+            },
+            {
+              "status": "ok",
+              "model": "claude-haiku-5-5",
+              "turns": 2,
+              "routed_cmd_ok": true,
+              "followup_used": false,
+              "route_choice": {
+                "operation_id": "Mutation.createIssue",
+                "operation": null,
+                "schemas": [
+                  "CreateIssueInput"
+                ]
+              },
+              "total_context_bpe_o200k": 3140,
+              "api_input_tokens": 9586,
+              "api_output_tokens": 485,
+              "duration_api_ms": 2943,
+              "cost_usd": 0.000905,
+              "task_passed": true,
+              "assertions_passed": 5,
+              "assertions_total": 5,
+              "checks": {
+                "argument_name": true,
+                "return_type": true,
+                "required_input_fields": true,
+                "issue_template_type": true,
+                "parent_issue_id_type": true
+              }
+            }
+          ],
+          "turns_mean": 2,
+          "followup_rate": 0.0,
+          "route_cmd_ok_rate": 1.0,
+          "total_context_bpe_o200k_median": 3140
+        },
+        "oracle_slice": {
+          "status": "ok",
+          "trials": 3,
+          "tasks_passed": 3,
+          "task_pass_rate": 1.0,
+          "assertions_mean": 5,
+          "assertions_min": 5,
+          "assertions_max": 5,
+          "assertions_total": 5,
+          "api_input_tokens_median": 2828,
+          "duration_api_ms_median": 1453,
+          "cost_usd_mean": 0.000496,
+          "trial_details": [
+            {
+              "status": "ok",
+              "model": "claude-haiku-5-5",
+              "api_input_tokens": 2828,
+              "api_output_tokens": 205,
+              "duration_api_ms": 1453,
+              "cost_usd": 0.000131,
+              "task_passed": true,
+              "assertions_passed": 5,
+              "assertions_total": 5,
+              "checks": {
+                "argument_name": true,
+                "return_type": true,
+                "required_input_fields": true,
+                "issue_template_type": true,
+                "parent_issue_id_type": true
+              }
+            },
+            {
+              "status": "ok",
+              "model": "claude-haiku-5-5",
+              "api_input_tokens": 2828,
+              "api_output_tokens": 166,
+              "duration_api_ms": 1289,
+              "cost_usd": 0.000648,
+              "task_passed": true,
+              "assertions_passed": 5,
+              "assertions_total": 5,
+              "checks": {
+                "argument_name": true,
+                "return_type": true,
+                "required_input_fields": true,
+                "issue_template_type": true,
+                "parent_issue_id_type": true
+              }
+            },
+            {
+              "status": "ok",
+              "model": "claude-haiku-5-5",
+              "api_input_tokens": 2828,
+              "api_output_tokens": 287,
+              "duration_api_ms": 1819,
+              "cost_usd": 0.000709,
+              "task_passed": true,
+              "assertions_passed": 5,
+              "assertions_total": 5,
+              "checks": {
+                "argument_name": true,
+                "return_type": true,
+                "required_input_fields": true,
+                "issue_template_type": true,
+                "parent_issue_id_type": true
+              }
+            }
+          ],
+          "context_bpe_o200k": 904,
+          "context_chars": 3715,
+          "context_chars_div_4": 929,
+          "claude_context_tokens_est": 1549,
+          "claude_vs_o200k_ratio": 1.71,
+          "chars_per_claude_token": 2.4
         },
         "raw_spec": {
           "status": "ok",
+          "trials": 1,
+          "tasks_passed": 1,
+          "task_pass_rate": 1.0,
+          "assertions_mean": 5,
+          "assertions_min": 5,
+          "assertions_max": 5,
+          "assertions_total": 5,
+          "api_input_tokens_median": 478902,
+          "duration_api_ms_median": 3604,
+          "cost_usd_mean": 0.479088,
+          "trial_details": [
+            {
+              "status": "ok",
+              "model": "claude-haiku-5-5",
+              "api_input_tokens": 478902,
+              "api_output_tokens": 75,
+              "duration_api_ms": 3604,
+              "cost_usd": 0.479088,
+              "task_passed": true,
+              "assertions_passed": 5,
+              "assertions_total": 5,
+              "checks": {
+                "argument_name": true,
+                "return_type": true,
+                "required_input_fields": true,
+                "issue_template_type": true,
+                "parent_issue_id_type": true
+              }
+            }
+          ],
           "context_bpe_o200k": 286673,
+          "context_chars": 1223834,
           "context_chars_div_4": 305959,
-          "api_input_tokens": 478902,
-          "api_output_tokens": 75,
-          "duration_api_ms": 4107,
-          "cost_usd": 0.479088,
-          "task_passed": true,
-          "assertions_passed": 5,
-          "assertions_total": 5,
-          "checks": {
-            "argument_name": true,
-            "return_type": true,
-            "required_input_fields": true,
-            "issue_template_type": true,
-            "parent_issue_id_type": true
-          }
-        },
-        "focused_slice": {
-          "status": "ok",
-          "context_bpe_o200k": 904,
-          "context_chars_div_4": 929,
-          "api_input_tokens": 2828,
-          "api_output_tokens": 218,
-          "duration_api_ms": 1476,
-          "cost_usd": 0.000674,
-          "task_passed": true,
-          "assertions_passed": 5,
-          "assertions_total": 5,
-          "checks": {
-            "argument_name": true,
-            "return_type": true,
-            "required_input_fields": true,
-            "issue_template_type": true,
-            "parent_issue_id_type": true
-          }
+          "claude_context_tokens_est": 477623,
+          "claude_vs_o200k_ratio": 1.67,
+          "chars_per_claude_token": 2.56
         }
       }
     }
