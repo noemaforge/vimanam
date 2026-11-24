@@ -1181,3 +1181,48 @@ fn bundled_subjects_on_one_side_are_filtered_while_user_changes_remain() {
     assert!(changes.iter().any(|c| full_name(c) == "demo.v1.label"));
     assert!(changes.iter().any(|c| full_name(c) == "demo.v1.Item.id"));
 }
+fn nested_option_source(top_src: &str, kid_src: &str, kid_rt: &str, map_src: &str) -> Document {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("nested.proto");
+    fs::write(
+        &path,
+        format!(
+            r#"syntax = "proto2"; package demo;
+import "google/protobuf/descriptor.proto";
+message Opt {{
+  optional string src = 1 [retention = RETENTION_SOURCE];
+  optional string rt = 2;
+  repeated Opt kids = 3;
+  map<string, Opt> by_name = 4;
+}}
+extend google.protobuf.FieldOptions {{ optional Opt opt = 50010; }}
+message M {{
+  optional string f = 1 [(opt) = {{
+    src: "{top_src}" rt: "top"
+    kids {{ src: "{kid_src}" rt: "{kid_rt}" }}
+    by_name {{ key: "k" value {{ src: "{map_src}" rt: "mapped" }} }}
+  }}];
+}}"#
+        ),
+    )
+    .unwrap();
+    Document::read(&path, &[]).unwrap()
+}
+#[test]
+fn nested_source_retention_option_values_are_stripped_recursively() {
+    let base = nested_option_source("a", "b", "kid", "c");
+    for changed in [
+        nested_option_source("A", "b", "kid", "c"),
+        nested_option_source("a", "B", "kid", "c"),
+        nested_option_source("a", "b", "kid", "C"),
+    ] {
+        assert_eq!(protobuf::diff(&base, &changed).unwrap(), vec![]);
+    }
+    let changes = protobuf::diff(&base, &nested_option_source("a", "b", "other", "c")).unwrap();
+    assert_eq!(changes.len(), 1, "{changes:#?}");
+    assert_eq!(full_name(&changes[0]), "demo.M.f");
+    assert_eq!(
+        changes[0].details["pointer"],
+        "/options/[demo.opt]/kids/0/rt"
+    );
+}

@@ -112,6 +112,10 @@ Applied options whose extension or field is declared `retention =
 RETENTION_SOURCE` are dropped before comparison: protoc strips them from
 descriptor output while protox keeps them, so the surface holds only what
 survives into descriptors.
+Source-retention option values are therefore never compared, even between two
+`.proto` inputs, matching protoc descriptor output. The bundled-file filter
+classifies files by the `google/protobuf/` path prefix, so a user file vendored
+at that path is treated as bundled.
 Package namespace entities are represented as `type` entities with
 `kind: package`, allowing file-package facts to reference an entity present in
 the compared surface.
