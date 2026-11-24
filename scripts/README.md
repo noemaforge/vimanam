@@ -103,7 +103,29 @@ sample ranges, and these measurements are not a promise for other repositories.
 Reproducible evaluation scripts backing the [Benchmarks](https://noemaforge.github.io/vimanam/benchmarks/) section (`v2.2 standalone & LLM eval`, `v2.2 vs v2.1 upgrade`, and `v2.2 vs external tools`). Both use public open-source specifications (pinned SHAs for Stripe OpenAPI, OpenAI OpenAPI, GitHub GraphQL, SpaceX Land GraphQL, OpenTelemetry Proto, and gRPC Health) plus three checked-in synthetic multi-file Protobuf specs under `scripts/eval-fixtures/protos/`:
 
 - `scripts/benchmark-public.py` → `scripts/benchmark-v22-results.json`: runs `hyperfine 2.0.0` (`median`, Q1–Q3 `IQR`, `min`, `max`, `mean`, `stddev`, peak RSS, CPU instructions, raw `samples_ms`, and disjoint-IQR checks), pins exact upstream commit SHAs (`PINNED_REVS`), compares `tiktoken` (`o200k_base`) BPE tokens against Vimanam's `chars / 4` estimate, benchmarks a generated 200-file `.proto` Git repo (`git fast-import`), compares against `oasdiff`, `buf breaking`, `graphql-inspector`, and `protoc-gen-doc`, and reconciles OpenAI `a01e367..373f26a` breaking findings.
-- `scripts/eval-context-accuracy.py` → `scripts/eval-context-accuracy-results.json`: runs a serial (`--workers 1`), repeated-trial (`--trials 3`), 10-task, 5-condition (`no_spec`, `summary`, `routed_e2e`, `fixed_slice`, `raw_spec`) deterministic programmatic-grading evaluation on `claude-haiku-5-5` (zero tools, isolated system prompt). Uses synthetic non-memorizable multi-file `.proto` fixtures (`scripts/eval-fixtures/protos/`), enforces uniform `--schema-depth 2` on all `routed_e2e` operation and `--schema` calls, checks exact target-operation routing (`route_target_matched`) and Turn-3 follow-up usage (`followup_rate`), executes Stripe `7.9 MB` raw (`Prompt is too long` / `blocking_limit`), and records Claude API context tokens alongside `o200k_base` BPE tokens and `chars / 4`.
+- `scripts/eval-context-accuracy.py` → `scripts/eval-context-accuracy-results.json`: a serial (`--workers 1`), repeated-trial (`--trials 3`) evaluation with 11 tasks and 6 conditions, graded by deterministic programmatic JSON assertions on `claude-haiku-5-5` (zero tools, isolated system prompt). The conditions are `no_spec`, `summary`, `routed_e2e`, `fixed_slice`, `oracle_slice` and `raw_spec`.
+  - **Cache protocol.** Every graded trial prepends a fresh nonce to each user prompt, so all graded trials are cold-cache calls and no trial reads another's cache. Right after trial 1 of each cell, its exact prompts are re-sent with the same nonce (`warm_replay`). The replay measures cost and token use only and is not graded. Each call records `uncached_input_tokens`, `cache_creation_input_tokens` and `cache_read_input_tokens`. Report cold against cold and warm against warm. Mixing the two inflated the earlier cost ratio from about 102× to 161×.
+  - **`oracle_slice`** is the operation at `--schema-depth 2` plus `--schema` for exactly the named types that hold the answers. The build fails unless every task's `answer_markers` appear in it. `routed_e2e` vs `oracle_slice` isolates routing quality, and `oracle_slice` vs `raw_spec` isolates slice readability. `fixed_slice` (operation only, depth 2) remains a deliberately naive single-turn baseline.
+  - **`answer_coverage`** is the fraction of answer markers present in each condition's context (per trial for `routed_e2e`). It separates "the answer was not retrieved" from "the answer was retrieved but misread".
+  - **Tasks.** Three synthetic multi-file `.proto` fixtures (`scripts/eval-fixtures/protos/`) rule out memorization. `pb_otel_trace_export` is a real public spec whose answers sit beyond depth 2, so it exercises the follow-up path on non-synthetic input. It is memorization-prone: `no_spec` sometimes answers it fully from training data, so it shows the follow-up path runs, not that the context was needed. `--only-tasks a,b` runs a subset for smoke checks.
+  - **Grading.** Each trial stores its parsed `answer`, so results can be re-graded without new API calls. `required_fields` accepts the `request.` / `body.` prefix that Vimanam renders on inline request bodies (#156). `routed_e2e` takes at most `MAX_SCHEMAS` (3) `--schema` names per turn, and both prompts state that limit.
+  - Other recorded data: exact target routing (`route_target_matched`), follow-up use (`followup_rate`), Stripe `7.9 MB` raw overflow (`Prompt is too long`), SHA-256 of every spec file (`meta.corpus_sha256`), and Claude API tokens alongside `o200k_base` BPE and `chars / 4`.
+
+### Corpus
+
+Both scripts read public specs from `--corpus`. The LLM eval needs these exact revisions; check them against `meta.corpus_sha256` in the results file:
+
+```bash
+C=/tmp/vimanam-eval-corpus; mkdir -p "$C" && cd "$C"
+git clone -q --filter=blob:none --no-checkout https://github.com/openai/openai-openapi.git openai-repo
+git -C openai-repo show 498c71d:openapi.yaml > openai.yaml
+git clone -q --filter=blob:none --no-checkout https://github.com/stripe/openapi.git stripe-openapi
+git -C stripe-openapi checkout -q 5237fa0 -- openapi/spec3.json
+git clone -q --filter=blob:none --no-checkout https://github.com/octokit/graphql-schema.git octokit-graphql
+git -C octokit-graphql checkout -q 82ff2d4 -- schema.graphql
+git clone -q --filter=blob:none --no-checkout https://github.com/open-telemetry/opentelemetry-proto.git otel-proto
+git -C otel-proto checkout -q d31f7ac -- opentelemetry
+```
 
 ```bash
 # Re-run public performance, BPE calibration, and 4 external baselines
@@ -114,7 +136,7 @@ uv run --with tiktoken python3 scripts/benchmark-public.py \
   --runs 10 \
   --output scripts/benchmark-v22-results.json
 
-# Re-run the serial 3-trial end-to-end routed + fixed-slice LLM evaluation
+# Re-run the serial 3-trial LLM evaluation (cold trials + warm replays; ~1 h, a few USD)
 uv run --with tiktoken python3 scripts/eval-context-accuracy.py \
   --v22 target/release/vimanam \
   --corpus /tmp/vimanam-eval-corpus \

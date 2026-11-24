@@ -23,16 +23,25 @@ All four format-specific external baselines (`oasdiff 1.39.0`, `buf 1.75.0`, `gr
 
 ### Reconciling the `62` vs `20` breaking-change gap on OpenAI `a01e367..373f26a`
 
-Inspecting every single breaking finding emitted by both tools accounts for **100% of all `62` Vimanam findings and all `20` `oasdiff` findings**. The gap exposes a real JSON Schema 2020-12 false-positive bug in **both** tools alongside one deliberate policy difference:
+<Aside type="caution" title="Plain summary: Vimanam's breaking-change precision on this real diff was about 6%">
+  Only **`4` of Vimanam's `62` breaking findings were real**, and those 4 findings describe **`2` actual changes**. That is roughly **6% precision**. `oasdiff` did better at **`2` of `20`** (10%). Two Vimanam defects explain the other `58`:
+
+  - **No `enum: [v]` ↔ `const: v` normalisation ([#167](https://github.com/noemaforge/vimanam/issues/167))** accounts for all `58` false positives on this revision. `oasdiff` has the same gap on request bodies.
+  - **Response enum-member removal is classified as Breaking ([#169](https://github.com/noemaforge/vimanam/issues/169))**, which accounts for `49` of the `58`. This rule is backwards. A server that stops returning a value cannot break a client, while adding a value can, and Vimanam already rates additions as `Review`. `oasdiff` rates removal as `INFO`. Once #167 is fixed, this rule will still report noise on any real response enum narrowing.
+
+  Until both are fixed, treat `vimanam diff --fail-on-breaking` on OpenAPI 3.1 specs as a high-recall, low-precision gate.
+</Aside>
+
+Inspecting every single breaking finding emitted by both tools accounts for **100% of all `62` Vimanam findings and all `20` `oasdiff` findings**. The gap comes from a JSON Schema 2020-12 false-positive bug present in **both** tools, plus a response-enum policy in Vimanam that is wrong ([#169](https://github.com/noemaforge/vimanam/issues/169)):
 
 OpenAI commit `2a24dea` (*"Replace enum with const for multiple string properties in API schemas"*) refactored single-value `{"type": "string", "enum": ["list"]}` properties to `{"type": "string", "const": "list"}`, which is a **semantic no-op** in JSON Schema 2020-12. Commit `5532232` made the only real structural breaking change in the range (simplifying `notification_channel` on two spend-limit endpoints).
 
 | Finding group (`a01e367..373f26a`) | `vimanam 2.2.0` (`62` breaking) | `oasdiff 1.39.0` (`20` breaking, `128` changelog) | Explanation |
 |---|---:|---:|---|
-| **Response `enum: [v] -> const: v` refactor** (`2a24dea`) | **`49` breaking** (`result:enum_value_removed`) | **`0` breaking** (`50` level-1 `INFO` enum-removed + `50` level-1 `INFO` const-added) | **Both** tools fail to normalize 1-element `enum` ↔ `const` ([#167](https://github.com/noemaforge/vimanam/issues/167)). Vimanam classifies response enum narrowing as breaking (`src/diff/mod.rs:346`), whereas `oasdiff` classifies it as non-breaking `INFO`. |
+| **Response `enum: [v] -> const: v` refactor** (`2a24dea`) | **`49` breaking** (`result:enum_value_removed`) | **`0` breaking** (`50` level-1 `INFO` enum-removed + `50` level-1 `INFO` const-added) | **Both** tools fail to normalize 1-element `enum` ↔ `const` ([#167](https://github.com/noemaforge/vimanam/issues/167)). Vimanam also classifies response enum narrowing as breaking (`src/diff/mod.rs:346`). That policy is backwards and is tracked in [#169](https://github.com/noemaforge/vimanam/issues/169). `oasdiff` classifies it as non-breaking `INFO`. |
 | **Request `enum: [v] -> const: v` refactor** (`2a24dea`) | **`9` breaking** (`argument:enum_value_removed`; `const` additions logged as `review`) | **`18` breaking** (`9` `request-property-enum-value-removed` + `9` `request-property-const-added`) | Both tools emit false positives on request bodies; `oasdiff` double-counts each property as both an enum removal and a const addition. |
 | **Real `spend_limit` `notification_channel` `anyOf` edit** (`5532232`) | **`4` breaking** (`2` `field_required_changed` + `2` `argument_type_changed` on `/anyOf/0`) | **`2` breaking** (`2` `request-property-any-of-removed`) | Same 2 endpoints (`POST /organization/spend_limit` and project variant); Vimanam diffs `anyOf[0]` element-wise. |
-| **Total breaking** | **`62`** (`58` false positives + `4` real) | **`20`** (`18` false positives + `2` real) | Normalizing `{"const": v}` ↔ `{"enum": [v]}` ([#167](https://github.com/noemaforge/vimanam/issues/167)) removes all `58` Vimanam false positives. |
+| **Total breaking** | **`62`** (`58` false positives + `4` real) | **`20`** (`18` false positives + `2` real) | Precision: Vimanam `4/62` (~6%, `2` real changes), `oasdiff` `2/20` (10%). Normalizing `{"const": v}` ↔ `{"enum": [v]}` ([#167](https://github.com/noemaforge/vimanam/issues/167)) removes all `58` Vimanam false positives on this revision. [#169](https://github.com/noemaforge/vimanam/issues/169) prevents the 49 response-side findings from recurring on genuine enum narrowing. |
 
 ### Known scaling failure on cyclic `7.9 MB` Stripe `spec3.json` (`2f8d147 -> 5237fa0`, 15 s cap)
 
