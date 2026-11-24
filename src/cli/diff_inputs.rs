@@ -86,12 +86,15 @@ impl Input {
             || crate::contract::graphql::is_introspection_bytes(&self.bytes)
     }
 
-    pub fn graphql(&self) -> Result<crate::contract::graphql::Document> {
+    pub fn graphql(
+        &self,
+        warnings: &mut Vec<String>,
+    ) -> Result<crate::contract::graphql::Document> {
         use crate::contract::graphql::Document;
         let label = self.path.display().to_string();
         match &self.sdl_sources {
-            Some(sources) => Document::from_sdl(sources),
-            None => Document::from_bytes(&self.bytes, &label),
+            Some(sources) => Document::from_sdl_reporting(sources, warnings),
+            None => Document::from_bytes_reporting(&self.bytes, &label, warnings),
         }
         .with_context(|| format!("Failed to parse GraphQL schema: {label}"))
     }

@@ -225,6 +225,15 @@ impl Document {
     /// Parse and merge SDL sources `(label, text)`. Schema and type extensions
     /// may appear in any file; duplicate definitions and unknown type references fail.
     pub fn from_sdl(sources: &[(String, String)]) -> Result<Self> {
+        logged(|w| Self::from_sdl_reporting(sources, w))
+    }
+
+    /// [`Document::from_sdl`], pushing a warning for each identical duplicate
+    /// member it drops (see [`Document::read_reporting`]).
+    pub fn from_sdl_reporting(
+        sources: &[(String, String)],
+        warnings: &mut Vec<String>,
+    ) -> Result<Self> {
         let mut types: BTreeMap<String, (TypeDef, String)> = BTreeMap::new();
         let mut roots = BTreeMap::new();
         let mut schema_seen: Option<String> = None;
@@ -278,10 +287,11 @@ impl Document {
                     | cst::Definition::UnionTypeDefinition(_)
                     | cst::Definition::EnumTypeDefinition(_)
                     | cst::Definition::InputObjectTypeDefinition(_) => {
-                        let def = sdl_type(&definition)?;
+                        let mut def = sdl_type(&definition)?;
                         if is_builtin(&def.name) {
                             continue;
                         }
+                        dedupe_members(&mut def, label, warnings)?;
                         if let Some((_, previous)) = types.get(&def.name) {
                             bail!(
                                 "Duplicate GraphQL type {} in {label} and {previous}",
@@ -321,7 +331,7 @@ impl Document {
             }
         }
         for (label, extension) in type_extensions {
-            apply_extension(&mut types, label, &extension)?;
+            apply_extension(&mut types, label, &extension, warnings)?;
         }
         let document = Self {
             source: SourceKind::Sdl,
@@ -334,6 +344,12 @@ impl Document {
 
     /// Parse an introspection result: `{"data":{"__schema":…}}` or `{"__schema":…}`.
     pub fn from_introspection(bytes: &[u8]) -> Result<Self> {
+        logged(|w| Self::from_introspection_reporting(bytes, w))
+    }
+
+    /// [`Document::from_introspection`], pushing a warning for each identical
+    /// duplicate member it drops (see [`Document::read_reporting`]).
+    pub fn from_introspection_reporting(bytes: &[u8], warnings: &mut Vec<String>) -> Result<Self> {
         let value: Value =
             serde_json::from_slice(bytes).context("Invalid GraphQL introspection JSON")?;
         let schema = value
@@ -403,6 +419,7 @@ impl Document {
                     .map(|i| str_field(i, "name").map(str::to_owned))
                     .collect::<Result<_>>()?;
             }
+            dedupe_members(&mut def, "introspection result", warnings)?;
             if types.insert(name.to_owned(), def).is_some() {
                 bail!("Duplicate GraphQL type {name} in introspection result");
             }
@@ -419,24 +436,43 @@ impl Document {
     /// Parse exact bytes: an introspection result when the JSON has
     /// `__schema`, SDL otherwise. `label` names the source in errors.
     pub fn from_bytes(bytes: &[u8], label: &str) -> Result<Self> {
+        logged(|w| Self::from_bytes_reporting(bytes, label, w))
+    }
+
+    /// [`Document::from_bytes`], pushing a warning for each identical
+    /// duplicate member it drops (see [`Document::read_reporting`]).
+    pub fn from_bytes_reporting(
+        bytes: &[u8],
+        label: &str,
+        warnings: &mut Vec<String>,
+    ) -> Result<Self> {
         if is_introspection_bytes(bytes) {
-            Self::from_introspection(bytes)
+            Self::from_introspection_reporting(bytes, warnings)
         } else {
             let text = std::str::from_utf8(bytes)
                 .with_context(|| format!("GraphQL SDL must be UTF-8: {label}"))?;
-            Self::from_sdl(&[(label.to_owned(), text.to_owned())])
+            Self::from_sdl_reporting(&[(label.to_owned(), text.to_owned())], warnings)
         }
     }
 
     /// Read a `.graphql`/`.graphqls` file, an introspection `.json` file, or a
     /// directory whose SDL files (recursively, sorted by path) are merged.
     pub fn read(path: &Path) -> Result<Self> {
+        logged(|w| Self::read_reporting(path, w))
+    }
+
+    /// [`Document::read`], pushing one warning per identical duplicate
+    /// member dropped from a single type definition (#163). Published schemas
+    /// such as GitHub's repeat a field verbatim; a repeat that differs in
+    /// anything but its description is still an error. The non-reporting
+    /// constructors send these warnings to `log::warn!`.
+    pub fn read_reporting(path: &Path, warnings: &mut Vec<String>) -> Result<Self> {
         if path.is_dir() {
-            return Self::from_sdl(&read_sdl_dir(path)?);
+            return Self::from_sdl_reporting(&read_sdl_dir(path)?, warnings);
         }
         let bytes = std::fs::read(path)
             .with_context(|| format!("Failed to read GraphQL schema: {path:?}"))?;
-        Self::from_bytes(&bytes, &path.display().to_string())
+        Self::from_bytes_reporting(&bytes, &path.display().to_string(), warnings)
     }
 
     fn validate(&self) -> Result<()> {
@@ -1352,6 +1388,144 @@ fn sdl_type(t: &cst::Definition) -> Result<TypeDef> {
     }
 }
 
+/// Runs a reporting constructor and sends its warnings to `log::warn!`.
+fn logged<T>(parse: impl FnOnce(&mut Vec<String>) -> Result<T>) -> Result<T> {
+    let mut warnings = vec![];
+    let result = parse(&mut warnings);
+    for warning in warnings {
+        log::warn!("{warning}");
+    }
+    result
+}
+
+/// Drops a member repeated inside one definition when the repeat is identical
+/// to the first occurrence apart from its description, keeping the first and
+/// pushing a warning; a conflicting repeat is an error worded like [`extend`]'s
+/// duplicate-from-extension error (#163).
+fn dedupe<T>(
+    items: &mut Vec<T>,
+    key: impl Fn(&T) -> &str,
+    same: impl Fn(&T, &T) -> bool,
+    what: &str,
+    owner: &str,
+    label: &str,
+    warnings: &mut Vec<String>,
+) -> Result<()> {
+    // Kept members with how many identical definitions each had.
+    let mut kept: Vec<(T, usize)> = Vec::with_capacity(items.len());
+    for item in items.drain(..) {
+        match kept.iter_mut().find(|(k, _)| key(k) == key(&item)) {
+            None => kept.push((item, 1)),
+            Some((first, count)) => {
+                anyhow::ensure!(
+                    same(first, &item),
+                    "Duplicate GraphQL {what} {owner}.{} in {label} with a conflicting definition",
+                    key(&item)
+                );
+                *count += 1;
+            }
+        }
+    }
+    for (item, count) in &kept {
+        if *count > 1 {
+            warnings.push(format!(
+                "vimanam: ignoring identical duplicate GraphQL {what} {owner}.{} in {label} ({count} identical definitions)",
+                key(item)
+            ));
+        }
+    }
+    *items = kept.into_iter().map(|(item, _)| item).collect();
+    Ok(())
+}
+
+fn same_input(a: &InputValueDef, b: &InputValueDef) -> bool {
+    a.ty == b.ty && a.default == b.default && a.deprecation == b.deprecation
+}
+
+/// Dedupes each field's arguments, then the fields themselves.
+fn dedupe_fields(
+    fields: &mut Vec<FieldDef>,
+    owner: &str,
+    label: &str,
+    warnings: &mut Vec<String>,
+) -> Result<()> {
+    for f in fields.iter_mut() {
+        let coordinate = format!("{owner}.{}", f.name);
+        dedupe(
+            &mut f.args,
+            |a| &a.name,
+            same_input,
+            "argument",
+            &coordinate,
+            label,
+            warnings,
+        )?;
+    }
+    dedupe(
+        fields,
+        |f| &f.name,
+        |a, b| {
+            a.ty == b.ty
+                && a.deprecation == b.deprecation
+                // Arguments match by name, not position; both lists are
+                // already deduplicated.
+                && a.args.len() == b.args.len()
+                && a.args.iter().all(|x| {
+                    b.args
+                        .iter()
+                        .any(|y| x.name == y.name && same_input(x, y))
+                })
+        },
+        "field",
+        owner,
+        label,
+        warnings,
+    )
+}
+
+/// Applies [`dedupe`] to every member list of one type definition.
+fn dedupe_members(def: &mut TypeDef, label: &str, warnings: &mut Vec<String>) -> Result<()> {
+    let owner = def.name.clone();
+    let owner = owner.as_str();
+    dedupe_fields(&mut def.fields, owner, label, warnings)?;
+    dedupe(
+        &mut def.input_fields,
+        |f| &f.name,
+        same_input,
+        "input field",
+        owner,
+        label,
+        warnings,
+    )?;
+    dedupe(
+        &mut def.values,
+        |v| &v.name,
+        |a, b| a.deprecation == b.deprecation,
+        "enum value",
+        owner,
+        label,
+        warnings,
+    )?;
+    dedupe(
+        &mut def.interfaces,
+        |i| i,
+        |_, _| true,
+        "interface",
+        owner,
+        label,
+        warnings,
+    )?;
+    dedupe(
+        &mut def.members,
+        |m| m,
+        |_, _| true,
+        "union member",
+        owner,
+        label,
+        warnings,
+    )
+}
+
 fn extend<T>(
     list: &mut Vec<T>,
     items: impl IntoIterator<Item = T>,
@@ -1375,6 +1549,7 @@ fn apply_extension(
     types: &mut BTreeMap<String, (TypeDef, String)>,
     label: &str,
     extension: &cst::Definition,
+    warnings: &mut Vec<String>,
 ) -> Result<()> {
     use cst::Definition as X;
     let (name, kind) = match extension {
@@ -1413,77 +1588,67 @@ fn apply_extension(
     fn string(s: &String) -> &str {
         s
     }
+    // The extension's own members, deduplicated like a single definition
+    // (identical repeats warn, conflicting ones fail) before merging, where a
+    // member already on the type is an error.
+    let mut ext = TypeDef::new(&name, kind, None);
     match extension {
-        X::ScalarTypeExtension(_) => {}
         X::ObjectTypeExtension(e) => {
-            extend(
-                &mut def.fields,
-                sdl_fields(e.fields_definition())?,
-                field_name,
-                "field",
-                &name,
-                label,
-            )?;
-            extend(
-                &mut def.interfaces,
-                sdl_interfaces(e.implements_interfaces()),
-                string,
-                "interface",
-                &name,
-                label,
-            )?;
+            ext.fields = sdl_fields(e.fields_definition())?;
+            ext.interfaces = sdl_interfaces(e.implements_interfaces());
         }
         X::InterfaceTypeExtension(e) => {
-            extend(
-                &mut def.fields,
-                sdl_fields(e.fields_definition())?,
-                field_name,
-                "field",
-                &name,
-                label,
-            )?;
-            extend(
-                &mut def.interfaces,
-                sdl_interfaces(e.implements_interfaces()),
-                string,
-                "interface",
-                &name,
-                label,
-            )?;
+            ext.fields = sdl_fields(e.fields_definition())?;
+            ext.interfaces = sdl_interfaces(e.implements_interfaces());
         }
-        X::UnionTypeExtension(e) => {
-            extend(
-                &mut def.members,
-                sdl_union_members(e.union_member_types()),
-                string,
-                "union member",
-                &name,
-                label,
-            )?;
-        }
-        X::EnumTypeExtension(e) => {
-            extend(
-                &mut def.values,
-                sdl_enum_values(e.enum_values_definition())?,
-                value_name,
-                "enum value",
-                &name,
-                label,
-            )?;
-        }
+        X::UnionTypeExtension(e) => ext.members = sdl_union_members(e.union_member_types()),
+        X::EnumTypeExtension(e) => ext.values = sdl_enum_values(e.enum_values_definition())?,
         X::InputObjectTypeExtension(e) => {
-            extend(
-                &mut def.input_fields,
-                sdl_input_fields(e.input_fields_definition())?,
-                input_name,
-                "input field",
-                &name,
-                label,
-            )?;
+            ext.input_fields = sdl_input_fields(e.input_fields_definition())?;
         }
         _ => {}
     }
-    Ok(())
+    dedupe_members(&mut ext, label, warnings)?;
+    extend(
+        &mut def.fields,
+        ext.fields,
+        field_name,
+        "field",
+        &name,
+        label,
+    )?;
+    extend(
+        &mut def.interfaces,
+        ext.interfaces,
+        string,
+        "interface",
+        &name,
+        label,
+    )?;
+    extend(
+        &mut def.members,
+        ext.members,
+        string,
+        "union member",
+        &name,
+        label,
+    )?;
+    extend(
+        &mut def.values,
+        ext.values,
+        value_name,
+        "enum value",
+        &name,
+        label,
+    )?;
+    extend(
+        &mut def.input_fields,
+        ext.input_fields,
+        input_name,
+        "input field",
+        &name,
+        label,
+    )
 }
 
 // ---------------------------------------------------------------------------

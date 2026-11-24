@@ -379,3 +379,193 @@ fn missing_graphql_file_is_labelled_graphql() {
         .failure()
         .stderr(contains("GraphQL schema"));
 }
+
+/// #170: argument input types are linked and expanded like request bodies.
+#[test]
+fn argument_input_types_are_linked_and_expanded() {
+    let run = |extra: &[&str]| {
+        let out = binary()
+            .arg(fixture(OLD))
+            .args([
+                "--operation",
+                "QUERY Query.launchesPastResult",
+                "--detail",
+                "full",
+                "--include-schemas",
+                "--no-report",
+            ])
+            .args(extra)
+            .assert()
+            .success()
+            .get_output()
+            .stdout
+            .clone();
+        String::from_utf8(out).unwrap()
+    };
+
+    let text = run(&[]);
+    assert!(
+        text.contains(
+            "#### Request Schema\n| Field | Type | Required | Description |\n|------|------|---------:|-------------|\n| `find` | [LaunchFind](#schema-launchfind) | No | GraphQL input object |\n\n"
+        ),
+        "{text}"
+    );
+    let definitions = &text[text.find("## Schema Definitions").unwrap()..];
+    assert!(
+        definitions.contains("### LaunchFind {#schema-launchfind}"),
+        "{text}"
+    );
+    assert!(definitions.contains("| `LaunchFind.end` | [Date](#schema-date) |"));
+    // Built-in scalar arguments stay in the Arguments table only.
+    assert!(!text.contains("| `limit` | Int |"), "{text}");
+
+    // Depth-limited: the argument row keeps its type and a retrieval command.
+    let shallow = run(&["--schema-depth", "0"]);
+    assert!(
+        shallow.contains("| `find` | ref LaunchFind | No | GraphQL input object; Omitted nested expansion at schema depth 0. Retrieve full detail:"),
+        "{shallow}"
+    );
+    assert!(shallow.contains("--schema 'LaunchFind'"), "{shallow}");
+    assert!(!shallow.contains("### LaunchFind"), "{shallow}");
+
+    // Inline mode expands under the argument name.
+    let inline = run(&["--inline-schemas"]);
+    assert!(inline.contains("| `find` | object | No | GraphQL input object |"));
+    assert!(
+        inline.contains("| `find.apoapsis_km` | Float | No |"),
+        "{inline}"
+    );
+}
+
+#[test]
+fn skill_endpoint_pages_link_argument_input_types() {
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().canonicalize().unwrap().join("skill");
+    binary()
+        .arg(fixture(OLD))
+        .args([
+            "--operation",
+            "QUERY Query.launchesPastResult",
+            "--detail",
+            "full",
+            "--include-schemas",
+            "--output-mode",
+            "skill",
+            "-o",
+        ])
+        .arg(&out)
+        .assert()
+        .success();
+    let endpoint = fs::read_dir(out.join("endpoints"))
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .find(|p| {
+            p.file_name()
+                .unwrap()
+                .to_string_lossy()
+                .starts_with("query-query-launchespastresult-")
+        })
+        .unwrap();
+    let page = fs::read_to_string(endpoint).unwrap();
+    assert!(
+        page.contains("| ` find ` | [LaunchFind](../schemas/launchfind-"),
+        "{page}"
+    );
+    let has_schema_page = fs::read_dir(out.join("schemas")).unwrap().any(|e| {
+        e.unwrap()
+            .file_name()
+            .to_string_lossy()
+            .starts_with("launchfind-")
+    });
+    assert!(has_schema_page);
+}
+
+/// #170: list-wrapped and nested input arguments, with argument requiredness
+/// on the root rows.
+#[test]
+fn list_wrapped_argument_input_types_are_expanded() {
+    let t = tempfile::tempdir().unwrap();
+    let path = t.path().join("schema.graphql");
+    fs::write(
+        &path,
+        "type Query { q(o: Outer!, xs: [Inner!], n: Int): Int }\ninput Outer { i: Inner }\ninput Inner { v: Int }\n",
+    )
+    .unwrap();
+    let run = |extra: &[&str]| {
+        let out = binary()
+            .arg(&path)
+            .args(["--operation-id", "Query.q", "--detail", "full"])
+            .args(["--include-schemas", "--no-report"])
+            .args(extra)
+            .assert()
+            .success()
+            .get_output()
+            .stdout
+            .clone();
+        String::from_utf8(out).unwrap()
+    };
+    let text = run(&[]);
+    assert!(
+        text.contains(
+            "| `o` | [Outer](#schema-outer) | Yes | GraphQL input object |\n| `xs` | array<ref Inner> | No | - |\n| `xs[]` | [Inner](#schema-inner) | - | GraphQL input object |\n\n"
+        ),
+        "{text}"
+    );
+    assert!(text.contains("### Outer {#schema-outer}"), "{text}");
+    assert!(text.contains("### Inner {#schema-inner}"), "{text}");
+    assert!(!text.contains("| `n` | Int"), "{text}");
+
+    // The list wrapper consumes one depth level.
+    let shallow = run(&["--schema-depth", "1"]);
+    assert!(
+        shallow.contains("| `xs[]` | ref Inner | - | GraphQL input object; Omitted nested expansion at schema depth 1."),
+        "{shallow}"
+    );
+    assert!(shallow.contains("| `o` | [Outer](#schema-outer) | Yes |"));
+}
+
+/// #163: identical duplicates warn on stderr and convert; conflicting
+/// duplicates fail before any output.
+#[test]
+fn duplicate_sdl_members_warn_or_fail() {
+    let t = tempfile::tempdir().unwrap();
+    let identical = t.path().join("identical.graphql");
+    fs::write(&identical, "type Query { x: Int x: Int }\n").unwrap();
+    binary()
+        .arg(&identical)
+        .arg("--no-report")
+        .assert()
+        .success()
+        .stdout(contains("Query.x"))
+        .stderr(contains(
+            "vimanam: ignoring identical duplicate GraphQL field Query.x in",
+        ));
+
+    let conflicting = t.path().join("conflicting.graphql");
+    fs::write(&conflicting, "type Query { x: Int x: String }\n").unwrap();
+    let out = t.path().join("out.md");
+    binary()
+        .arg(&conflicting)
+        .arg("-o")
+        .arg(&out)
+        .assert()
+        .code(1)
+        .stderr(
+            contains("Duplicate GraphQL field Query.x in")
+                .and(contains("with a conflicting definition")),
+        );
+    assert!(!out.exists());
+
+    // diff reports the warning once per side, labelled.
+    binary()
+        .args(["diff"])
+        .arg(&identical)
+        .arg(&identical)
+        .assert()
+        .success()
+        .stderr(
+            contains("vimanam: old: ignoring identical duplicate GraphQL field Query.x").and(
+                contains("vimanam: new: ignoring identical duplicate GraphQL field Query.x"),
+            ),
+        );
+}

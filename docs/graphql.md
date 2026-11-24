@@ -10,7 +10,14 @@ Vimanam reads GraphQL schemas as:
   link is an error; `extend schema`, `extend type`, `extend enum`, … may appear
   in any file. Duplicate schema/type definitions, duplicate root operations,
   duplicate members from extensions, extensions of undefined types and
-  references to undefined types are errors naming the file.
+  references to undefined types are errors naming the file. A member
+  (field, argument, input field, enum value, interface or union member)
+  repeated inside one definition or one extension block is an error when the
+  repeat differs in type, arguments (matched by name), default or deprecation;
+  identical repeats (GitHub's published schema has some) are dropped, keeping
+  the first occurrence and its description, with one stderr warning per member
+  giving the count (`diff` labels it `old:`/`new:`). Introspection JSON follows
+  the same rule.
 - **Introspection JSON**: the result of an introspection query, either
   `{"data": {"__schema": …}}` or `{"__schema": …}`. A `.json` input is GraphQL
   only when it contains a `__schema` object, so OpenAPI JSON is unaffected.
@@ -131,8 +138,14 @@ Removed root fields have no new-schema context.
 Conversion renders root fields as operations with `QUERY`, `MUTATION` or
 `SUBSCRIPTION` and the coordinate (`--operation 'QUERY Query.user'` or
 `--operation-id Query.user`), an *Arguments* table and a *Result*. Non-root
-types are schemas (`--schema User`). Budgets, schema depth, split and Skill
-trees reuse the shared renderer.
+types are schemas (`--schema User`). With `--detail full --include-schemas`,
+the *Request Schema* lists each argument whose type is an input object, enum or
+custom scalar (possibly in a list) as its own root, linked to and expanded in
+*Schema Definitions* the way an OpenAPI request body is; built-in scalar
+arguments appear only in the *Arguments* table. A list-wrapped argument
+(`[Input!]`) renders an array row plus an item row, so the list consumes one
+`--schema-depth` level before the item type. Budgets, schema depth, split
+and Skill trees reuse the shared renderer.
 
 ## Git refs
 
