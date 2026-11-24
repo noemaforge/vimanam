@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `diff` no longer rates removing a member from a **response** `enum` as
+  breaking (#169): a server that stops returning a value cannot break a
+  client, so the row is now non-breaking. Request-side enum removal stays
+  breaking, so a narrowed enum on a component shared by a request and a
+  response is still caught. The change is intentional in every output:
+  Markdown, v2 JSON (`enum_value_removed` on a result) and `--contract 1`
+  verdicts. On the OpenAI `a01e367..373f26a` diff, breaking findings drop
+  from 62 to 13.
+- OpenAPI 3.1 `type` arrays keep `"null"` (#166): `["string", "null"]` now
+  reads as `string` with `nullable: true`, so it renders `string | null` and
+  `diff` classifies `"string"` ↔ `["string", "null"]` exactly like OAS 3.0
+  `nullable` (breaking when a response gains null or a request loses it). A
+  lone `["null"]` renders as `null`, duplicate members collapse, and
+  reordered union members (`["string", "integer"]` vs
+  `["integer", "string"]`) no longer produce a false `type` change.
+
 ## [2.2.0] - 2026-11-24
 
 ### Added

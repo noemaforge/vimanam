@@ -343,7 +343,7 @@ impl SpecDiff {
 /// | property removed | Breaking |
 /// | property added | Non-breaking |
 /// | `type` changed at any pointer | Breaking |
-/// | `enum` member removed | Breaking |
+/// | `enum` member removed (the server returns a subset of what clients already handle) | Non-breaking |
 /// | `enum` member added (strictly typed clients reject unknown values) | Review |
 /// | member removed from `required` (consumers relied on it) | Breaking |
 /// | member added to `required` | Non-breaking |
@@ -435,7 +435,10 @@ fn response_schema_severity(change: &ValueChange) -> Severity {
         (Location::Property, Removed(_)) => Severity::Breaking,
         (Location::Property, Added(_)) => Severity::NonBreaking,
         (Location::Type, _) => Severity::Breaking,
-        (Location::EnumElement, Removed(_)) => Severity::Breaking,
+        // Narrowing what the server returns cannot break a client (#169). A
+        // component shared with a request still reports its request-side
+        // removal as breaking.
+        (Location::EnumElement, Removed(_)) => Severity::NonBreaking,
         (Location::EnumElement, Added(_)) => Severity::Review,
         (Location::RequiredElement, Removed(_)) => Severity::Breaking,
         (Location::RequiredElement, Added(_)) => Severity::NonBreaking,
@@ -1521,7 +1524,6 @@ mod tests {
             )),
             Severity::Breaking
         );
-        assert_eq!(response(removed("/enum/a", json!("a"))), Severity::Breaking);
         assert_eq!(
             response(removed("/required/x", json!("x"))),
             Severity::Breaking
@@ -1557,6 +1559,16 @@ mod tests {
         );
         assert_eq!(
             response(removed("/nullable", json!(true))),
+            Severity::NonBreaking
+        );
+        // #169: the server stops returning a value; every value clients still
+        // receive was valid before.
+        assert_eq!(
+            response(removed("/enum/a", json!("a"))),
+            Severity::NonBreaking
+        );
+        assert_eq!(
+            response(removed("/properties/status/enum/0", json!("retired"))),
             Severity::NonBreaking
         );
     }

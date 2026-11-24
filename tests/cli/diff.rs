@@ -8,6 +8,7 @@ use crate::common::load_json;
 use crate::common::vimanam;
 use crate::common::write_spec;
 use predicates::prelude::*;
+use serde_json::json;
 
 // --- diff subcommand (#45) ---
 
@@ -389,4 +390,131 @@ fn diff_default_format_is_markdown() {
         default,
         std::fs::read_to_string("tests/fixtures/diff_expected.md").unwrap()
     );
+}
+
+// --- OpenAPI 3.1 type arrays (#166) and response enum narrowing (#169) ---
+
+const TYPE_ARRAY: &str = "tests/fixtures/type_array_nullable.json";
+
+/// Diffs `old_edit(fixture)` against `new_edit(fixture)` with
+/// `--fail-on-breaking`.
+fn type_array_diff(
+    old_edit: impl FnOnce(&mut serde_json::Value),
+    new_edit: impl FnOnce(&mut serde_json::Value),
+) -> (String, i32) {
+    let dir = tempfile::tempdir().unwrap();
+    let mut old = load_json(TYPE_ARRAY);
+    let mut new = old.clone();
+    old_edit(&mut old);
+    new_edit(&mut new);
+    let old_path = write_spec(&dir, "old.json", &old);
+    let new_path = write_spec(&dir, "new.json", &new);
+    diff_run(&[&old_path, &new_path, "--fail-on-breaking"])
+}
+
+fn set(spec: &mut serde_json::Value, pointer: &str, value: serde_json::Value) {
+    *spec.pointer_mut(pointer).unwrap() = value;
+}
+
+const ITEM: &str = "/components/schemas/Item/properties";
+const ITEM_INPUT: &str = "/components/schemas/ItemInput/properties";
+
+#[test]
+fn diff_type_array_null_on_request_is_non_breaking_and_reverse_breaking() {
+    let pointer = &format!("{ITEM_INPUT}/note/type");
+    let (stdout, code) =
+        type_array_diff(|_| {}, |new| set(new, pointer, json!(["string", "null"])));
+    assert_eq!(code, 0, "{stdout}");
+    assert!(
+        stdout.contains(
+            "| Request schema changed | `POST /items` | `/properties/note/nullable` added (`true`) |"
+        ),
+        "{stdout}"
+    );
+    assert!(!stdout.contains("## Breaking changes"), "{stdout}");
+
+    let (stdout, code) =
+        type_array_diff(|old| set(old, pointer, json!(["string", "null"])), |_| {});
+    assert_eq!(code, 3, "{stdout}");
+    assert!(
+        stdout.contains(
+            "| Request schema changed | `POST /items` | `/properties/note/nullable` removed"
+        ),
+        "{stdout}"
+    );
+}
+
+#[test]
+fn diff_type_array_null_on_response_is_breaking_and_reverse_non_breaking() {
+    let pointer = &format!("{ITEM}/label/type");
+    // ["string", "null"] -> "string": the server stops sending null.
+    let (stdout, code) = type_array_diff(|_| {}, |new| set(new, pointer, json!("string")));
+    assert_eq!(code, 0, "{stdout}");
+    assert!(
+        stdout.contains(
+            "| Response schema changed | `POST /items` | 200 `/properties/label/nullable` removed"
+        ),
+        "{stdout}"
+    );
+
+    // "string" -> ["string", "null"]: clients may now receive null.
+    let (stdout, code) = type_array_diff(|old| set(old, pointer, json!("string")), |_| {});
+    assert_eq!(code, 3, "{stdout}");
+    assert!(stdout.contains("## Breaking changes (1)"), "{stdout}");
+    assert!(
+        stdout.contains(
+            "| Response schema changed | `POST /items` | 200 `/properties/label/nullable` added (`true`) |"
+        ),
+        "{stdout}"
+    );
+}
+
+#[test]
+fn diff_type_array_equivalent_spellings_are_unchanged() {
+    // Reordered union members, a duplicate member, and the OAS 3.0 spelling of
+    // nullability all describe the same schema.
+    let (stdout, code) = type_array_diff(
+        |_| {},
+        |new| {
+            set(
+                new,
+                &format!("{ITEM}/key/type"),
+                json!(["integer", "string"]),
+            );
+            set(
+                new,
+                &format!("{ITEM}/count/type"),
+                json!(["null", "integer"]),
+            );
+            set(
+                new,
+                &format!("{ITEM}/label"),
+                json!({"type": "string", "nullable": true}),
+            );
+        },
+    );
+    assert_eq!(code, 0, "{stdout}");
+    assert!(stdout.contains("**Summary:** No changes."), "{stdout}");
+}
+
+#[test]
+fn diff_response_enum_narrowing_is_not_breaking() {
+    let (stdout, code) = type_array_diff(
+        |_| {},
+        |new| set(new, &format!("{ITEM}/state/enum"), json!(["active"])),
+    );
+    assert_eq!(code, 0, "{stdout}");
+    assert!(!stdout.contains("## Breaking changes"), "{stdout}");
+    assert!(
+        stdout.contains("| Response schema changed | `POST /items` | 200 `/properties/state/enum"),
+        "{stdout}"
+    );
+
+    // The same narrowing on the request side still breaks callers.
+    let (stdout, code) = type_array_diff(
+        |_| {},
+        |new| set(new, &format!("{ITEM_INPUT}/status/enum"), json!(["active"])),
+    );
+    assert_eq!(code, 3, "{stdout}");
+    assert!(stdout.contains("## Breaking changes (1)"), "{stdout}");
 }

@@ -130,3 +130,108 @@ fn swagger_2_v2_json_is_byte_deterministic() {
     sorted.sort();
     assert_eq!(keys, sorted);
 }
+
+// --- OpenAPI 3.1 type arrays (#166) and response enum narrowing (#169) ---
+
+const TYPE_ARRAY: &str = "tests/fixtures/type_array_nullable.json";
+
+/// `(kind, native_kind, pointer, severity)` of one v2 change.
+type ChangeRow = (String, String, String, String);
+
+/// v2 JSON changes between the type-array fixture and an edited copy, plus the exit code under
+/// `--fail-on-breaking`.
+fn type_array_changes(edit: impl FnOnce(&mut Value)) -> (Vec<ChangeRow>, Option<i32>) {
+    let dir = tempfile::tempdir().unwrap();
+    let mut spec: Value =
+        serde_json::from_str(&std::fs::read_to_string(TYPE_ARRAY).unwrap()).unwrap();
+    edit(&mut spec);
+    let new = dir.path().join("new.json");
+    std::fs::write(&new, serde_json::to_string(&spec).unwrap()).unwrap();
+    let output = vimanam()
+        .args(["diff", TYPE_ARRAY])
+        .arg(&new)
+        .args(["--format", "json", "--fail-on-breaking"])
+        .output()
+        .unwrap();
+    let document: Value = serde_json::from_slice(&output.stdout).unwrap();
+    let text = |v: &Value| v.as_str().unwrap_or_default().to_string();
+    let changes = document["changes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| {
+            (
+                text(&c["kind"]),
+                text(&c["native_kind"]),
+                text(&c["native"]["pointer"]),
+                text(&c["severity"]),
+            )
+        })
+        .collect();
+    (changes, output.status.code())
+}
+
+fn operation_change<'a>(changes: &'a [ChangeRow], native_kind: &str) -> Vec<&'a ChangeRow> {
+    changes.iter().filter(|c| c.1 == native_kind).collect()
+}
+
+#[test]
+fn v2_type_array_reorder_and_duplicates_are_unchanged() {
+    let (changes, code) = type_array_changes(|spec| {
+        spec["components"]["schemas"]["Item"]["properties"]["key"]["type"] =
+            serde_json::json!(["integer", "string"]);
+        spec["components"]["schemas"]["Item"]["properties"]["count"]["type"] =
+            serde_json::json!(["null", "integer"]);
+    });
+    assert_eq!(changes, vec![]);
+    assert_eq!(code, Some(0));
+}
+
+#[test]
+fn v2_type_array_null_follows_nullable_direction() {
+    // Response: ["string", "null"] -> "string" is non-breaking.
+    let (changes, code) = type_array_changes(|spec| {
+        spec["components"]["schemas"]["Item"]["properties"]["label"]["type"] =
+            serde_json::json!("string");
+    });
+    let response = operation_change(&changes, "response_schema_changed");
+    assert_eq!(response.len(), 1, "{changes:?}");
+    assert_eq!(response[0].0, "nullability_changed");
+    assert_eq!(response[0].2, "/properties/label/nullable");
+    assert_eq!(response[0].3, "non_breaking");
+    assert_eq!(code, Some(0));
+
+    // Request: "string" -> ["string", "null"] is non-breaking too.
+    let (changes, code) = type_array_changes(|spec| {
+        spec["components"]["schemas"]["ItemInput"]["properties"]["note"]["type"] =
+            serde_json::json!(["string", "null"]);
+    });
+    let request = operation_change(&changes, "request_schema_changed");
+    assert_eq!(request.len(), 1, "{changes:?}");
+    assert_eq!(request[0].0, "nullability_changed");
+    assert_eq!(request[0].3, "non_breaking");
+    assert_eq!(code, Some(0));
+}
+
+#[test]
+fn v2_response_enum_value_removed_is_not_breaking() {
+    let (changes, code) = type_array_changes(|spec| {
+        spec["components"]["schemas"]["Item"]["properties"]["state"]["enum"] =
+            serde_json::json!(["active"]);
+    });
+    let response = operation_change(&changes, "response_schema_changed");
+    assert_eq!(response.len(), 1, "{changes:?}");
+    assert_eq!(response[0].0, "enum_value_removed");
+    assert_eq!(response[0].3, "non_breaking");
+    assert_eq!(code, Some(0));
+
+    let (changes, code) = type_array_changes(|spec| {
+        spec["components"]["schemas"]["ItemInput"]["properties"]["status"]["enum"] =
+            serde_json::json!(["active"]);
+    });
+    let request = operation_change(&changes, "request_schema_changed");
+    assert_eq!(request.len(), 1, "{changes:?}");
+    assert_eq!(request[0].0, "enum_value_removed");
+    assert_eq!(request[0].3, "breaking");
+    assert_eq!(code, Some(3));
+}

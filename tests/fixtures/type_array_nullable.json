@@ -16,6 +16,50 @@
         ],
         "responses": { "200": { "description": "ok" } }
       }
+    },
+    "/items": {
+      "post": {
+        "tags": ["Items"],
+        "operationId": "Items_Create",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/ItemInput" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "ok",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Item" }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "ItemInput": {
+        "type": "object",
+        "properties": {
+          "note": { "type": "string" },
+          "status": { "type": "string", "enum": ["active", "retired"] }
+        }
+      },
+      "Item": {
+        "type": "object",
+        "properties": {
+          "label": { "type": ["string", "null"] },
+          "nothing": { "type": ["null"] },
+          "key": { "type": ["string", "integer"] },
+          "count": { "type": ["integer", "null", "integer"] },
+          "state": { "type": "string", "enum": ["active", "retired"] }
+        }
+      }
     }
   }
 }
