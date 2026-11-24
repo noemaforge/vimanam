@@ -1,0 +1,22 @@
+// Synthetic fixture: custom field options (which import
+// google/protobuf/descriptor.proto), one with source retention that protoc
+// strips from descriptor output, plus a well-known-type reference.
+syntax = "proto3";
+package demo.v1;
+
+import "google/protobuf/descriptor.proto";
+import "google/protobuf/timestamp.proto";
+
+extend google.protobuf.FieldOptions {
+  string label = 50001;
+  string source_note = 50002 [retention = RETENTION_SOURCE];
+}
+
+message Item {
+  string id = 1 [(label) = "identifier", (source_note) = "kept in source only"];
+  google.protobuf.Timestamp created_at = 2;
+}
+
+service Items {
+  rpc Get(Item) returns (Item);
+}

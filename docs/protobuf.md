@@ -82,7 +82,7 @@ Changes needing review never trigger exit 3.
 | Field renamed at the same number/type | Breaking source/JSON | `FIELD_SAME_NAME` |
 | Message/enum/service/RPC removed or renamed | Breaking source | `MESSAGE_NO_DELETE`, `ENUM_NO_DELETE`, `SERVICE_NO_DELETE`, `RPC_NO_DELETE` |
 | Package changes | Breaking source | `FILE_SAME_PACKAGE` |
-| RPC streaming changes | Breaking source | `RPC_SAME_CLIENT_STREAMING`, `RPC_SAME_SERVER_STREAMING` |
+| RPC streaming changes | Breaking wire (gRPC framing), source, JSON | `RPC_SAME_CLIENT_STREAMING`, `RPC_SAME_SERVER_STREAMING` |
 | JSON name changes | Breaking source/JSON | `FIELD_SAME_JSON_NAME` |
 | New optional field, type, enum label, RPC | Non-breaking | `PROTOBUF_SURFACE_CHANGED` |
 | Effective defaults, deprecation, unknown/custom options | Review | `DefaultChanged`, `DEPRECATED_CHANGED`, `PROTOBUF_SURFACE_CHANGED` |
@@ -100,6 +100,22 @@ enum range. Effective defaults are compared after reflection resolves them, so
 changing the first enum value can change an implicit proto2 default. Explicit
 defaults that resolve to the same value remain stable, and non-finite float
 defaults retain typed `NaN`/infinity representations in the neutral surface.
+Files under `google/protobuf/` (well-known types and `descriptor.proto`) ship
+with each compiler, so a descriptor set built by one `protoc` release and sources
+compiled by protox differ inside them without any contract change. `diff` drops
+findings whose subject is defined only in those bundled files; user extensions
+of `google.protobuf.*Options`, applied custom options and fields that reference
+well-known types live in user files and stay reported. When neither input has a
+file outside `google/protobuf/`, every finding is kept. The neutral surfaces in
+JSON output still list bundled entities.
+Applied options whose extension or field is declared `retention =
+RETENTION_SOURCE` are dropped before comparison: protoc strips them from
+descriptor output while protox keeps them, so the surface holds only what
+survives into descriptors.
+Source-retention option values are therefore never compared, even between two
+`.proto` inputs, matching protoc descriptor output. The bundled-file filter
+classifies files by the `google/protobuf/` path prefix, so a user file vendored
+at that path is treated as bundled.
 Package namespace entities are represented as `type` entities with
 `kind: package`, allowing file-package facts to reference an entity present in
 the compared surface.

@@ -170,13 +170,35 @@ fn service_and_rpc_renames_break_source() {
     assert!(has_rule(&c, "SERVICE_NO_DELETE", "source"));
 }
 #[test]
-fn streaming_changes_break_source() {
+fn streaming_changes_break_wire_and_source() {
     let c = compare(
         "message M {} service S { rpc R(M) returns (M); }",
         "message M {} service S { rpc R(stream M) returns (stream M); }",
     );
-    assert!(has_rule(&c, "RPC_SAME_CLIENT_STREAMING", "source"));
-    assert!(has_rule(&c, "RPC_SAME_SERVER_STREAMING", "source"));
+    for rule in ["RPC_SAME_CLIENT_STREAMING", "RPC_SAME_SERVER_STREAMING"] {
+        assert!(has_rule(&c, rule, "source"), "{rule} source");
+        assert!(has_rule(&c, rule, "wire"), "{rule} wire");
+    }
+    // Each direction is classified on its own, and impacts are excluded from
+    // `vc2_` hashing, so the change IDs predate the wire impact (#153).
+    let client = compare(
+        "message M {} service S { rpc R(M) returns (M); }",
+        "message M {} service S { rpc R(stream M) returns (M); }",
+    );
+    assert_eq!(client.len(), 1);
+    assert_eq!(client[0].native_kind, "RPC_SAME_CLIENT_STREAMING");
+    assert_eq!(client[0].impacts, ["wire", "source", "wire_json"]);
+    let mut legacy = client[0].clone();
+    legacy.impacts = vec!["source".into(), "wire_json".into()];
+    legacy.refresh_id();
+    assert_eq!(legacy.id, client[0].id);
+    let server = compare(
+        "message M {} service S { rpc R(stream M) returns (stream M); }",
+        "message M {} service S { rpc R(stream M) returns (M); }",
+    );
+    assert_eq!(server.len(), 1);
+    assert_eq!(server[0].native_kind, "RPC_SAME_SERVER_STREAMING");
+    assert!(has_rule(&server, "RPC_SAME_SERVER_STREAMING", "wire"));
 }
 #[test]
 fn json_name_changes_break_source() {
@@ -960,4 +982,247 @@ fn symlinked_proto_under_include_root_preserves_virtual_path_and_shadow_checks()
     // Reversing -I order so v2 precedes v1 resolves cleanly.
     let ok = Document::read(&v2.join("api.proto"), &[v2, v1]).unwrap();
     assert!(ok.pool.files().any(|f| f.name() == "api.proto"));
+}
+
+fn custom_options_source(field_option: &str, option_type: &str) -> Document {
+    let temp = tempfile::tempdir().unwrap();
+    let text = fs::read_to_string(fixture("custom-options.proto"))
+        .unwrap()
+        .replace(
+            "string label = 50001",
+            &format!("{option_type} label = 50001"),
+        )
+        .replace(
+            "(label) = \"identifier\"",
+            &format!("(label) = {field_option}"),
+        );
+    let path = temp.path().join("custom-options.proto");
+    fs::write(&path, text).unwrap();
+    Document::read(&path, &[]).unwrap()
+}
+#[test]
+fn bundled_descriptor_drift_produces_no_changes_in_mixed_inputs() {
+    // The `.pb` embeds protoc 36.2's descriptor.proto (Editions FeatureSet and
+    // newer option fields); protox compiles its own bundled copy (#155).
+    let descriptor = Document::read(&fixture("custom-options.pb"), &[]).unwrap();
+    let source = Document::read(&fixture("custom-options.proto"), &[]).unwrap();
+    let names = |d: &Document| {
+        protobuf::adapt(d)
+            .entities
+            .into_iter()
+            .map(|e| e.name)
+            .collect::<std::collections::BTreeSet<_>>()
+    };
+    assert_ne!(
+        names(&descriptor),
+        names(&source),
+        "fixture must carry descriptor.proto version skew"
+    );
+    assert_eq!(protobuf::diff(&descriptor, &source).unwrap(), vec![]);
+    assert_eq!(protobuf::diff(&source, &descriptor).unwrap(), vec![]);
+}
+#[test]
+fn custom_option_changes_survive_bundled_descriptor_filtering() {
+    let descriptor = Document::read(&fixture("custom-options.pb"), &[]).unwrap();
+    let applied = protobuf::diff(&descriptor, &custom_options_source("\"id\"", "string")).unwrap();
+    assert_eq!(applied.len(), 1, "{applied:#?}");
+    assert_eq!(applied[0].kind, ChangeKind::ConstraintChanged);
+    assert!(matches!(&applied[0].native,
+        vimanam::contract::NativeLocation::Protobuf { full_name, .. } if full_name == "demo.v1.Item.id"));
+    assert_eq!(applied[0].details["pointer"], "/options/[demo.v1.label]");
+
+    let retyped = protobuf::diff(&descriptor, &custom_options_source("7", "int32")).unwrap();
+    assert!(retyped.iter().any(|c| c.native_kind == "FIELD_SAME_TYPE"
+        && matches!(&c.native,
+            vimanam::contract::NativeLocation::Protobuf { full_name, .. } if full_name == "demo.v1.label")));
+    assert!(retyped.iter().all(|c| !matches!(&c.native,
+        vimanam::contract::NativeLocation::Protobuf { full_name, .. } if full_name.starts_with("google.protobuf."))));
+}
+#[test]
+fn bundled_only_inputs_keep_findings() {
+    use prost::Message;
+    // With no user files on either side the bundled files are the contract
+    // being compared, so their changes are reported.
+    let pool = |names: &[&str]| {
+        let descriptor = Document::read(&fixture("custom-options.pb"), &[]).unwrap();
+        let mut set =
+            prost_types::FileDescriptorSet::decode(descriptor.descriptor_bytes.as_slice()).unwrap();
+        set.file.retain(|f| names.contains(&f.name()));
+        Document::decode(&set.encode_to_vec()).unwrap()
+    };
+    let old = pool(&[
+        "google/protobuf/timestamp.proto",
+        "google/protobuf/descriptor.proto",
+    ]);
+    let new = pool(&["google/protobuf/descriptor.proto"]);
+    let changes = protobuf::diff(&old, &new).unwrap();
+    assert!(changes.iter().any(|c| c.native_kind == "MESSAGE_NO_DELETE"));
+}
+fn custom_options_text(edit: impl Fn(String) -> String) -> Document {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("custom-options.proto");
+    fs::write(
+        &path,
+        edit(fs::read_to_string(fixture("custom-options.proto")).unwrap()),
+    )
+    .unwrap();
+    Document::read(&path, &[]).unwrap()
+}
+/// Set `go_package` on one file of the fixture descriptor set. Edits go through
+/// `DynamicMessage` so custom options and `retention` (unknown to prost-types)
+/// survive re-encoding.
+fn descriptor_with_go_package(file: &str, go_package: &str) -> Document {
+    use prost::Message;
+    use prost_reflect::{DynamicMessage, Value as V};
+    let bytes = fs::read(fixture("custom-options.pb")).unwrap();
+    let pool = Document::decode(&bytes).unwrap().pool;
+    let set_desc = pool
+        .get_message_by_name("google.protobuf.FileDescriptorSet")
+        .unwrap();
+    let mut set = DynamicMessage::decode(set_desc, bytes.as_slice()).unwrap();
+    let V::List(files) = set.get_field_by_name_mut("file").unwrap() else {
+        panic!()
+    };
+    let target = files
+        .iter_mut()
+        .filter_map(V::as_message_mut)
+        .find(|f| f.get_field_by_name("name").unwrap().as_str() == Some(file))
+        .unwrap();
+    let V::Message(options) = target.get_field_by_name_mut("options").unwrap() else {
+        panic!()
+    };
+    options.set_field_by_name("go_package", V::String(go_package.into()));
+    Document::decode(&set.encode_to_vec()).unwrap()
+}
+fn full_name(c: &Change) -> &str {
+    match &c.native {
+        vimanam::contract::NativeLocation::Protobuf { full_name, .. } => full_name,
+        _ => panic!(),
+    }
+}
+#[test]
+fn source_retention_options_are_compared_as_descriptors_carry_them() {
+    let descriptor = Document::read(&fixture("custom-options.pb"), &[]).unwrap();
+    let source = Document::read(&fixture("custom-options.proto"), &[]).unwrap();
+    let applied = |d: &Document| {
+        let field = d
+            .pool
+            .get_message_by_name("demo.v1.Item")
+            .unwrap()
+            .get_field_by_name("id")
+            .unwrap();
+        let ext = d.pool.get_extension_by_name("demo.v1.source_note").unwrap();
+        field.options().has_extension(&ext)
+    };
+    // protoc strips source-retention options from descriptors; protox keeps them.
+    assert!(applied(&source));
+    assert!(!applied(&descriptor));
+    assert_eq!(protobuf::diff(&descriptor, &source).unwrap(), vec![]);
+
+    let note_changed = custom_options_text(|s| s.replace("kept in source only", "changed"));
+    assert_eq!(protobuf::diff(&descriptor, &note_changed).unwrap(), vec![]);
+    assert_eq!(protobuf::diff(&source, &note_changed).unwrap(), vec![]);
+
+    let label_changed = custom_options_text(|s| s.replace("\"identifier\"", "\"renamed\""));
+    for old in [&descriptor, &source] {
+        let changes = protobuf::diff(old, &label_changed).unwrap();
+        assert_eq!(changes.len(), 1, "{changes:#?}");
+        assert_eq!(full_name(&changes[0]), "demo.v1.Item.id");
+        assert_eq!(changes[0].details["pointer"], "/options/[demo.v1.label]");
+    }
+}
+#[test]
+fn bundled_file_options_are_filtered_but_user_file_options_are_not() {
+    let original = Document::read(&fixture("custom-options.pb"), &[]).unwrap();
+    let bundled =
+        descriptor_with_go_package("google/protobuf/timestamp.proto", "example.com/drift");
+    assert_eq!(protobuf::diff(&original, &bundled).unwrap(), vec![]);
+    let user = descriptor_with_go_package("custom-options.proto", "example.com/demo");
+    let changes = protobuf::diff(&original, &user).unwrap();
+    assert_eq!(changes.len(), 1, "{changes:#?}");
+    assert_eq!(full_name(&changes[0]), "custom-options.proto");
+    assert_eq!(changes[0].native_kind, "FILE_OPTIONS_CHANGED");
+}
+#[test]
+fn bundled_subjects_on_one_side_are_filtered_while_user_changes_remain() {
+    let descriptor = Document::read(&fixture("custom-options.pb"), &[]).unwrap();
+    // Dropping both imports removes every google.protobuf message, enum and
+    // the package itself from the new side.
+    let dropped = custom_options_text(|s| {
+        let start = s
+            .find("import \"google/protobuf/descriptor.proto\"")
+            .unwrap();
+        let end = s.find("message Item").unwrap();
+        format!("{}{}", &s[..start], &s[end..])
+            .replace(
+                " [(label) = \"identifier\", (source_note) = \"kept in source only\"]",
+                "",
+            )
+            .replace("google.protobuf.Timestamp created_at", "string created_at")
+    });
+    assert!(
+        dropped
+            .pool
+            .get_message_by_name("google.protobuf.Timestamp")
+            .is_none()
+    );
+    let changes = protobuf::diff(&descriptor, &dropped).unwrap();
+    assert!(
+        changes
+            .iter()
+            .all(|c| !full_name(c).starts_with("google.protobuf")),
+        "{changes:#?}"
+    );
+    assert!(
+        changes.iter().any(
+            |c| full_name(c) == "demo.v1.Item.created_at" && c.native_kind == "FIELD_SAME_TYPE"
+        )
+    );
+    assert!(changes.iter().any(|c| full_name(c) == "demo.v1.label"));
+    assert!(changes.iter().any(|c| full_name(c) == "demo.v1.Item.id"));
+}
+fn nested_option_source(top_src: &str, kid_src: &str, kid_rt: &str, map_src: &str) -> Document {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("nested.proto");
+    fs::write(
+        &path,
+        format!(
+            r#"syntax = "proto2"; package demo;
+import "google/protobuf/descriptor.proto";
+message Opt {{
+  optional string src = 1 [retention = RETENTION_SOURCE];
+  optional string rt = 2;
+  repeated Opt kids = 3;
+  map<string, Opt> by_name = 4;
+}}
+extend google.protobuf.FieldOptions {{ optional Opt opt = 50010; }}
+message M {{
+  optional string f = 1 [(opt) = {{
+    src: "{top_src}" rt: "top"
+    kids {{ src: "{kid_src}" rt: "{kid_rt}" }}
+    by_name {{ key: "k" value {{ src: "{map_src}" rt: "mapped" }} }}
+  }}];
+}}"#
+        ),
+    )
+    .unwrap();
+    Document::read(&path, &[]).unwrap()
+}
+#[test]
+fn nested_source_retention_option_values_are_stripped_recursively() {
+    let base = nested_option_source("a", "b", "kid", "c");
+    for changed in [
+        nested_option_source("A", "b", "kid", "c"),
+        nested_option_source("a", "B", "kid", "c"),
+        nested_option_source("a", "b", "kid", "C"),
+    ] {
+        assert_eq!(protobuf::diff(&base, &changed).unwrap(), vec![]);
+    }
+    let changes = protobuf::diff(&base, &nested_option_source("a", "b", "other", "c")).unwrap();
+    assert_eq!(changes.len(), 1, "{changes:#?}");
+    assert_eq!(full_name(&changes[0]), "demo.M.f");
+    assert_eq!(
+        changes[0].details["pointer"],
+        "/options/[demo.opt]/kids/0/rt"
+    );
 }

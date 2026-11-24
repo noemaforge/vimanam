@@ -3,7 +3,7 @@
 use super::*;
 use anyhow::{Context, Result};
 use prost::Message;
-use prost_reflect::{DescriptorPool, DynamicMessage, Kind};
+use prost_reflect::{DescriptorPool, DynamicMessage, Kind, ReflectMessage};
 use protox::{
     Compiler,
     file::{
@@ -495,8 +495,53 @@ impl FileResolver for MemoryFileResolver {
 fn id(kind: EntityKind, name: &str) -> String {
     entity_id(Format::Protobuf, kind, name)
 }
-fn options(message: DynamicMessage) -> Value {
+fn options(mut message: DynamicMessage) -> Value {
+    strip_source_retention(&mut message);
     serde_json::to_value(message).unwrap_or(Value::Null)
+}
+/// `retention = RETENTION_SOURCE` read reflectively: prost-types predates the
+/// field, and a pool whose descriptor.proto lacks it has no source retention.
+fn is_source_retained(field_options: &DynamicMessage) -> bool {
+    const RETENTION_SOURCE: i32 = 2;
+    field_options
+        .descriptor()
+        .get_field_by_name("retention")
+        .is_some_and(|f| field_options.get_field(&f).as_enum_number() == Some(RETENTION_SOURCE))
+}
+/// Drop applied options declared with source retention, recursively. protoc
+/// strips them from descriptor output while protox keeps them, so comparing
+/// only what survives into descriptors keeps `.pb`/`.proto` parity (#155).
+fn strip_source_retention(message: &mut DynamicMessage) {
+    let extensions: Vec<_> = message
+        .extensions()
+        .map(|(x, _)| x)
+        .filter(|x| is_source_retained(&x.options()))
+        .collect();
+    for x in &extensions {
+        message.clear_extension(x);
+    }
+    let fields: Vec<_> = message
+        .fields()
+        .map(|(f, _)| f)
+        .filter(|f| is_source_retained(&f.options()))
+        .collect();
+    for f in &fields {
+        message.clear_field(f);
+    }
+    let nested = |value: &mut prost_reflect::Value| match value {
+        prost_reflect::Value::Message(m) => strip_source_retention(m),
+        prost_reflect::Value::List(items) => items
+            .iter_mut()
+            .filter_map(|v| v.as_message_mut())
+            .for_each(strip_source_retention),
+        prost_reflect::Value::Map(entries) => entries
+            .values_mut()
+            .filter_map(|v| v.as_message_mut())
+            .for_each(strip_source_retention),
+        _ => {}
+    };
+    message.fields_mut().for_each(|(_, v)| nested(v));
+    message.extensions_mut().for_each(|(_, v)| nested(v));
 }
 fn node(
     kind: EntityKind,
@@ -735,6 +780,13 @@ impl Adapter for ProtobufAdapter {
             }
             ChangeKind::WireIdentityChanged if p == "/group" => {
                 (Severity::Breaking, vec!["wire", "source"])
+            }
+            // Unary and streaming calls use different gRPC message framing, so
+            // existing peers fail at runtime (buf `WIRE` category agrees).
+            ChangeKind::WireIdentityChanged
+                if p == "/client_streaming" || p == "/server_streaming" =>
+            {
+                (Severity::Breaking, vec!["wire", "source", "wire_json"])
             }
             ChangeKind::WireIdentityChanged => (Severity::Breaking, vec!["source", "wire_json"]),
             _ if ["/cardinality", "/presence", "/input", "/output", "/syntax"].contains(&p) => {
@@ -1055,9 +1107,88 @@ pub fn diff(old: &Document, new: &Document) -> Result<Vec<Change>> {
             ));
         }
     }
+    // Compilers bundle their own copies of `google/protobuf/*.proto`, so a
+    // descriptor set from one protoc release compared with sources compiled by
+    // protox (or another protoc) differs inside those files without any change
+    // to the user's contract (#155). Drop findings whose subject is defined only
+    // in bundled files; user extensions of `google.protobuf.*Options`, applied
+    // options and references to well-known types all live in user files and
+    // stay reported. Inputs made solely of bundled files keep every finding.
+    if has_user_files(old_doc) || has_user_files(new_doc) {
+        let old_bundled = bundled_entity_ids(old_doc, &old);
+        let new_bundled = bundled_entity_ids(new_doc, &new);
+        changes.retain(|c| {
+            let in_old = old_by_id.contains_key(&c.subject);
+            let in_new = new_by_id.contains_key(&c.subject);
+            let bundled = (!in_old || old_bundled.contains(&c.subject))
+                && (!in_new || new_bundled.contains(&c.subject));
+            !(bundled && (in_old || in_new))
+        });
+    }
     changes.sort_by(|a, b| a.subject.cmp(&b.subject).then(a.id.cmp(&b.id)));
     changes.dedup_by(|a, b| a.id == b.id);
     Ok(changes)
+}
+
+/// Files every protobuf compiler ships itself (well-known types and
+/// `descriptor.proto`); their content tracks the compiler release.
+fn is_bundled_file(name: &str) -> bool {
+    name.starts_with("google/protobuf/")
+}
+
+fn has_user_files(doc: &Document) -> bool {
+    doc.pool.files().any(|f| !is_bundled_file(f.name()))
+}
+
+/// Entity IDs of `contract` whose symbol is defined in a bundled file.
+fn bundled_entity_ids(doc: &Document, contract: &Contract) -> std::collections::HashSet<String> {
+    let mut home: HashMap<String, bool> = HashMap::new();
+    let mut put = |name: &str, file: &str| {
+        home.insert(name.to_owned(), is_bundled_file(file));
+    };
+    for m in doc.pool.all_messages() {
+        let file = m.parent_file();
+        put(m.full_name(), file.name());
+        for f in m.fields() {
+            put(f.full_name(), file.name());
+        }
+        for o in m.oneofs() {
+            put(o.full_name(), file.name());
+        }
+    }
+    for e in doc.pool.all_enums() {
+        let file = e.parent_file();
+        put(e.full_name(), file.name());
+        for v in e.values() {
+            put(v.full_name(), file.name());
+        }
+    }
+    for s in doc.pool.services() {
+        let file = s.parent_file();
+        put(s.full_name(), file.name());
+        for rpc in s.methods() {
+            put(rpc.full_name(), file.name());
+        }
+    }
+    for x in doc.pool.all_extensions() {
+        put(x.full_name(), x.parent_file().name());
+    }
+    let mut package_bundled: HashMap<String, bool> = HashMap::new();
+    for f in doc.pool.files() {
+        *package_bundled
+            .entry(f.package_name().to_owned())
+            .or_insert(true) &= is_bundled_file(f.name());
+    }
+    contract
+        .entities
+        .iter()
+        .filter(|e| match e.attributes["kind"].as_str() {
+            Some("file") => is_bundled_file(&e.name),
+            Some("package") => package_bundled.get(e.name.as_str()) == Some(&true),
+            _ => home.get(&e.name) == Some(&true),
+        })
+        .map(|e| e.id.clone())
+        .collect()
 }
 
 fn package_entity(package: &str) -> Entity {

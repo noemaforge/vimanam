@@ -1007,3 +1007,95 @@ fn symlinked_protos_compile_diff_and_enforce_shadowing_identically() {
         .assert()
         .success();
 }
+
+#[test]
+fn streaming_changes_fail_wire_gate() {
+    let t = tempfile::tempdir().unwrap();
+    let a = file(
+        &t,
+        "old.proto",
+        "syntax=\"proto3\"; message M {} service S { rpc R(M) returns (M); }",
+    );
+    for (name, rpc) in [
+        ("client.proto", "rpc R(stream M) returns (M);"),
+        ("server.proto", "rpc R(M) returns (stream M);"),
+    ] {
+        let b = file(
+            &t,
+            name,
+            &format!("syntax=\"proto3\"; message M {{}} service S {{ {rpc} }}"),
+        );
+        for scope in ["wire", "source", "all"] {
+            binary()
+                .arg("diff")
+                .arg(&a)
+                .arg(&b)
+                .args(["--fail-on-breaking", "--breaking", scope])
+                .assert()
+                .code(3);
+        }
+    }
+}
+
+#[test]
+fn mixed_descriptor_and_source_ignore_bundled_descriptor_drift() {
+    for (old, new) in [
+        ("custom-options.pb", "custom-options.proto"),
+        ("custom-options.proto", "custom-options.pb"),
+    ] {
+        let output = binary()
+            .env("PATH", "")
+            .arg("diff")
+            .arg(fixture(old))
+            .arg(fixture(new))
+            .args(["--format", "json", "--fail-on-breaking"])
+            .assert()
+            .success()
+            .get_output()
+            .stdout
+            .clone();
+        let json: Value = serde_json::from_slice(&output).unwrap();
+        assert_eq!(json["changes"], Value::Array(vec![]), "{old} -> {new}");
+    }
+
+    let t = tempfile::tempdir().unwrap();
+    let changed = file(
+        &t,
+        "custom-options.proto",
+        &fs::read_to_string(fixture("custom-options.proto"))
+            .unwrap()
+            .replace(
+                "google.protobuf.Timestamp created_at = 2",
+                "string created_at = 2",
+            ),
+    );
+    let output = binary()
+        .arg("diff")
+        .arg(fixture("custom-options.pb"))
+        .arg(&changed)
+        .args([
+            "--format",
+            "json",
+            "--fail-on-breaking",
+            "--breaking",
+            "wire",
+        ])
+        .assert()
+        .code(3)
+        .get_output()
+        .stdout
+        .clone();
+    let json: Value = serde_json::from_slice(&output).unwrap();
+    let changes = json["changes"].as_array().unwrap();
+    assert!(
+        changes
+            .iter()
+            .all(|c| c["native"]["full_name"] == "demo.v1.Item.created_at"),
+        "{changes:#?}"
+    );
+    assert!(
+        changes
+            .iter()
+            .any(|c| c["native_kind"] == "FIELD_SAME_TYPE")
+    );
+}
