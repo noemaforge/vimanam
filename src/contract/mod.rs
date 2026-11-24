@@ -473,6 +473,10 @@ pub(super) fn semantic_attributes(value: &Value) -> Value {
                     )
                 })
                 .unwrap_or_else(|| child.clone())
+        } else if key == "type" {
+            let mut union = child.clone();
+            crate::utils::canonicalize_type_union(&mut union);
+            union
         } else if SCHEMA_CHILDREN.contains(&key.as_str()) {
             semantic_attributes(child)
         } else if SCHEMA_ARRAYS.contains(&key.as_str()) {

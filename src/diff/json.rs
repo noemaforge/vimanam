@@ -587,6 +587,9 @@ fn target_and_member(pointer: &str) -> (JsonTarget, Option<String>) {
         Location::Type => (JsonTarget::Type, None),
         Location::RequiredElement => (JsonTarget::RequiredMember, member()),
         Location::EnumElement => (JsonTarget::EnumMember, member()),
+        // A whole `enum` keyword gained or lost; `other` keeps the published
+        // target vocabulary unchanged.
+        Location::Enum => (JsonTarget::Other, None),
         Location::Property => (JsonTarget::Property, member()),
         Location::AdditionalProperties => (JsonTarget::AdditionalProperties, None),
         Location::Nullable => (JsonTarget::Nullable, None),

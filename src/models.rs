@@ -54,8 +54,9 @@ pub enum AdditionalProperties {
 }
 
 /// Deserializes an OpenAPI `type` as either a string (2.0/3.0) or an array of
-/// strings (3.1, e.g. `["string", "null"]`), preserving all non-`"null"` types
-/// as a pipe-separated string so union schemas are represented in full.
+/// strings (3.1, e.g. `["string", "null"]`). Array members are deduplicated in
+/// spec order and kept, `"null"` included, as a ` | `-separated string;
+/// [`Schema`]'s `Deserialize` then moves `"null"` into `nullable` (#166).
 fn deserialize_optional_type<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
 where
     D: serde::Deserializer<'de>,
@@ -71,14 +72,65 @@ where
         None => None,
         Some(TypeField::Single(s)) => Some(s),
         Some(TypeField::Multi(types)) => {
-            let non_null_types: Vec<String> = types.into_iter().filter(|t| t != "null").collect();
-            if non_null_types.is_empty() {
+            let mut members: Vec<String> = Vec::with_capacity(types.len());
+            for member in types {
+                if !members.contains(&member) {
+                    members.push(member);
+                }
+            }
+            if members.is_empty() {
                 None
             } else {
-                Some(non_null_types.join(" | "))
+                Some(members.join(TYPE_UNION_SEPARATOR))
             }
         }
     })
+}
+
+/// Separator between the members of a multi-type (`type: [...]`) schema in
+/// [`Schema::schema_type`].
+pub(crate) const TYPE_UNION_SEPARATOR: &str = " | ";
+
+impl<'de> Deserialize<'de> for Schema {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let mut schema = Schema::deserialize(deserializer)?;
+        schema.normalize_null_type();
+        Ok(schema)
+    }
+}
+
+impl Serialize for Schema {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        Schema::serialize(self, serializer)
+    }
+}
+
+impl Schema {
+    /// OpenAPI 3.1 spells nullability as a `"null"` member of a `type` array.
+    /// Fold it into `nullable: true` so `["string", "null"]` reads, renders and
+    /// diffs exactly like OAS 3.0 `type: string, nullable: true`. A lone
+    /// `["null"]` stays the `null` type.
+    fn normalize_null_type(&mut self) {
+        let Some(schema_type) = &self.schema_type else {
+            return;
+        };
+        if !schema_type.contains(TYPE_UNION_SEPARATOR) {
+            return;
+        }
+        let members: Vec<&str> = schema_type.split(TYPE_UNION_SEPARATOR).collect();
+        if !members.contains(&"null") {
+            return;
+        }
+        let non_null: Vec<&str> = members.into_iter().filter(|t| *t != "null").collect();
+        self.schema_type = Some(non_null.join(TYPE_UNION_SEPARATOR));
+        self.nullable = Some(true);
+    }
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -194,7 +246,10 @@ pub struct Parameter {
 // via `..Schema::default()`); serde does not consult it during deserialization
 // — missing fields fall back to `Option`/empty-map defaults on their own.
 /// A source schema with property order and unknown metadata preserved.
+// The derives generate inherent `Schema::deserialize` / `serialize`
+// (`remote = "Self"`); the trait impls above wrap them to normalise 3.1 types.
 #[derive(Debug, Default, Deserialize, Serialize, Clone)]
+#[serde(remote = "Self")]
 pub struct Schema {
     /// Declared title.
     #[serde(rename = "title", skip_serializing_if = "Option::is_none")]
@@ -208,7 +263,8 @@ pub struct Schema {
         deserialize_with = "deserialize_optional_type",
         skip_serializing_if = "Option::is_none"
     )]
-    /// Type keyword, normalized from supported OAS 3.1 type arrays.
+    /// Type keyword. An OAS 3.1 type array keeps its non-`"null"` members in
+    /// spec order joined by `" | "`; a `"null"` member sets [`Self::nullable`].
     pub schema_type: Option<String>,
     /// Optional format annotation such as `int64` or `date-time`.
     #[serde(rename = "format", skip_serializing_if = "Option::is_none")]

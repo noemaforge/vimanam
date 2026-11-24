@@ -3,6 +3,7 @@ use serde_json::Value;
 
 use crate::models::{
     ApiDocumentation, OpenApiSpec, Parameter, PathItem, RequestBody, Response, Schema,
+    TYPE_UNION_SEPARATOR,
 };
 
 /// Decodes the escape sequences in a JSON Pointer reference token: `~1` → `/`
@@ -236,7 +237,8 @@ const SET_KEYS: [&str; 2] = ["required", "enum"];
 /// semantically equal schemas compare equal and, when they differ, the
 /// differences are reported in a stable order:
 ///
-/// - `required` and `enum` arrays are sorted (their order carries no meaning);
+/// - `required` and `enum` arrays are sorted (their order carries no meaning),
+///   and so are the members of a multi-type `type` ([`canonicalize_type_union`]);
 /// - `description`, `title`, `example`, `examples`, `deprecated` and every
 ///   `x-*` extension are removed from schema objects (never from the property
 ///   name maps under `properties`, where such a key is a field name);
@@ -244,6 +246,26 @@ const SET_KEYS: [&str; 2] = ["required", "enum"];
 ///   serialised its unmodelled fields.
 pub(crate) fn canonicalize_schema_value(value: &mut Value) {
     canonicalize_schema(value);
+}
+
+/// Sorts and deduplicates the members of a multi-type `type` value, either the
+/// model's `"string | integer"` form or a raw JSON Schema array: JSON Schema
+/// `type` arrays are sets, so reordering one is not a change (#166). Single
+/// types are left alone.
+pub(crate) fn canonicalize_type_union(value: &mut Value) {
+    match value {
+        Value::String(union) if union.contains(TYPE_UNION_SEPARATOR) => {
+            let mut members: Vec<&str> = union.split(TYPE_UNION_SEPARATOR).collect();
+            members.sort_unstable();
+            members.dedup();
+            *union = members.join(TYPE_UNION_SEPARATOR);
+        }
+        Value::Array(members) => {
+            members.sort_by_cached_key(|member| member.to_string());
+            members.dedup();
+        }
+        _ => {}
+    }
 }
 
 fn canonicalize_schema(value: &mut Value) {
@@ -269,6 +291,8 @@ fn canonicalize_schema(value: &mut Value) {
                     canonicalize_schema(item);
                 }
             }
+        } else if key == "type" {
+            canonicalize_type_union(child);
         } else if SET_KEYS.contains(&key.as_str())
             && let Value::Array(items) = child
         {
@@ -448,6 +472,48 @@ mod tests {
         let mut value = value;
         canonicalize_schema_value(&mut value);
         value
+    }
+
+    // #166: a 3.1 `"null"` type member becomes `nullable`, matching the 3.0
+    // spelling, and union members compare as a set.
+    #[test]
+    fn type_array_null_member_becomes_nullable() {
+        let value = |v: Value| serde_json::to_value(schema(v)).unwrap();
+        assert_eq!(
+            value(json!({"type": ["string", "null"]})),
+            json!({"type": "string", "nullable": true})
+        );
+        assert_eq!(
+            value(json!({"type": ["string", "null"]})),
+            value(json!({"type": "string", "nullable": true}))
+        );
+        assert_eq!(value(json!({"type": ["null"]})), json!({"type": "null"}));
+        assert_eq!(
+            value(json!({"type": ["integer", "null", "integer"]})),
+            json!({"type": "integer", "nullable": true})
+        );
+        assert_eq!(value(json!({"type": "null"})), json!({"type": "null"}));
+        assert_eq!(
+            value(json!({"type": ["string", "integer"]})),
+            json!({"type": "string | integer"})
+        );
+    }
+
+    #[test]
+    fn canonicalize_sorts_type_union_members() {
+        assert_eq!(
+            canonical(json!({"type": "string | integer"})),
+            canonical(json!({"type": "integer | string"}))
+        );
+        assert_eq!(
+            canonical(json!({"type": ["string", "integer", "string"]})),
+            json!({"type": ["integer", "string"]})
+        );
+        // A property named `type` is a field name, not a type keyword.
+        assert_eq!(
+            canonical(json!({"properties": {"type": {"type": "string"}}})),
+            json!({"properties": {"type": {"type": "string"}}})
+        );
     }
 
     #[test]

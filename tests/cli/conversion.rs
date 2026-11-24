@@ -771,6 +771,30 @@ fn type_array_parameter_parses() {
         ));
 }
 
+// #166: OpenAPI 3.1 type arrays keep their `"null"` member (as `| null`),
+// a lone `["null"]` stays `null`, unions keep spec order, and duplicate
+// members collapse.
+#[test]
+fn type_array_renders_null_and_union_members() {
+    vimanam()
+        .arg(TYPE_ARRAY)
+        .args(["--detail", "full", "--include-schemas", "--no-report"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "| `Item.label` | string \\| null | No | - |",
+        ))
+        .stdout(predicate::str::contains(
+            "| `Item.nothing` | null | No | - |",
+        ))
+        .stdout(predicate::str::contains(
+            "| `Item.key` | string \\| integer | No | - |",
+        ))
+        .stdout(predicate::str::contains(
+            "| `Item.count` | integer \\| null | No | - |",
+        ));
+}
+
 // #56: an operation missing its `responses` block no longer fails the whole
 // document; both operations are still rendered.
 #[test]

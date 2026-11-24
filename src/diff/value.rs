@@ -44,6 +44,9 @@ pub(crate) enum Location {
     RequiredElement,
     /// A member of an `enum` array.
     EnumElement,
+    /// A whole `enum` keyword, present on one side only (#175 review): the
+    /// schema gained or lost its value restriction.
+    Enum,
     /// A named property (the schema under `properties/<name>`).
     Property,
     /// An `additionalProperties` keyword.
@@ -101,6 +104,7 @@ impl Node {
             Node::Schema => match segment {
                 "type" => Location::Type,
                 "nullable" => Location::Nullable,
+                "enum" => Location::Enum,
                 "additionalProperties" => Location::AdditionalProperties,
                 _ => Location::Other,
             },
@@ -126,17 +130,37 @@ pub(crate) fn locate(pointer: &str) -> Location {
 }
 
 /// The value to compare `present` against when the key for `child` exists on
-/// only one side of a schema object: an empty set for `required`/`enum` and an
-/// empty map for `properties`, so that members are reported one by one
+/// only one side of a schema object: an empty set for `required` and an empty
+/// map for `properties`, so that members are reported one by one
 /// (`/required/x`, `/properties/x`) instead of as a single opaque change at
 /// `/required` or `/properties`. `None` for every other node, which is then
-/// reported whole.
+/// reported whole. That includes `enum`: a missing `enum` permits *every*
+/// value, not none, so gaining or losing the keyword is one `/enum` change
+/// whose direction is the opposite of a member being added or removed.
 fn empty_counterpart(child: Node, present: &Value) -> Option<Value> {
     match child {
-        Node::Set(_) if present.is_array() => Some(Value::Array(Vec::new())),
+        Node::Set(Location::RequiredElement) if present.is_array() => {
+            Some(Value::Array(Vec::new()))
+        }
         Node::PropertyMap if present.is_object() => Some(Value::Object(serde_json::Map::new())),
         _ => None,
     }
+}
+
+/// True when `pointer` addresses a `not` keyword or anything beneath one,
+/// walked with the schema grammar so a *property* named `not` does not count.
+/// Under `not` every compatibility direction is reversed (narrowing the
+/// excluded set widens the schema), so callers leave such changes to review.
+pub(crate) fn under_not(pointer: &str) -> bool {
+    let mut node = Node::Schema;
+    for segment in pointer.split('/').skip(1) {
+        let segment = decode_json_pointer_token(segment);
+        if node == Node::Schema && segment == "not" {
+            return true;
+        }
+        node = node.child(&segment);
+    }
+    false
 }
 
 /// Encodes a JSON Pointer reference token (RFC 6901): `~` → `~0`, `/` → `~1`.
@@ -167,8 +191,10 @@ fn push_segment(path: &mut String, segment: &str) -> usize {
 ///
 /// Objects are compared key-wise: the old object's keys in order, then any key
 /// only the new object has. Where the schema grammar says a keyword sits, the
-/// `required` and `enum` arrays are compared as sets (a missing array counts as
-/// empty), reporting each member added or removed at `/required/<member>`;
+/// `required` and `enum` arrays are compared as sets, reporting each member
+/// added or removed at `/required/<member>` (a missing `required` counts as
+/// empty; a missing `enum` is reported whole at `/enum`, see
+/// [`empty_counterpart`]);
 /// likewise a `properties` map present on one side only reports each property
 /// (`/properties/<name>`) rather than the map as a whole. A *property* named
 /// `required` or `properties` gets none of that treatment (see [`Node`]).
@@ -386,6 +412,26 @@ mod tests {
     }
 
     #[test]
+    fn diff_values_reports_one_sided_enum_whole() {
+        // A missing `enum` allows every value, so losing or gaining the
+        // keyword is one change at `/enum`, not per-member removals/additions.
+        assert_eq!(
+            value_changes(
+                &json!({"properties": {"s": {"type": "string", "enum": ["a", "b"]}}}),
+                &json!({"properties": {"s": {"type": "string"}}}),
+            ),
+            vec![removed("/properties/s/enum", json!(["a", "b"]))]
+        );
+        assert_eq!(
+            value_changes(
+                &json!({"type": "string"}),
+                &json!({"type": "string", "enum": ["a"]})
+            ),
+            vec![added("/enum", json!(["a"]))]
+        );
+    }
+
+    #[test]
     fn diff_values_escapes_pointer_tokens() {
         let changes = value_changes(
             &json!({"properties": {"a/b": {"type": "string"}}}),
@@ -449,6 +495,14 @@ mod tests {
         assert_eq!(locate("/required/x"), Location::RequiredElement);
         assert_eq!(locate("/properties/required"), Location::Property);
         assert_eq!(locate("/properties/s/enum/a"), Location::EnumElement);
+        assert_eq!(locate("/properties/s/enum"), Location::Enum);
+        assert_eq!(locate("/properties/enum"), Location::Property);
+        assert!(under_not("/not"));
+        assert!(under_not("/properties/a/not/enum/x"));
+        assert!(under_not("/allOf/0/not/type"));
+        assert!(!under_not("/properties/not"));
+        assert!(!under_not("/properties/not/type"));
+        assert!(!under_not("/notes"));
         assert_eq!(
             locate("/additionalProperties"),
             Location::AdditionalProperties

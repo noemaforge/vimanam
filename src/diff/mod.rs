@@ -50,7 +50,7 @@ mod render;
 mod value;
 
 pub use render::write_diff;
-pub(crate) use value::{Location, diff_values, locate};
+pub(crate) use value::{Location, diff_values, locate, under_not};
 pub use value::{ValueChange, ValueChangeKind};
 
 use std::collections::{HashMap, HashSet};
@@ -330,6 +330,8 @@ impl SpecDiff {
 /// | property added | Non-breaking |
 /// | `enum` member removed | Breaking |
 /// | `enum` member added | Non-breaking |
+/// | `enum` keyword added where none existed (narrows accepted values) | Breaking |
+/// | `enum` keyword removed entirely (accepts any value) | Non-breaking |
 /// | `additionalProperties` became `false` | Breaking |
 /// | `nullable` became `true` | Non-breaking |
 /// | `nullable` became `false` (clients sending `null` now fail) | Breaking |
@@ -343,13 +345,19 @@ impl SpecDiff {
 /// | property removed | Breaking |
 /// | property added | Non-breaking |
 /// | `type` changed at any pointer | Breaking |
-/// | `enum` member removed | Breaking |
+/// | `enum` member removed (the server returns a subset of what clients already handle) | Non-breaking |
 /// | `enum` member added (strictly typed clients reject unknown values) | Review |
+/// | `enum` keyword added where none existed (narrows what the server returns) | Non-breaking |
+/// | `enum` keyword removed entirely (the server may return any value) | Review |
 /// | member removed from `required` (consumers relied on it) | Breaking |
 /// | member added to `required` | Non-breaking |
 /// | `nullable` became `true` | Breaking |
 /// | `nullable` became `false` | Non-breaking |
 /// | anything else | Review |
+///
+/// Any change at or beneath a `not` keyword (in either table) is Review: `not`
+/// reverses every direction above, so narrowing the excluded schema widens
+/// what is accepted or returned, and vice versa.
 ///
 /// When a property is removed, the companion "removed from `required`" row for
 /// the same property is not reported at all (see `value_changes`).
@@ -404,6 +412,10 @@ fn became(kind: &ValueChangeKind, flag: bool) -> bool {
 fn request_schema_severity(change: &ValueChange) -> Severity {
     use ValueChangeKind::{Added, Removed};
 
+    if under_not(&change.pointer) {
+        return Severity::Review;
+    }
+
     match (locate(&change.pointer), &change.kind) {
         (Location::RequiredElement, Added(_)) => Severity::Breaking,
         (Location::RequiredElement, Removed(_)) => Severity::NonBreaking,
@@ -412,6 +424,8 @@ fn request_schema_severity(change: &ValueChange) -> Severity {
         (Location::Property, Added(_)) => Severity::NonBreaking,
         (Location::EnumElement, Removed(_)) => Severity::Breaking,
         (Location::EnumElement, Added(_)) => Severity::NonBreaking,
+        (Location::Enum, Added(_)) => Severity::Breaking,
+        (Location::Enum, Removed(_)) => Severity::NonBreaking,
         (Location::AdditionalProperties, kind) if became(kind, false) => Severity::Breaking,
         (Location::Nullable, kind) if became(kind, true) => Severity::NonBreaking,
         (Location::Nullable, kind) if became(kind, false) => Severity::Breaking,
@@ -431,12 +445,23 @@ fn response_schema_severity(change: &ValueChange) -> Severity {
         return Severity::Breaking;
     }
 
+    if under_not(&change.pointer) {
+        return Severity::Review;
+    }
+
     match (locate(&change.pointer), &change.kind) {
         (Location::Property, Removed(_)) => Severity::Breaking,
         (Location::Property, Added(_)) => Severity::NonBreaking,
         (Location::Type, _) => Severity::Breaking,
-        (Location::EnumElement, Removed(_)) => Severity::Breaking,
+        // Narrowing what the server returns cannot break a client (#169). A
+        // component shared with a request still reports its request-side
+        // removal as breaking.
+        (Location::EnumElement, Removed(_)) => Severity::NonBreaking,
         (Location::EnumElement, Added(_)) => Severity::Review,
+        // Dropping the whole restriction widens the response like adding a
+        // member does; adding one narrows it.
+        (Location::Enum, Removed(_)) => Severity::Review,
+        (Location::Enum, Added(_)) => Severity::NonBreaking,
         (Location::RequiredElement, Removed(_)) => Severity::Breaking,
         (Location::RequiredElement, Added(_)) => Severity::NonBreaking,
         (Location::Nullable, kind) if became(kind, true) => Severity::Breaking,
@@ -1399,6 +1424,11 @@ mod tests {
 
     #[test]
     fn severity_request_schema_breaking_rows() {
+        // An `enum` restriction appeared: values accepted before now fail.
+        assert_eq!(
+            request(added("/properties/s/enum", json!(["a"]))),
+            Severity::Breaking
+        );
         assert_eq!(
             request(added("/required/x", json!("x"))),
             Severity::Breaking
@@ -1450,6 +1480,11 @@ mod tests {
 
     #[test]
     fn severity_request_schema_non_breaking_rows() {
+        // The `enum` restriction went away: every value is accepted.
+        assert_eq!(
+            request(removed("/properties/s/enum", json!(["a", "b"]))),
+            Severity::NonBreaking
+        );
         assert_eq!(
             request(added("/properties/x", json!({"type": "string"}))),
             Severity::NonBreaking
@@ -1471,6 +1506,15 @@ mod tests {
 
     #[test]
     fn severity_request_schema_review_rows() {
+        // `not` reverses direction: dropping an excluded enum forbids more.
+        assert_eq!(
+            request(removed("/properties/s/not/enum", json!(["a"]))),
+            Severity::Review
+        );
+        assert_eq!(
+            request(added("/not", json!({"type": "string"}))),
+            Severity::Review
+        );
         assert_eq!(
             request(changed("/format", json!("float"), json!("double"))),
             Severity::Review
@@ -1521,7 +1565,6 @@ mod tests {
             )),
             Severity::Breaking
         );
-        assert_eq!(response(removed("/enum/a", json!("a"))), Severity::Breaking);
         assert_eq!(
             response(removed("/required/x", json!("x"))),
             Severity::Breaking
@@ -1543,6 +1586,11 @@ mod tests {
 
     #[test]
     fn severity_response_schema_non_breaking_rows() {
+        // A new `enum` restriction narrows what the server returns.
+        assert_eq!(
+            response(added("/properties/s/enum", json!(["a"]))),
+            Severity::NonBreaking
+        );
         assert_eq!(
             response(added("/properties/pricing", json!({"type": "object"}))),
             Severity::NonBreaking
@@ -1559,10 +1607,34 @@ mod tests {
             response(removed("/nullable", json!(true))),
             Severity::NonBreaking
         );
+        // #169: the server stops returning a value; every value clients still
+        // receive was valid before.
+        assert_eq!(
+            response(removed("/enum/a", json!("a"))),
+            Severity::NonBreaking
+        );
+        assert_eq!(
+            response(removed("/properties/status/enum/0", json!("retired"))),
+            Severity::NonBreaking
+        );
     }
 
     #[test]
     fn severity_response_schema_review_rows() {
+        // `not` reverses direction: a smaller excluded set widens the output.
+        assert_eq!(
+            response(removed("/not/enum/a", json!("a"))),
+            Severity::Review
+        );
+        assert_eq!(
+            response(removed("/properties/s/not/properties/x", json!({}))),
+            Severity::Review
+        );
+        // Dropping the restriction widens the response like a new member.
+        assert_eq!(
+            response(removed("/properties/s/enum", json!(["a", "b"]))),
+            Severity::Review
+        );
         assert_eq!(
             response(changed("/format", json!("float"), json!("double"))),
             Severity::Review
