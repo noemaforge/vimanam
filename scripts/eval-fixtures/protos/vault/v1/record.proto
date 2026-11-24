@@ -1,0 +1,32 @@
+syntax = "proto3";
+
+package vault.v1;
+
+import "vault/v1/common.proto";
+
+// Individual immutable audit event entry.
+message AuditRecord {
+  string event_ulid = 1 [json_name = "eventUlid"];
+  string principal_urn = 2 [json_name = "principalUrn"];
+  string action_verb = 3 [json_name = "actionVerb"];
+  int64 occurred_unix_ms = 4 [json_name = "occurredUnixMs"];
+  DigestStamp payload_digest = 5 [json_name = "payloadDigest"];
+}
+
+// Per-partition failure metadata when an audit export completes partially.
+message PartialFailureDetail {
+  // Count of audit records skipped due to corruption or access errors.
+  int64 skipped_record_count = 4 [json_name = "skippedRecordCount"];
+  // Storage shard identifier where the failure occurred.
+  string failing_shard_key = 7 [json_name = "failingShardKey"];
+  // Operator-facing diagnostic text.
+  string diagnostic_note = 8 [json_name = "diagnosticNote"];
+}
+
+// High-level summary of an exported audit bundle.
+message BundleSummary {
+  int64 exported_record_count = 1 [json_name = "exportedRecordCount"];
+  DigestStamp archive_digest = 2 [json_name = "archiveDigest"];
+  // Non-empty when one or more partitions failed during export.
+  PartialFailureDetail partial_failure = 3 [json_name = "partialFailure"];
+}

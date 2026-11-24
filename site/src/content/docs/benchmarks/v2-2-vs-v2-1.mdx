@@ -1,0 +1,107 @@
+---
+title: "Version comparison: v2.2.0 vs v2.1.0"
+description: "Head-to-head upgrade analysis comparing vimanam 2.2.0 against 2.1.0 across Protobuf compilation, Git-ref scaling, .proto comments, OpenAPI YAML, and GraphQL."
+---
+
+import { Aside } from '@astrojs/starlight/components';
+import BenchmarkChart from '../../../components/BenchmarkChart.astro';
+import OutputDiff from '../../../components/OutputDiff.astro';
+
+Vimanam `2.2.0` replaced external `protoc` with pure-Rust `protox 0.10`, replaced `serde_norway` (wrapping C-ported `unsafe-libyaml-norway`) with `serde-saphyr 2.2` (`#![forbid(unsafe_code)]`), replaced unmaintained `graphql-parser 0.4` with `apollo-parser 0.8`, added `.proto` source comment rendering, and resolved `RUSTSEC-2026-0486`.
+
+All comparisons below use `hyperfine 2.0.0` medians and Q1–Q3 interquartile ranges (raw captures in [`scripts/benchmark-v22-results.json`](https://github.com/noemaforge/vimanam/blob/main/scripts/benchmark-v22-results.json)).
+
+---
+
+## Protocol Buffers: 4.9×–6.3× faster `.proto` compilation
+
+Eliminating `protoc` subprocess spawns cuts compile-and-render medians sharply across all tested `.proto` targets while running with an empty `PATH` (verified with `PATH=""`):
+
+<BenchmarkChart
+  title="Protobuf compile & render median latency: v2.2.0 (protox 0.10) vs v2.1.0 (protoc 36.2)"
+  unit="ms"
+  xAxisLabel="Median wall time across 10 runs, lower is better"
+  primaryLabel="v2.2.0 (protox 0.10, zero protoc)"
+  baselineLabel="v2.1.0 (protoc 36.2)"
+  caption="hyperfine 2.0.0 · 10 runs, warmup 2 · all .proto pairs have disjoint IQRs; .pb descriptor IQRs overlap"
+  items={[
+    { label: 'gRPC Health v1.20.0 (.proto)', primary: 7.65, baseline: 47.96, note: '6.27× · disjoint IQRs' },
+    { label: 'OTel Collector TraceService (.proto)', primary: 8.20, baseline: 45.56, note: '5.56× · disjoint IQRs' },
+    { label: 'OTel Collector LogsService (.proto)', primary: 8.86, baseline: 45.92, note: '5.18× · disjoint IQRs' },
+    { label: 'OTel Collector MetricsService (.proto)', primary: 9.48, baseline: 46.70, note: '4.93× · disjoint IQRs' },
+    { label: 'gRPC Health v1.20.0 (.pb descriptor)', primary: 8.51, baseline: 7.13, note: 'IQRs overlap (6.7–9.2 vs 7.9–9.5)' },
+  ]}
+/>
+
+### Git-ref `.proto` diff scaling (measured)
+
+In `v2.1.0`, Git-ref `.proto` diffs extracted every committed `.proto` file in the repository to temporary directories on disk for both refs before invoking `protoc`. In `v2.2.0`, `GitFileResolver` verifies committed `.proto` file modes (rejecting symlinks) and lazily reads only imported blobs in memory:
+
+| Git-ref `.proto` diff benchmark | Committed `.proto` files | v2.1.0 median (IQR) | v2.2.0 median (IQR) | Median speedup | Instructions (2.1 → 2.2) | Exact diff parity |
+|---|---:|---:|---:|---:|---:|---|
+| **OpenTelemetry Proto** (`d31f7ac~1..d31f7ac`, `trace.proto`) | `11` | `2,164.4 ms` (`2,133–2,173`) | **`798.4 ms`** (`782–808`) | **`2.71×`** | `736.8M -> 321.2M` | Exact (`1` change) |
+| **Synthetic repo** (`scripts/benchmark-public.py`, 4 imported) | `200` | `29,545.6 ms` (`28,744–29,615`) | **`966.2 ms`** (`946–990`) | **`30.58×`** | `7,508.7M -> 271.2M` | Exact (`1` change) |
+
+---
+
+## Protobuf documentation quality: `.proto` comments and `$ref` field notes
+
+`v2.2.0` retains `source_code_info` from `protox` and renders leading/trailing `.proto` comments on services, RPCs, messages, fields, and enum values, along with field numbers and `json_name` notes on `$ref` rows:
+
+<OutputDiff
+  title="grpc/grpc health-v1.20.0.proto — Health.Watch Markdown (v2.1.0 -> v2.2.0)"
+  lines={[
+    { kind: 'ctx', text: '### grpc.health.v1.Health.Watch' },
+    { kind: 'ctx', text: '**Operation:** RPC grpc.health.v1.Health.Watch' },
+    { kind: 'del', text: '**Description:** server streaming; input `HealthCheckRequest` -> result `HealthCheckResponse`' },
+    { kind: 'add', text: '**Description:** Performs a watch for the serving status of the requested service.' },
+    { kind: 'add', text: 'The server will immediately send back a message indicating the current serving status...' },
+    { kind: 'add', text: 'server streaming; input `HealthCheckRequest` -> result `HealthCheckResponse`' },
+    { kind: 'ctx', text: '### grpc.health.v1.HealthCheckResponse' },
+    { kind: 'del', text: '| `HealthCheckResponse.status` | [ServingStatus] | No | `UNKNOWN` = 0, `SERVING` = 1, ... |' },
+    { kind: 'add', text: '| `HealthCheckResponse.status` | [ServingStatus] | No | Field #1; JSON name `status` |' },
+    { kind: 'ctx', text: '### grpc.health.v1.HealthCheckResponse.ServingStatus' },
+    { kind: 'del', text: '| `ServingStatus` | enum | - | `UNKNOWN` = 0, `SERVING` = 1, `NOT_SERVING` = 2, `SERVICE_UNKNOWN` = 3 |' },
+    { kind: 'add', text: '| `ServingStatus` | enum | - | `UNKNOWN` = 0, `SERVING` = 1, `NOT_SERVING` = 2, `SERVICE_UNKNOWN` = 3 (Used only by the Watch method.) |' },
+  ]}
+/>
+
+<OutputDiff
+  title="OpenTelemetry trace_service.proto — ExportTraceServiceResponse schema (v2.1.0 -> v2.2.0)"
+  lines={[
+    { kind: 'ctx', text: '## opentelemetry.proto.collector.trace.v1.ExportTraceServiceResponse' },
+    { kind: 'del', text: '| `partial_success` | [ExportTracePartialSuccess] | No | Field #1; JSON name `partialSuccess`; explicit presence |' },
+    { kind: 'add', text: '| `partial_success` | [ExportTracePartialSuccess] | No | The details of a partially successful export request. If the request is only partially accepted... (Field #1; JSON name `partialSuccess`; explicit presence) |' },
+    { kind: 'ctx', text: '### opentelemetry.proto.collector.trace.v1.ExportTracePartialSuccess' },
+    { kind: 'del', text: '| `rejected_spans` | int64 | No | Field #1; JSON name `rejectedSpans` |' },
+    { kind: 'add', text: '| `rejected_spans` | int64 | No | The number of rejected spans. A `rejected_<signal>` field holding a `0` value indicates that the request was fully accepted. (Field #1; JSON name `rejectedSpans`) |' },
+    { kind: 'del', text: '| `error_message` | string | No | Field #2; JSON name `errorMessage` |' },
+    { kind: 'add', text: '| `error_message` | string | No | A developer-facing human-readable message in English... (Field #2; JSON name `errorMessage`) |' },
+  ]}
+/>
+
+---
+
+## OpenAPI and GraphQL: v2.2.0 vs v2.1.0 (median, IQR, and RSS)
+
+Pairs whose interquartile ranges (Q1–Q3) overlap are marked as parity rather than speedups or regressions:
+
+| Public specification | v2.1.0 median (IQR / RSS) | v2.2.0 median (IQR / RSS) | IQRs disjoint? | Parity & notable change |
+|---|---|---|---|---|
+| **Petstore OAS3** (`2.6 KB` JSON) | `7.90 ms` (`7.1–9.7` / `4.0 MB`) | `7.78 ms` (`7.2–8.2` / `4.1 MB`) | No (startup floor) | Byte-identical |
+| **Petstore OAS3** (`1.9 KB` YAML) | `8.96 ms` (`7.9–9.8` / `4.2 MB`) | `9.11 ms` (`7.9–9.4` / `5.1 MB`) | No (startup floor) | Byte-identical |
+| **OpenAI OpenAPI 3.0** (`1.3 MB` YAML) | **Failed (`exit 1`)** | **`45.33 ms`** (`44.0–46.2` / `23.5 MB`) | Pass vs fail | `serde_norway` rejected `-9223372036854776000` in `seed.minimum`; `serde-saphyr` parses cleanly |
+| **Stripe OpenAPI 3.0** (`7.9 MB` JSON) | `113.43 ms` (`111.6–114.5` / `124.2 MB`) | `111.00 ms` (`109.6–111.6` / `124.0 MB`) | No (parity) | Byte-identical (`1,456M` vs `1,454M` instr) |
+| **Stripe OpenAPI 3.0** (`6.3 MB` YAML) | **`193.56 ms`** (`192.1–196.4` / `152.0 MB`) | `206.67 ms` (`205.5–207.7` / **`121.9 MB`**) | **Yes (`+13.1 ms`, `+6.8%` slower)** | Byte-identical; **`-19.8%` RAM** and `-6.4%` CPU instructions (`3,026M -> 2,832M`); drops `unsafe-libyaml-norway` |
+| **SpaceX Land GraphQL** (`12 KB` SDL) | `11.27 ms` (`9.8–11.9` / `5.3 MB`) | `10.86 ms` (`9.2–12.2` / `5.1 MB`) | No (parity) | Byte-identical |
+| **GitHub GraphQL** (`1.2 MB` SDL) | **`52.77 ms`** (`51.5–53.6` / `23.5 MB`) | `64.85 ms` (`63.5–65.3` / `24.1 MB`) | **Yes (`+12.1 ms`, `+22.9%` slower)** | Byte-identical; `apollo-parser` adds `extend schema`, `@oneOf`, and lossless CST parsing |
+| **GitHub GraphQL** (`4.7 MB` Introspection) | `93.49 ms` (`90.4–95.0` / `44.7 MB`) | `93.34 ms` (`91.5–94.5` / `44.2 MB`) | No (parity) | Byte-identical |
+| **SpaceX Land SDL Diff** (`9` changes) | `33.51 ms` (`32.8–33.9` / `6.7 MB`) | `34.92 ms` (`33.4–35.3` / `6.8 MB`) | No (parity) | 100% exact `vc2_` change parity |
+| **GitHub GraphQL SDL Git-Ref Diff** (`a6de3c1..597478f`, `232` changes) | `803.24 ms` (`793.6–814.0` / `52.5 MB`) | `814.23 ms` (`808.7–822.6` / `54.3 MB`) | No (parity) | 100% exact `vc2_` change parity |
+| **GitHub GraphQL Introspection Git-Ref Diff** (`a6de3c1..597478f`) | `887.87 ms` (`872.8–896.6` / `71.2 MB`) | `895.84 ms` (`887.7–902.1` / `70.6 MB`) | No (parity) | 100% exact `vc2_` change parity |
+
+<Aside type="caution" title="Upgrade regressions and binary size trade-offs">
+  - **Binary size**: the `arm64` release binary grew from `7.24 MB` (`v2.1.0`) to `9.28 MB` (`v2.2.0`, `+2.04 MB`) to bundle `protox`, Google well-known descriptors, `apollo-parser`, `serde-saphyr`, and optional Nushell/manpage generators.
+  - **Large YAML parse time**: on Stripe `6.3 MB` YAML, `serde-saphyr` is `+13.1 ms` (`+6.8%`) slower by median while reducing peak RSS by `19.8%` and eliminating `unsafe-libyaml-norway` (`#![forbid(unsafe_code)]` lives on `serde-saphyr`, not crate-wide on `vimanam/src/`).
+  - **Large GraphQL SDL parse time**: `apollo-parser` adds `+12.1 ms` (`+22.9%`) on GitHub's `1.2 MB` SDL.
+</Aside>

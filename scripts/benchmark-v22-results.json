@@ -1312,6 +1312,30 @@
               1615.13
             ]
           }
+        },
+        "breaking_reconciliation": {
+          "vimanam_breaking_by_category": {
+            "result:enum_value_removed": 49,
+            "argument:enum_value_removed": 9,
+            "argument:field_required_changed": 2,
+            "argument:argument_type_changed": 2
+          },
+          "oasdiff_breaking_by_id": {
+            "request-property-const-added": 9,
+            "request-property-enum-value-removed": 9,
+            "request-property-any-of-removed": 2
+          },
+          "oasdiff_changelog_by_level_and_id": {
+            "level_1:response-property-const-added": 50,
+            "level_1:response-property-enum-value-removed": 50,
+            "level_3:request-property-const-added": 9,
+            "level_3:request-property-enum-value-removed": 9,
+            "level_1:response-optional-property-added": 4,
+            "level_3:request-property-any-of-removed": 2,
+            "level_1:request-property-any-of-added": 2,
+            "level_1:new-optional-request-property": 2
+          },
+          "root_cause_note": "58 of Vimanam 62 breaking changes (49 response + 9 request) and 18 of oasdiff 20 breaking changes (9 enum-removed + 9 const-added) come from OpenAI commit 2a24dea refactoring single-value enum:[\"x\"] to const:\"x\" (semantically equivalent in JSON Schema 2020-12); neither tool normalizes 1-element enum <-> const, and Vimanam classifies response enum removal as breaking while oasdiff classifies it as level-1 info. The remaining 2 real structural spend_limit anyOf changes emit 2 findings in oasdiff vs 4 element-wise findings in Vimanam."
         }
       },
       "stripe_7_9mb_probe": {
@@ -1738,7 +1762,12 @@
           "non_breaking": 204,
           "review": 17
         },
-        "vimanam_changes": 232
+        "vimanam_changes": 232,
+        "duplicate_field_verified_in_source": true,
+        "duplicate_field_lines": [
+          15003,
+          15153
+        ]
       },
       "smoke_matrix": [
         {

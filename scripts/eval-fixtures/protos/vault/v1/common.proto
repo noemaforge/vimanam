@@ -1,0 +1,17 @@
+syntax = "proto3";
+
+package vault.v1;
+
+// Cryptographic digest paired with its algorithm tag.
+message DigestStamp {
+  string algorithm = 1;
+  bytes raw_digest = 2 [json_name = "rawDigest"];
+}
+
+// Retention tier applied to exported audit archives.
+enum RetentionTier {
+  RETENTION_TIER_UNSPECIFIED = 0;
+  RETENTION_TIER_STANDARD_90D = 1;
+  RETENTION_TIER_REGULATED_7Y = 2;
+  RETENTION_TIER_LEGAL_HOLD = 5;
+}

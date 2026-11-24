@@ -1,0 +1,47 @@
+syntax = "proto3";
+
+package vault.v1;
+
+import "vault/v1/policy.proto";
+import "vault/v1/record.proto";
+
+// Requests a signed export bundle of immutable audit events.
+message ExportBundleRequest {
+  // Partition namespace to export (e.g. "prod-eu-ledger").
+  string partition_id = 1 [json_name = "partitionId"];
+  // Export masking and retention policy.
+  ExportPolicy export_policy = 2 [json_name = "exportPolicy"];
+  // Inclusive start epoch in milliseconds.
+  int64 from_epoch_ms = 3 [json_name = "fromEpochMs"];
+  // Exclusive end epoch in milliseconds.
+  int64 to_epoch_ms = 4 [json_name = "toEpochMs"];
+  // Optional sample records for dry-run verification.
+  repeated AuditRecord sample_records = 5 [json_name = "sampleRecords"];
+}
+
+// Result of an audit bundle export operation.
+message ExportBundleResponse {
+  // Opaque archive handle for download.
+  string bundle_handle = 1 [json_name = "bundleHandle"];
+  // Export counts, digest, and optional partial-failure diagnostics.
+  BundleSummary summary = 2;
+}
+
+// Checks whether a previously created bundle handle is still retained.
+message VerifyBundleRequest {
+  string bundle_handle = 1 [json_name = "bundleHandle"];
+}
+
+// Retention status returned by VerifyBundle.
+message VerifyBundleResponse {
+  bool valid = 1;
+  int64 expires_unix_ms = 2 [json_name = "expiresUnixMs"];
+}
+
+// Compliance archive export service.
+service AuditExportService {
+  // Exports audit events matching the requested time range and policy.
+  rpc ExportBundle(ExportBundleRequest) returns (ExportBundleResponse);
+  // Verifies signature and retention status of an existing bundle.
+  rpc VerifyBundle(VerifyBundleRequest) returns (VerifyBundleResponse);
+}

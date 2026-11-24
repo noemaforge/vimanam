@@ -1,0 +1,23 @@
+syntax = "proto3";
+
+package fleet.v2;
+
+// WGS-84 coordinate pair with vertical clearance metadata.
+message GeoPoint {
+  double latitude_deg = 1 [json_name = "latitudeDeg"];
+  double longitude_deg = 2 [json_name = "longitudeDeg"];
+  float altitude_m = 3 [json_name = "altitudeM"];
+}
+
+// Time window bounds in UTC seconds.
+message TimeSpan {
+  int64 start_unix_sec = 1 [json_name = "startUnixSec"];
+  int64 end_unix_sec = 2 [json_name = "endUnixSec"];
+}
+
+// Severity classification for route validation issues.
+enum ConstraintSeverity {
+  CONSTRAINT_SEVERITY_UNSPECIFIED = 0;
+  CONSTRAINT_SEVERITY_ADVISORY = 1;
+  CONSTRAINT_SEVERITY_HARD_BLOCK = 2;
+}

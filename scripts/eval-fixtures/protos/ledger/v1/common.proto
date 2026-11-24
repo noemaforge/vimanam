@@ -1,0 +1,23 @@
+syntax = "proto3";
+
+package ledger.v1;
+
+// Currency and settlement window identifiers shared across ledger RPCs.
+message ClearingWindow {
+  // Unique clearing cycle identifier (format: YYYYMMDD-NN).
+  string cycle_code = 1 [json_name = "cycleCode"];
+  // ISO-4217 three-letter currency code.
+  string currency_iso = 2 [json_name = "currencyIso"];
+  // Cutoff epoch timestamp in milliseconds.
+  int64 cutoff_epoch_ms = 3 [json_name = "cutoffEpochMs"];
+}
+
+// Settlement lifecycle state emitted by streaming ledger feeds.
+enum ClearingState {
+  CLEARING_STATE_UNSPECIFIED = 0;
+  CLEARING_STATE_QUEUED = 1;
+  CLEARING_STATE_MATCHED = 2;
+  CLEARING_STATE_SETTLED = 3;
+  // Returned only on WatchSettlements when a window pauses for manual audit.
+  CLEARING_STATE_FROZEN_FOR_AUDIT = 7;
+}

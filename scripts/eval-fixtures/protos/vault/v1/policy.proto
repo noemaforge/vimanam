@@ -1,0 +1,20 @@
+syntax = "proto3";
+
+package vault.v1;
+
+import "vault/v1/common.proto";
+
+// Redaction rule evaluated during bundle export.
+message RedactionRule {
+  string field_selector = 1 [json_name = "fieldSelector"];
+  string replacement_token = 2 [json_name = "replacementToken"];
+  bool preserve_length = 3 [json_name = "preserveLength"];
+}
+
+// Export compliance policy controlling retention and masking.
+message ExportPolicy {
+  string policy_slug = 1 [json_name = "policySlug"];
+  RetentionTier retention_tier = 2 [json_name = "retentionTier"];
+  repeated RedactionRule redaction_rules = 3 [json_name = "redactionRules"];
+  bool require_signed_manifest = 4 [json_name = "requireSignedManifest"];
+}
