@@ -1336,7 +1336,9 @@ fn identical_duplicate_members_are_dropped_with_a_warning() {
         "argument Query.f.i",
         "argument Other.z.b",
     ]
-    .map(|m| format!("vimanam: ignoring identical duplicate GraphQL {m} in a.graphql"));
+    .map(|m| {
+        format!("vimanam: ignoring identical duplicate GraphQL {m} in a.graphql (2 identical definitions)")
+    });
     expected.sort();
     warnings.sort();
     assert_eq!(warnings, expected);
@@ -1376,7 +1378,9 @@ fn introspection_duplicate_members_follow_the_sdl_rule() {
     assert_eq!(doc.types["Query"].fields.len(), 1);
     assert_eq!(
         warnings,
-        ["vimanam: ignoring identical duplicate GraphQL field Query.x in introspection result"]
+        [
+            "vimanam: ignoring identical duplicate GraphQL field Query.x in introspection result (2 identical definitions)"
+        ]
     );
     let err = Document::from_introspection(&schema(field("String")))
         .unwrap_err()
@@ -1386,5 +1390,77 @@ fn introspection_duplicate_members_follow_the_sdl_rule() {
             "Duplicate GraphQL field Query.x in introspection result with a conflicting definition"
         ),
         "{err}"
+    );
+}
+
+/// #163: three copies give one warning with a count; arguments match by name
+/// (a reordered argument list is identical); an extension block's own
+/// repeats follow the single-definition rule before merging.
+#[test]
+fn duplicate_members_count_reorder_and_extension_blocks() {
+    let parse = |text: &str| {
+        let mut warnings = vec![];
+        Document::from_sdl_reporting(&[("a.graphql".into(), text.into())], &mut warnings)
+            .map(|doc| (doc, warnings))
+    };
+
+    let (doc, warnings) = parse("type Query { a: Int a: Int a: Int }").unwrap();
+    assert_eq!(doc.types["Query"].fields.len(), 1);
+    assert_eq!(
+        warnings,
+        [
+            "vimanam: ignoring identical duplicate GraphQL field Query.a in a.graphql (3 identical definitions)"
+        ]
+    );
+
+    let (doc, warnings) =
+        parse("type Query { x(p: Int, q: Int): Int x(q: Int, p: Int): Int }").unwrap();
+    let args: Vec<_> = doc.types["Query"].fields[0]
+        .args
+        .iter()
+        .map(|a| a.name.as_str())
+        .collect();
+    assert_eq!(args, ["p", "q"], "first copy's order is kept");
+    assert_eq!(warnings.len(), 1, "{warnings:?}");
+    let err = parse("type Query { x(p: Int, q: Int): Int x(q: Int, p: ID): Int }")
+        .unwrap_err()
+        .to_string();
+    assert!(
+        err.contains("Duplicate GraphQL field Query.x in a.graphql with a conflicting definition"),
+        "{err}"
+    );
+
+    let (doc, warnings) = parse(
+        "type Query { a: Int } extend type Query { b: Int b: Int } enum E { A } extend enum E { B B } input F { a: Int } extend input F { b: Int b: Int }",
+    )
+    .unwrap();
+    assert_eq!(doc.types["Query"].fields.len(), 2);
+    assert_eq!(doc.types["E"].values.len(), 2);
+    assert_eq!(doc.types["F"].input_fields.len(), 2);
+    let mut warnings = warnings;
+    warnings.sort();
+    assert_eq!(
+        warnings,
+        [
+            "vimanam: ignoring identical duplicate GraphQL enum value E.B in a.graphql (2 identical definitions)",
+            "vimanam: ignoring identical duplicate GraphQL field Query.b in a.graphql (2 identical definitions)",
+            "vimanam: ignoring identical duplicate GraphQL input field F.b in a.graphql (2 identical definitions)",
+        ]
+    );
+    let conflict = parse("type Query { a: Int } extend type Query { b: Int b: ID }")
+        .unwrap_err()
+        .to_string();
+    assert!(
+        conflict
+            .contains("Duplicate GraphQL field Query.b in a.graphql with a conflicting definition"),
+        "{conflict}"
+    );
+    // A member already on the type is still an error, even if identical.
+    let merged = parse("type Query { a: Int } extend type Query { a: Int }")
+        .unwrap_err()
+        .to_string();
+    assert!(
+        merged.contains("Duplicate GraphQL field Query.a from extension in a.graphql"),
+        "{merged}"
     );
 }

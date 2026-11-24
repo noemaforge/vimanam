@@ -556,14 +556,16 @@ fn duplicate_sdl_members_warn_or_fail() {
         );
     assert!(!out.exists());
 
-    // diff reports the same warning.
+    // diff reports the warning once per side, labelled.
     binary()
         .args(["diff"])
         .arg(&identical)
         .arg(&identical)
         .assert()
         .success()
-        .stderr(contains(
-            "ignoring identical duplicate GraphQL field Query.x",
-        ));
+        .stderr(
+            contains("vimanam: old: ignoring identical duplicate GraphQL field Query.x").and(
+                contains("vimanam: new: ignoring identical duplicate GraphQL field Query.x"),
+            ),
+        );
 }

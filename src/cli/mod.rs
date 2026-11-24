@@ -234,11 +234,14 @@ fn run_graphql_diff<W: Write>(
         !(args.context && args.format == DiffFormatArg::Json),
         "--context renders Markdown; it cannot be combined with --format json"
     );
-    let mut warnings = vec![];
-    let old = old_input.graphql(&mut warnings)?;
-    let new = new_input.graphql(&mut warnings)?;
-    for warning in &warnings {
-        notice(warning);
+    let (mut old_warnings, mut new_warnings) = (vec![], vec![]);
+    let old = old_input.graphql(&mut old_warnings)?;
+    let new = new_input.graphql(&mut new_warnings)?;
+    for (side, warnings) in [("old", old_warnings), ("new", new_warnings)] {
+        for warning in warnings {
+            let text = warning.strip_prefix("vimanam: ").unwrap_or(&warning);
+            notice(&format!("vimanam: {side}: {text}"));
+        }
     }
     let changes = graphql::diff(&old, &new)?;
     let document = crate::contract::json::to_json(

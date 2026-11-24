@@ -12,10 +12,12 @@ Vimanam reads GraphQL schemas as:
   duplicate members from extensions, extensions of undefined types and
   references to undefined types are errors naming the file. A member
   (field, argument, input field, enum value, interface or union member)
-  repeated inside one definition is an error when the repeat differs in type,
-  arguments, default or deprecation; an identical repeat (GitHub's published
-  schema has one) is dropped, keeping the first occurrence and its
-  description, with a stderr warning. Introspection JSON follows the same rule.
+  repeated inside one definition or one extension block is an error when the
+  repeat differs in type, arguments (matched by name), default or deprecation;
+  identical repeats (GitHub's published schema has some) are dropped, keeping
+  the first occurrence and its description, with one stderr warning per member
+  giving the count (`diff` labels it `old:`/`new:`). Introspection JSON follows
+  the same rule.
 - **Introspection JSON**: the result of an introspection query, either
   `{"data": {"__schema": …}}` or `{"__schema": …}`. A `.json` input is GraphQL
   only when it contains a `__schema` object, so OpenAPI JSON is unaffected.

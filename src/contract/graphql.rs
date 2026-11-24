@@ -1411,24 +1411,30 @@ fn dedupe<T>(
     label: &str,
     warnings: &mut Vec<String>,
 ) -> Result<()> {
-    let mut kept: Vec<T> = Vec::with_capacity(items.len());
+    // Kept members with how many identical definitions each had.
+    let mut kept: Vec<(T, usize)> = Vec::with_capacity(items.len());
     for item in items.drain(..) {
-        match kept.iter().find(|k| key(k) == key(&item)) {
-            None => kept.push(item),
-            Some(first) => {
+        match kept.iter_mut().find(|(k, _)| key(k) == key(&item)) {
+            None => kept.push((item, 1)),
+            Some((first, count)) => {
                 anyhow::ensure!(
                     same(first, &item),
                     "Duplicate GraphQL {what} {owner}.{} in {label} with a conflicting definition",
                     key(&item)
                 );
-                warnings.push(format!(
-                    "vimanam: ignoring identical duplicate GraphQL {what} {owner}.{} in {label}",
-                    key(&item)
-                ));
+                *count += 1;
             }
         }
     }
-    *items = kept;
+    for (item, count) in &kept {
+        if *count > 1 {
+            warnings.push(format!(
+                "vimanam: ignoring identical duplicate GraphQL {what} {owner}.{} in {label} ({count} identical definitions)",
+                key(item)
+            ));
+        }
+    }
+    *items = kept.into_iter().map(|(item, _)| item).collect();
     Ok(())
 }
 
@@ -1461,11 +1467,14 @@ fn dedupe_fields(
         |a, b| {
             a.ty == b.ty
                 && a.deprecation == b.deprecation
+                // Arguments match by name, not position; both lists are
+                // already deduplicated.
                 && a.args.len() == b.args.len()
-                && a.args
-                    .iter()
-                    .zip(&b.args)
-                    .all(|(x, y)| x.name == y.name && same_input(x, y))
+                && a.args.iter().all(|x| {
+                    b.args
+                        .iter()
+                        .any(|y| x.name == y.name && same_input(x, y))
+                })
         },
         "field",
         owner,
@@ -1579,89 +1588,67 @@ fn apply_extension(
     fn string(s: &String) -> &str {
         s
     }
+    // The extension's own members, deduplicated like a single definition
+    // (identical repeats warn, conflicting ones fail) before merging, where a
+    // member already on the type is an error.
+    let mut ext = TypeDef::new(&name, kind, None);
     match extension {
-        X::ScalarTypeExtension(_) => {}
         X::ObjectTypeExtension(e) => {
-            let mut fields = sdl_fields(e.fields_definition())?;
-            for f in fields.iter_mut() {
-                let coordinate = format!("{name}.{}", f.name);
-                dedupe(
-                    &mut f.args,
-                    |a| &a.name,
-                    same_input,
-                    "argument",
-                    &coordinate,
-                    label,
-                    warnings,
-                )?;
-            }
-            extend(&mut def.fields, fields, field_name, "field", &name, label)?;
-            extend(
-                &mut def.interfaces,
-                sdl_interfaces(e.implements_interfaces()),
-                string,
-                "interface",
-                &name,
-                label,
-            )?;
+            ext.fields = sdl_fields(e.fields_definition())?;
+            ext.interfaces = sdl_interfaces(e.implements_interfaces());
         }
         X::InterfaceTypeExtension(e) => {
-            let mut fields = sdl_fields(e.fields_definition())?;
-            for f in fields.iter_mut() {
-                let coordinate = format!("{name}.{}", f.name);
-                dedupe(
-                    &mut f.args,
-                    |a| &a.name,
-                    same_input,
-                    "argument",
-                    &coordinate,
-                    label,
-                    warnings,
-                )?;
-            }
-            extend(&mut def.fields, fields, field_name, "field", &name, label)?;
-            extend(
-                &mut def.interfaces,
-                sdl_interfaces(e.implements_interfaces()),
-                string,
-                "interface",
-                &name,
-                label,
-            )?;
+            ext.fields = sdl_fields(e.fields_definition())?;
+            ext.interfaces = sdl_interfaces(e.implements_interfaces());
         }
-        X::UnionTypeExtension(e) => {
-            extend(
-                &mut def.members,
-                sdl_union_members(e.union_member_types()),
-                string,
-                "union member",
-                &name,
-                label,
-            )?;
-        }
-        X::EnumTypeExtension(e) => {
-            extend(
-                &mut def.values,
-                sdl_enum_values(e.enum_values_definition())?,
-                value_name,
-                "enum value",
-                &name,
-                label,
-            )?;
-        }
+        X::UnionTypeExtension(e) => ext.members = sdl_union_members(e.union_member_types()),
+        X::EnumTypeExtension(e) => ext.values = sdl_enum_values(e.enum_values_definition())?,
         X::InputObjectTypeExtension(e) => {
-            extend(
-                &mut def.input_fields,
-                sdl_input_fields(e.input_fields_definition())?,
-                input_name,
-                "input field",
-                &name,
-                label,
-            )?;
+            ext.input_fields = sdl_input_fields(e.input_fields_definition())?;
         }
         _ => {}
     }
-    Ok(())
+    dedupe_members(&mut ext, label, warnings)?;
+    extend(
+        &mut def.fields,
+        ext.fields,
+        field_name,
+        "field",
+        &name,
+        label,
+    )?;
+    extend(
+        &mut def.interfaces,
+        ext.interfaces,
+        string,
+        "interface",
+        &name,
+        label,
+    )?;
+    extend(
+        &mut def.members,
+        ext.members,
+        string,
+        "union member",
+        &name,
+        label,
+    )?;
+    extend(
+        &mut def.values,
+        ext.values,
+        value_name,
+        "enum value",
+        &name,
+        label,
+    )?;
+    extend(
+        &mut def.input_fields,
+        ext.input_fields,
+        input_name,
+        "input field",
+        &name,
+        label,
+    )
 }
 
 // ---------------------------------------------------------------------------
