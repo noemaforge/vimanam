@@ -15,7 +15,8 @@ protoc -I tests/fixtures/protobuf --include_imports --descriptor_set_out=tests/f
 ```
 
 `custom-options.proto` is synthetic: a custom `FieldOptions` extension (importing
-`google/protobuf/descriptor.proto`) and a `google.protobuf.Timestamp` field.
+`google/protobuf/descriptor.proto`), a source-retention option that protoc strips
+from descriptors, and a `google.protobuf.Timestamp` field.
 `custom-options.pb` embeds protoc 36.2's `descriptor.proto` (Editions `FeatureSet`
 and newer option fields), which differs from the copy protox bundles; mixed
 `.pb`/`.proto` diffs of it must report no changes. Regenerate from the

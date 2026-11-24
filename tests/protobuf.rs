@@ -1058,3 +1058,126 @@ fn bundled_only_inputs_keep_findings() {
     let changes = protobuf::diff(&old, &new).unwrap();
     assert!(changes.iter().any(|c| c.native_kind == "MESSAGE_NO_DELETE"));
 }
+fn custom_options_text(edit: impl Fn(String) -> String) -> Document {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("custom-options.proto");
+    fs::write(
+        &path,
+        edit(fs::read_to_string(fixture("custom-options.proto")).unwrap()),
+    )
+    .unwrap();
+    Document::read(&path, &[]).unwrap()
+}
+/// Set `go_package` on one file of the fixture descriptor set. Edits go through
+/// `DynamicMessage` so custom options and `retention` (unknown to prost-types)
+/// survive re-encoding.
+fn descriptor_with_go_package(file: &str, go_package: &str) -> Document {
+    use prost::Message;
+    use prost_reflect::{DynamicMessage, Value as V};
+    let bytes = fs::read(fixture("custom-options.pb")).unwrap();
+    let pool = Document::decode(&bytes).unwrap().pool;
+    let set_desc = pool
+        .get_message_by_name("google.protobuf.FileDescriptorSet")
+        .unwrap();
+    let mut set = DynamicMessage::decode(set_desc, bytes.as_slice()).unwrap();
+    let V::List(files) = set.get_field_by_name_mut("file").unwrap() else {
+        panic!()
+    };
+    let target = files
+        .iter_mut()
+        .filter_map(V::as_message_mut)
+        .find(|f| f.get_field_by_name("name").unwrap().as_str() == Some(file))
+        .unwrap();
+    let V::Message(options) = target.get_field_by_name_mut("options").unwrap() else {
+        panic!()
+    };
+    options.set_field_by_name("go_package", V::String(go_package.into()));
+    Document::decode(&set.encode_to_vec()).unwrap()
+}
+fn full_name(c: &Change) -> &str {
+    match &c.native {
+        vimanam::contract::NativeLocation::Protobuf { full_name, .. } => full_name,
+        _ => panic!(),
+    }
+}
+#[test]
+fn source_retention_options_are_compared_as_descriptors_carry_them() {
+    let descriptor = Document::read(&fixture("custom-options.pb"), &[]).unwrap();
+    let source = Document::read(&fixture("custom-options.proto"), &[]).unwrap();
+    let applied = |d: &Document| {
+        let field = d
+            .pool
+            .get_message_by_name("demo.v1.Item")
+            .unwrap()
+            .get_field_by_name("id")
+            .unwrap();
+        let ext = d.pool.get_extension_by_name("demo.v1.source_note").unwrap();
+        field.options().has_extension(&ext)
+    };
+    // protoc strips source-retention options from descriptors; protox keeps them.
+    assert!(applied(&source));
+    assert!(!applied(&descriptor));
+    assert_eq!(protobuf::diff(&descriptor, &source).unwrap(), vec![]);
+
+    let note_changed = custom_options_text(|s| s.replace("kept in source only", "changed"));
+    assert_eq!(protobuf::diff(&descriptor, &note_changed).unwrap(), vec![]);
+    assert_eq!(protobuf::diff(&source, &note_changed).unwrap(), vec![]);
+
+    let label_changed = custom_options_text(|s| s.replace("\"identifier\"", "\"renamed\""));
+    for old in [&descriptor, &source] {
+        let changes = protobuf::diff(old, &label_changed).unwrap();
+        assert_eq!(changes.len(), 1, "{changes:#?}");
+        assert_eq!(full_name(&changes[0]), "demo.v1.Item.id");
+        assert_eq!(changes[0].details["pointer"], "/options/[demo.v1.label]");
+    }
+}
+#[test]
+fn bundled_file_options_are_filtered_but_user_file_options_are_not() {
+    let original = Document::read(&fixture("custom-options.pb"), &[]).unwrap();
+    let bundled =
+        descriptor_with_go_package("google/protobuf/timestamp.proto", "example.com/drift");
+    assert_eq!(protobuf::diff(&original, &bundled).unwrap(), vec![]);
+    let user = descriptor_with_go_package("custom-options.proto", "example.com/demo");
+    let changes = protobuf::diff(&original, &user).unwrap();
+    assert_eq!(changes.len(), 1, "{changes:#?}");
+    assert_eq!(full_name(&changes[0]), "custom-options.proto");
+    assert_eq!(changes[0].native_kind, "FILE_OPTIONS_CHANGED");
+}
+#[test]
+fn bundled_subjects_on_one_side_are_filtered_while_user_changes_remain() {
+    let descriptor = Document::read(&fixture("custom-options.pb"), &[]).unwrap();
+    // Dropping both imports removes every google.protobuf message, enum and
+    // the package itself from the new side.
+    let dropped = custom_options_text(|s| {
+        let start = s
+            .find("import \"google/protobuf/descriptor.proto\"")
+            .unwrap();
+        let end = s.find("message Item").unwrap();
+        format!("{}{}", &s[..start], &s[end..])
+            .replace(
+                " [(label) = \"identifier\", (source_note) = \"kept in source only\"]",
+                "",
+            )
+            .replace("google.protobuf.Timestamp created_at", "string created_at")
+    });
+    assert!(
+        dropped
+            .pool
+            .get_message_by_name("google.protobuf.Timestamp")
+            .is_none()
+    );
+    let changes = protobuf::diff(&descriptor, &dropped).unwrap();
+    assert!(
+        changes
+            .iter()
+            .all(|c| !full_name(c).starts_with("google.protobuf")),
+        "{changes:#?}"
+    );
+    assert!(
+        changes.iter().any(
+            |c| full_name(c) == "demo.v1.Item.created_at" && c.native_kind == "FIELD_SAME_TYPE"
+        )
+    );
+    assert!(changes.iter().any(|c| full_name(c) == "demo.v1.label"));
+    assert!(changes.iter().any(|c| full_name(c) == "demo.v1.Item.id"));
+}

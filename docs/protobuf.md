@@ -108,6 +108,10 @@ of `google.protobuf.*Options`, applied custom options and fields that reference
 well-known types live in user files and stay reported. When neither input has a
 file outside `google/protobuf/`, every finding is kept. The neutral surfaces in
 JSON output still list bundled entities.
+Applied options whose extension or field is declared `retention =
+RETENTION_SOURCE` are dropped before comparison: protoc strips them from
+descriptor output while protox keeps them, so the surface holds only what
+survives into descriptors.
 Package namespace entities are represented as `type` entities with
 `kind: package`, allowing file-package facts to reference an entity present in
 the compared surface.

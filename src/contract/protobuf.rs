@@ -3,7 +3,7 @@
 use super::*;
 use anyhow::{Context, Result};
 use prost::Message;
-use prost_reflect::{DescriptorPool, DynamicMessage, Kind};
+use prost_reflect::{DescriptorPool, DynamicMessage, Kind, ReflectMessage};
 use protox::{
     Compiler,
     file::{
@@ -495,8 +495,53 @@ impl FileResolver for MemoryFileResolver {
 fn id(kind: EntityKind, name: &str) -> String {
     entity_id(Format::Protobuf, kind, name)
 }
-fn options(message: DynamicMessage) -> Value {
+fn options(mut message: DynamicMessage) -> Value {
+    strip_source_retention(&mut message);
     serde_json::to_value(message).unwrap_or(Value::Null)
+}
+/// `retention = RETENTION_SOURCE` read reflectively: prost-types predates the
+/// field, and a pool whose descriptor.proto lacks it has no source retention.
+fn is_source_retained(field_options: &DynamicMessage) -> bool {
+    const RETENTION_SOURCE: i32 = 2;
+    field_options
+        .descriptor()
+        .get_field_by_name("retention")
+        .is_some_and(|f| field_options.get_field(&f).as_enum_number() == Some(RETENTION_SOURCE))
+}
+/// Drop applied options declared with source retention, recursively. protoc
+/// strips them from descriptor output while protox keeps them, so comparing
+/// only what survives into descriptors keeps `.pb`/`.proto` parity (#155).
+fn strip_source_retention(message: &mut DynamicMessage) {
+    let extensions: Vec<_> = message
+        .extensions()
+        .map(|(x, _)| x)
+        .filter(|x| is_source_retained(&x.options()))
+        .collect();
+    for x in &extensions {
+        message.clear_extension(x);
+    }
+    let fields: Vec<_> = message
+        .fields()
+        .map(|(f, _)| f)
+        .filter(|f| is_source_retained(&f.options()))
+        .collect();
+    for f in &fields {
+        message.clear_field(f);
+    }
+    let nested = |value: &mut prost_reflect::Value| match value {
+        prost_reflect::Value::Message(m) => strip_source_retention(m),
+        prost_reflect::Value::List(items) => items
+            .iter_mut()
+            .filter_map(|v| v.as_message_mut())
+            .for_each(strip_source_retention),
+        prost_reflect::Value::Map(entries) => entries
+            .values_mut()
+            .filter_map(|v| v.as_message_mut())
+            .for_each(strip_source_retention),
+        _ => {}
+    };
+    message.fields_mut().for_each(|(_, v)| nested(v));
+    message.extensions_mut().for_each(|(_, v)| nested(v));
 }
 fn node(
     kind: EntityKind,

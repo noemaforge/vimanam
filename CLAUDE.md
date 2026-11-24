@@ -88,7 +88,8 @@ custom options. Neutral field IDs use message FQN+number; enum label IDs add
 names to preserve aliases. Safe same-number renames break source/JSON only;
 reserved-identity reuse, type and RPC streaming changes supply wire evidence.
 `diff` drops findings whose subject lives only in bundled `google/protobuf/*`
-files (compiler-version skew), unless neither input has a user file. Enum reserved
+files (compiler-version skew), unless neither input has a user file. Source-retention applied options are stripped in `adapt`
+(protoc drops them from descriptors). Enum reserved
 bounds use wide integers.
 
 `--breaking` scopes protobuf failure gates only; `--contract 1` rejects protobuf
