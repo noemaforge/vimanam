@@ -6,39 +6,37 @@
     "raw_large_spec_trials": 1,
     "task_count": 10,
     "fitting_task_count": 8,
-    "stripe_not_attempted_count": 2,
     "grading": "deterministic programmatic JSON assertions (no LLM judge)",
-    "isolation": "claude -p --tools '' --strict-mcp-config --setting-sources ''"
+    "isolation": "claude -p --tools '' --strict-mcp-config --setting-sources ''",
+    "stripe_prompt_too_long_count": 2
   },
   "summary_8_fitting_tasks_apples_to_apples": {
     "no_spec": {
       "tasks_total": 8,
-      "tasks_attempted": 8,
-      "tasks_not_attempted": 0,
       "mean_task_pass_rate": 0.208,
       "mean_assertions_passed": 9.33,
       "assertions_total": 42,
       "mean_assertion_rate": 0.222,
       "sum_api_input_tokens_median": 10234,
       "sum_cost_usd_mean": 0.002577,
-      "sum_duration_api_ms_median": 20232
+      "sum_duration_api_ms_median": 20232,
+      "tasks_ok": 8,
+      "tasks_prompt_too_long": 0
     },
     "summary": {
       "tasks_total": 8,
-      "tasks_attempted": 8,
-      "tasks_not_attempted": 0,
       "mean_task_pass_rate": 0.208,
       "mean_assertions_passed": 13.0,
       "assertions_total": 42,
       "mean_assertion_rate": 0.31,
       "sum_api_input_tokens_median": 21047,
       "sum_cost_usd_mean": 0.00383,
-      "sum_duration_api_ms_median": 25947
+      "sum_duration_api_ms_median": 25947,
+      "tasks_ok": 8,
+      "tasks_prompt_too_long": 0
     },
     "routed_e2e": {
       "tasks_total": 8,
-      "tasks_attempted": 8,
-      "tasks_not_attempted": 0,
       "mean_task_pass_rate": 0.833,
       "mean_assertions_passed": 40.33,
       "assertions_total": 42,
@@ -48,62 +46,62 @@
       "sum_duration_api_ms_median": 43671,
       "mean_turns": 2,
       "mean_followup_rate": 0.0,
-      "mean_route_cmd_ok_rate": 1.0
+      "mean_route_cmd_ok_rate": 1.0,
+      "tasks_ok": 8,
+      "tasks_prompt_too_long": 0
     },
     "oracle_slice": {
       "tasks_total": 8,
-      "tasks_attempted": 8,
-      "tasks_not_attempted": 0,
       "mean_task_pass_rate": 0.458,
       "mean_assertions_passed": 32.0,
       "assertions_total": 42,
       "mean_assertion_rate": 0.762,
       "sum_api_input_tokens_median": 26253,
       "sum_cost_usd_mean": 0.003905,
-      "sum_duration_api_ms_median": 79137
+      "sum_duration_api_ms_median": 79137,
+      "tasks_ok": 8,
+      "tasks_prompt_too_long": 0
     },
     "raw_spec": {
       "tasks_total": 8,
-      "tasks_attempted": 8,
-      "tasks_not_attempted": 0,
       "mean_task_pass_rate": 1.0,
       "mean_assertions_passed": 42,
       "assertions_total": 42,
       "mean_assertion_rate": 1.0,
       "sum_api_input_tokens_median": 1741037,
       "sum_cost_usd_mean": 1.319705,
-      "sum_duration_api_ms_median": 19333
+      "sum_duration_api_ms_median": 19333,
+      "tasks_ok": 8,
+      "tasks_prompt_too_long": 0
     }
   },
   "summary_2_stripe_7_9mb_tasks": {
     "no_spec": {
       "tasks_total": 2,
-      "tasks_attempted": 2,
-      "tasks_not_attempted": 0,
       "mean_task_pass_rate": 0.0,
       "mean_assertions_passed": 0,
       "assertions_total": 8,
       "mean_assertion_rate": 0.0,
       "sum_api_input_tokens_median": 2517,
       "sum_cost_usd_mean": 0.000683,
-      "sum_duration_api_ms_median": 5702
+      "sum_duration_api_ms_median": 5702,
+      "tasks_ok": 2,
+      "tasks_prompt_too_long": 0
     },
     "summary": {
       "tasks_total": 2,
-      "tasks_attempted": 2,
-      "tasks_not_attempted": 0,
       "mean_task_pass_rate": 0.0,
       "mean_assertions_passed": 2,
       "assertions_total": 8,
       "mean_assertion_rate": 0.25,
       "sum_api_input_tokens_median": 24057,
       "sum_cost_usd_mean": 0.002217,
-      "sum_duration_api_ms_median": 5306
+      "sum_duration_api_ms_median": 5306,
+      "tasks_ok": 2,
+      "tasks_prompt_too_long": 0
     },
     "routed_e2e": {
       "tasks_total": 2,
-      "tasks_attempted": 2,
-      "tasks_not_attempted": 0,
       "mean_task_pass_rate": 0.5,
       "mean_assertions_passed": 7,
       "assertions_total": 8,
@@ -113,62 +111,62 @@
       "sum_duration_api_ms_median": 12855,
       "mean_turns": 2,
       "mean_followup_rate": 0.0,
-      "mean_route_cmd_ok_rate": 1.0
+      "mean_route_cmd_ok_rate": 1.0,
+      "tasks_ok": 2,
+      "tasks_prompt_too_long": 0
     },
     "oracle_slice": {
       "tasks_total": 2,
-      "tasks_attempted": 2,
-      "tasks_not_attempted": 0,
       "mean_task_pass_rate": 0.834,
       "mean_assertions_passed": 7.67,
       "assertions_total": 8,
       "mean_assertion_rate": 0.959,
       "sum_api_input_tokens_median": 34031,
       "sum_cost_usd_mean": 0.002958,
-      "sum_duration_api_ms_median": 5238
+      "sum_duration_api_ms_median": 5238,
+      "tasks_ok": 2,
+      "tasks_prompt_too_long": 0
     },
     "raw_spec": {
       "tasks_total": 2,
-      "tasks_attempted": 0,
-      "tasks_not_attempted": 2,
       "mean_task_pass_rate": 0.0,
       "mean_assertions_passed": 0.0,
       "assertions_total": 8,
       "mean_assertion_rate": 0.0,
       "sum_api_input_tokens_median": 0,
       "sum_cost_usd_mean": 0,
-      "sum_duration_api_ms_median": 0
+      "sum_duration_api_ms_median": 0,
+      "tasks_ok": 0,
+      "tasks_prompt_too_long": 2
     }
   },
   "summary_all_10_tasks": {
     "no_spec": {
       "tasks_total": 10,
-      "tasks_attempted": 10,
-      "tasks_not_attempted": 0,
       "mean_task_pass_rate": 0.167,
       "mean_assertions_passed": 9.33,
       "assertions_total": 50,
       "mean_assertion_rate": 0.187,
       "sum_api_input_tokens_median": 12751,
       "sum_cost_usd_mean": 0.00326,
-      "sum_duration_api_ms_median": 25934
+      "sum_duration_api_ms_median": 25934,
+      "tasks_ok": 10,
+      "tasks_prompt_too_long": 0
     },
     "summary": {
       "tasks_total": 10,
-      "tasks_attempted": 10,
-      "tasks_not_attempted": 0,
       "mean_task_pass_rate": 0.167,
       "mean_assertions_passed": 15.0,
       "assertions_total": 50,
       "mean_assertion_rate": 0.3,
       "sum_api_input_tokens_median": 45104,
       "sum_cost_usd_mean": 0.006047,
-      "sum_duration_api_ms_median": 31253
+      "sum_duration_api_ms_median": 31253,
+      "tasks_ok": 10,
+      "tasks_prompt_too_long": 0
     },
     "routed_e2e": {
       "tasks_total": 10,
-      "tasks_attempted": 10,
-      "tasks_not_attempted": 0,
       "mean_task_pass_rate": 0.767,
       "mean_assertions_passed": 47.33,
       "assertions_total": 50,
@@ -178,31 +176,33 @@
       "sum_duration_api_ms_median": 56526,
       "mean_turns": 2,
       "mean_followup_rate": 0.0,
-      "mean_route_cmd_ok_rate": 1.0
+      "mean_route_cmd_ok_rate": 1.0,
+      "tasks_ok": 10,
+      "tasks_prompt_too_long": 0
     },
     "oracle_slice": {
       "tasks_total": 10,
-      "tasks_attempted": 10,
-      "tasks_not_attempted": 0,
       "mean_task_pass_rate": 0.533,
       "mean_assertions_passed": 39.67,
       "assertions_total": 50,
       "mean_assertion_rate": 0.793,
       "sum_api_input_tokens_median": 60284,
       "sum_cost_usd_mean": 0.006863,
-      "sum_duration_api_ms_median": 84375
+      "sum_duration_api_ms_median": 84375,
+      "tasks_ok": 10,
+      "tasks_prompt_too_long": 0
     },
     "raw_spec": {
       "tasks_total": 10,
-      "tasks_attempted": 8,
-      "tasks_not_attempted": 2,
       "mean_task_pass_rate": 0.8,
       "mean_assertions_passed": 42.0,
       "assertions_total": 50,
       "mean_assertion_rate": 0.84,
       "sum_api_input_tokens_median": 1741037,
       "sum_cost_usd_mean": 1.319705,
-      "sum_duration_api_ms_median": 19333
+      "sum_duration_api_ms_median": 19333,
+      "tasks_ok": 8,
+      "tasks_prompt_too_long": 2
     }
   },
   "claude_vs_o200k_calibration_summary": {
@@ -1998,16 +1998,37 @@
           "chars_per_claude_token": 2.64
         },
         "raw_spec": {
-          "status": "not_attempted",
-          "trials": 0,
-          "note": "Not attempted: raw 7.9 MB JSON (1,418,244 o200k_base BPE tokens; >1,000,000-token context window)",
-          "context_bpe_o200k": 1418244,
-          "context_chars": 8316842,
-          "context_chars_div_4": 2079211,
+          "status": "prompt_too_long",
+          "trials": 1,
           "tasks_passed": 0,
           "task_pass_rate": 0.0,
           "assertions_mean": 0.0,
-          "assertions_total": 4
+          "assertions_min": 0,
+          "assertions_max": 0,
+          "assertions_total": 4,
+          "api_input_tokens_median": 0,
+          "duration_api_ms_median": 0,
+          "cost_usd_mean": 0.0,
+          "context_bpe_o200k": 1418244,
+          "context_chars": 8316842,
+          "context_chars_div_4": 2079211,
+          "trial_details": [
+            {
+              "status": "prompt_too_long",
+              "error": "Prompt is too long",
+              "exit_code": 1,
+              "terminal_reason": "blocking_limit",
+              "duration_ms": 618,
+              "wall_ms": 10358,
+              "task_passed": false,
+              "assertions_passed": 0,
+              "assertions_total": 4,
+              "api_input_tokens": 0,
+              "api_output_tokens": 0,
+              "duration_api_ms": 0,
+              "cost_usd": 0.0
+            }
+          ]
         }
       }
     },
@@ -2333,16 +2354,37 @@
           "chars_per_claude_token": 2.49
         },
         "raw_spec": {
-          "status": "not_attempted",
-          "trials": 0,
-          "note": "Not attempted: raw 7.9 MB JSON (1,418,244 o200k_base BPE tokens; >1,000,000-token context window)",
-          "context_bpe_o200k": 1418244,
-          "context_chars": 8316842,
-          "context_chars_div_4": 2079211,
+          "status": "prompt_too_long",
+          "trials": 1,
           "tasks_passed": 0,
           "task_pass_rate": 0.0,
           "assertions_mean": 0.0,
-          "assertions_total": 4
+          "assertions_min": 0,
+          "assertions_max": 0,
+          "assertions_total": 4,
+          "api_input_tokens_median": 0,
+          "duration_api_ms_median": 0,
+          "cost_usd_mean": 0.0,
+          "context_bpe_o200k": 1418244,
+          "context_chars": 8316842,
+          "context_chars_div_4": 2079211,
+          "trial_details": [
+            {
+              "status": "prompt_too_long",
+              "error": "Prompt is too long",
+              "exit_code": 1,
+              "terminal_reason": "blocking_limit",
+              "duration_ms": 749,
+              "wall_ms": 12564,
+              "task_passed": false,
+              "assertions_passed": 0,
+              "assertions_total": 4,
+              "api_input_tokens": 0,
+              "api_output_tokens": 0,
+              "duration_api_ms": 0,
+              "cost_usd": 0.0
+            }
+          ]
         }
       }
     },

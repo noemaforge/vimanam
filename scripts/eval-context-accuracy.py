@@ -11,8 +11,8 @@ Conditions:
   4. oracle_slice — single-turn harness-selected slice (N trials; separates routing
                     from slice readability)
   5. raw_spec     — raw contract bytes (N trials on small specs, 1 trial on >100k-token
-                    specs; explicitly marked not_attempted on 7.9 MB Stripe JSON which
-                    exceeds the 1,000,000-token context window)
+                    specs; executed on all 10 tasks including 7.9 MB Stripe JSON, which
+                    returns exit 1 / terminal_reason="blocking_limit" / "Prompt is too long")
 
 Every task is graded deterministically on strict JSON assertions (no LLM judge).
 Also records Claude API context tokens (api_input_tokens minus no_spec baseline)
@@ -105,14 +105,26 @@ def call_claude(model: str, prompt: str, system_prompt: str, timeout: int = 120)
         timeout=timeout,
     )
     wall_ms = round((time.perf_counter() - t0) * 1000)
-    if p.returncode != 0:
-        return {"error": (p.stderr or p.stdout).strip()[:400], "wall_ms": wall_ms}
+    data = None
     try:
         data = json.loads(p.stdout)
     except Exception:
-        return {"error": f"non-json cli output: {p.stdout[:300]}", "wall_ms": wall_ms}
-    if data.get("is_error"):
-        return {"error": str(data.get("result", "api error"))[:400], "wall_ms": wall_ms}
+        pass
+    if p.returncode != 0 or (isinstance(data, dict) and data.get("is_error")):
+        err_msg = (
+            str(data.get("result") or p.stderr or p.stdout).strip()[:400]
+            if isinstance(data, dict)
+            else (p.stderr or p.stdout).strip()[:400]
+        )
+        return {
+            "error": err_msg,
+            "exit_code": p.returncode,
+            "terminal_reason": data.get("terminal_reason") if isinstance(data, dict) else None,
+            "duration_ms": data.get("duration_ms") if isinstance(data, dict) else None,
+            "wall_ms": wall_ms,
+        }
+    if not isinstance(data, dict):
+        return {"error": f"non-json cli output: {p.stdout[:300]}", "exit_code": p.returncode, "wall_ms": wall_ms}
     usage = data.get("usage", {})
     model_used = next(iter(data.get("modelUsage", {}).keys()), model)
     return {
@@ -166,6 +178,7 @@ def build_tasks(v22: str, corpus: Path) -> list[dict]:
         otel_root / "opentelemetry/proto/common/v1/common.proto",
     ])
 
+    stripe_raw = stripe_json.read_text()
     openai_summary = vimanam_out(v22, [str(openai_yaml), "--detail", "summary", "--no-report"])
     stripe_summary = vimanam_out(v22, [str(stripe_json), "--detail", "summary", "--no-report"])
     health_summary = vimanam_out(v22, [str(health_proto), "--detail", "summary", "--no-report"])
@@ -256,8 +269,8 @@ def build_tasks(v22: str, corpus: Path) -> list[dict]:
                 '"response_schema": string}'
             ),
             "summary": stripe_summary,
-            "raw_spec": None,
-            "raw_file_for_tokens": stripe_json,
+            "raw_spec": stripe_raw,
+            "stripe_7_9mb": True,
             "oracle_slice": vimanam_out(v22, [str(stripe_json), "--operation", "POST /v1/customers", "--detail", "full", "--include-schemas", "--schema-depth", "2", "--no-report"]),
             "grade": lambda d: {
                 "operation_id": d.get("operation_id") == "PostCustomers",
@@ -279,8 +292,8 @@ def build_tasks(v22: str, corpus: Path) -> list[dict]:
                 '"currency_type": string}'
             ),
             "summary": stripe_summary,
-            "raw_spec": None,
-            "raw_file_for_tokens": stripe_json,
+            "raw_spec": stripe_raw,
+            "stripe_7_9mb": True,
             "oracle_slice": vimanam_out(v22, [str(stripe_json), "--operation", "POST /v1/payment_intents", "--detail", "full", "--include-schemas", "--schema-depth", "2", "--no-report"]),
             "grade": lambda d: {
                 "operation_id": d.get("operation_id") == "PostPaymentIntents",
@@ -428,9 +441,15 @@ def run_single_turn_trial(model: str, task: dict, ctx: str) -> dict:
     res = call_claude(model, prompt, ANSWER_SYSTEM_PROMPT)
     if "error" in res:
         n_assert = len(task["grade"]({}))
+        err_low = str(res["error"]).lower()
+        is_too_long = ("prompt is too long" in err_low) or (res.get("terminal_reason") == "blocking_limit")
         return {
-            "status": "error",
+            "status": "prompt_too_long" if is_too_long else "error",
             "error": res["error"],
+            "exit_code": res.get("exit_code"),
+            "terminal_reason": res.get("terminal_reason"),
+            "duration_ms": res.get("duration_ms"),
+            "wall_ms": res.get("wall_ms"),
             "task_passed": False,
             "assertions_passed": 0,
             "assertions_total": n_assert,
@@ -599,8 +618,10 @@ def aggregate_trials(trials: list[dict], context_bpe: int | None = None, context
     api_ins = [t.get("api_input_tokens", 0) for t in trials]
     durs = [t.get("duration_api_ms", 0) for t in trials]
     costs = [t.get("cost_usd", 0.0) for t in trials]
+    statuses = {t.get("status", "ok") for t in trials}
+    agg_status = "ok" if statuses == {"ok"} else (next(iter(statuses)) if len(statuses) == 1 else "mixed")
     out = {
-        "status": "ok",
+        "status": agg_status,
         "trials": n,
         "tasks_passed": n_pass,
         "task_pass_rate": round(n_pass / n, 3),
@@ -644,8 +665,6 @@ def main():
     jobs = []
     for t_idx, task in enumerate(tasks):
         for cond in conditions:
-            if cond == "raw_spec" and task["raw_spec"] is None:
-                continue
             n_trials = 1 if (cond == "raw_spec" and task["raw_large"]) else args.trials
             for trial_idx in range(n_trials):
                 jobs.append((t_idx, cond, trial_idx))
@@ -692,24 +711,6 @@ def main():
                 model_seen = t["model"]
 
         for cond in conditions:
-            if cond == "raw_spec" and task["raw_spec"] is None:
-                raw_text = task["raw_file_for_tokens"].read_text()
-                bpe = count_bpe(raw_text)
-                n_assert = len(task["grade"]({}))
-                rec["conditions"][cond] = {
-                    "status": "not_attempted",
-                    "trials": 0,
-                    "note": f"Not attempted: raw 7.9 MB JSON ({bpe:,} o200k_base BPE tokens; >1,000,000-token context window)",
-                    "context_bpe_o200k": bpe,
-                    "context_chars": len(raw_text),
-                    "context_chars_div_4": (len(raw_text) + 3) // 4,
-                    "tasks_passed": 0,
-                    "task_pass_rate": 0.0,
-                    "assertions_mean": 0.0,
-                    "assertions_total": n_assert,
-                }
-                continue
-
             trials = results_map[(t_idx, cond)]
             if cond == "no_spec":
                 agg = aggregate_trials(trials, context_bpe=0, context_chars=0)
@@ -724,7 +725,7 @@ def main():
                 agg["total_context_bpe_o200k_median"] = round(statistics.median(t.get("total_context_bpe_o200k", 0) for t in trials))
 
             # Record Claude API context tokens (net of no_spec system/question overhead)
-            if cond in {"summary", "oracle_slice", "raw_spec"} and agg.get("context_bpe_o200k", 0) > 0:
+            if cond in {"summary", "oracle_slice", "raw_spec"} and agg["status"] == "ok" and agg.get("context_bpe_o200k", 0) > 0:
                 net_claude = max(1, agg["api_input_tokens_median"] - no_spec_base_in)
                 agg["claude_context_tokens_est"] = net_claude
                 agg["claude_vs_o200k_ratio"] = round(net_claude / agg["context_bpe_o200k"], 2)
@@ -759,29 +760,29 @@ def main():
         out = {}
         for cond in conditions:
             recs = [r["conditions"][cond] for r in task_records if r["id"] in subset_ids]
-            attempted = [c for c in recs if c["status"] == "ok"]
-            not_att = [c for c in recs if c["status"] == "not_attempted"]
+            ok_recs = [c for c in recs if c["status"] == "ok"]
+            too_long = [c for c in recs if c["status"] == "prompt_too_long"]
             out[cond] = {
                 "tasks_total": len(recs),
-                "tasks_attempted": len(attempted),
-                "tasks_not_attempted": len(not_att),
+                "tasks_ok": len(ok_recs),
+                "tasks_prompt_too_long": len(too_long),
                 "mean_task_pass_rate": round(sum(c["task_pass_rate"] for c in recs) / len(recs), 3),
                 "mean_assertions_passed": round(sum(c["assertions_mean"] for c in recs), 2),
                 "assertions_total": sum(c["assertions_total"] for c in recs),
                 "mean_assertion_rate": round(sum(c["assertions_mean"] for c in recs) / sum(c["assertions_total"] for c in recs), 3),
-                "sum_api_input_tokens_median": sum(c.get("api_input_tokens_median", 0) for c in attempted),
-                "sum_cost_usd_mean": round(sum(c.get("cost_usd_mean", 0.0) for c in attempted), 6),
-                "sum_duration_api_ms_median": sum(c.get("duration_api_ms_median", 0) for c in attempted),
+                "sum_api_input_tokens_median": sum(c.get("api_input_tokens_median", 0) for c in ok_recs),
+                "sum_cost_usd_mean": round(sum(c.get("cost_usd_mean", 0.0) for c in ok_recs), 6),
+                "sum_duration_api_ms_median": sum(c.get("duration_api_ms_median", 0) for c in ok_recs),
             }
-            if cond == "routed_e2e" and attempted:
-                out[cond]["mean_turns"] = round(statistics.mean(c["turns_mean"] for c in attempted), 2)
-                out[cond]["mean_followup_rate"] = round(statistics.mean(c["followup_rate"] for c in attempted), 3)
-                out[cond]["mean_route_cmd_ok_rate"] = round(statistics.mean(c["route_cmd_ok_rate"] for c in attempted), 3)
+            if cond == "routed_e2e" and ok_recs:
+                out[cond]["mean_turns"] = round(statistics.mean(c["turns_mean"] for c in ok_recs), 2)
+                out[cond]["mean_followup_rate"] = round(statistics.mean(c["followup_rate"] for c in ok_recs), 3)
+                out[cond]["mean_route_cmd_ok_rate"] = round(statistics.mean(c["route_cmd_ok_rate"] for c in ok_recs), 3)
         return out
 
     all_ids = {t["id"] for t in tasks}
-    fitting_ids = {t["id"] for t in tasks if t["raw_spec"] is not None}
-    stripe_ids = all_ids - fitting_ids
+    stripe_ids = {t["id"] for t in tasks if t.get("stripe_7_9mb")}
+    fitting_ids = all_ids - stripe_ids
 
     # Summarize Claude vs o200k calibration by format
     cal_summary = {}
@@ -803,7 +804,7 @@ def main():
             "raw_large_spec_trials": 1,
             "task_count": len(tasks),
             "fitting_task_count": len(fitting_ids),
-            "stripe_not_attempted_count": len(stripe_ids),
+            "stripe_prompt_too_long_count": len(stripe_ids),
             "grading": "deterministic programmatic JSON assertions (no LLM judge)",
             "isolation": "claude -p --tools '' --strict-mcp-config --setting-sources ''",
         },

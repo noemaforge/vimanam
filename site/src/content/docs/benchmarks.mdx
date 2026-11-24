@@ -22,9 +22,9 @@ Extracting one operation out of 612 is selection, not compression. To measure wh
 2. **`summary`** *(3 trials/task)*: `vimanam --detail summary --no-report`.
 3. **`routed_e2e`** *(real workflow, 3 trials/task)*: Turn 1 reads `vimanam --detail summary` and selects `--operation-id` / `--operation` and optional `--schema` names. The harness runs `vimanam` with a uniform `--schema-depth 2` across all tasks. Turn 2 answers from the retrieved slice or requests follow-up schemas via `{"fetch_schemas": [...]}`. Totals sum **all turns' Claude API input tokens, wall latency, and USD cost**.
 4. **`oracle_slice`** *(3 trials/task)*: single-turn harness-selected `vimanam --operation ... --detail full --include-schemas --schema-depth 2` (depth `3` on OTel; plus `--schema` for GraphQL input types), separating routing from slice readability.
-5. **`raw_spec`** *(3 trials on small specs; 1 trial on >100k-token specs)*: raw YAML, concatenated `.proto` + transitive imports, or raw `.graphql` SDL. Both Stripe `7.9 MB` JSON tasks (`1,418,244` `o200k_base` tokens; >2M Claude tokens) are explicitly marked **Not attempted** because they exceed the 1,000,000-token context window.
+5. **`raw_spec`** *(3 trials on small specs; 1 trial on >100k-token specs)*: raw YAML, raw JSON, concatenated `.proto` + transitive imports, or raw `.graphql` SDL — executed on all 10 tasks, including both Stripe `7.9 MB` JSON tasks (`1,418,244` `o200k_base` tokens), which returned `exit 1`, `"terminal_reason": "blocking_limit"`, and `"Prompt is too long"` (`0` output tokens, `$0.00` billed).
 
-Every trial was graded deterministically on strict JSON assertions (`50` assertions across `10` tasks; `136` total LLM trials; no LLM judge).
+Every trial was graded deterministically on strict JSON assertions (`50` assertions across `10` tasks; `138` total executed LLM trials; no LLM judge).
 
 ### Apples-to-apples comparison on the 8 tasks that fit in raw context (`42` assertions)
 
@@ -42,7 +42,7 @@ Comparing `raw_spec` against Vimanam strictly across the same 8 tasks where raw 
   Observed `cost_usd` comes directly from `claude -p --output-format json`. On `oa_embeddings`, `raw_spec` hit an Anthropic prompt cache (`$0.0206` vs `$0.4083` on `oa_batches` and `$0.4082` on `oa_files` at the same `408,004` Claude input tokens). Even with that cache discount included, `routed_e2e` used **17.7× fewer Claude API input tokens** (`98,473` vs `1,741,037`) and **111.7× lower observed cost** (`$0.0118` vs `$1.3197`) across the same 8 tasks. On multi-turn latency, `routed_e2e` pays 2 sequential API round-trips (`43.7 s` vs `19.3 s` single-turn `raw_spec`).
 </Aside>
 
-### Results on the 2 Stripe `7.9 MB` tasks (`8` assertions; raw spec not attempted)
+### Results on the 2 Stripe `7.9 MB` tasks (`8` assertions; `raw_spec` rejected with `Prompt is too long`)
 
 | Condition | Mean exact task pass rate | Mean assertions passed | Sum of median Claude API input tokens | Mean observed API cost (USD) | Sum of median API latency |
 |---|---:|---:|---:|---:|---:|
@@ -50,7 +50,7 @@ Comparing `raw_spec` against Vimanam strictly across the same 8 tasks where raw 
 | **`summary`** | `0.0%` | `2.0 / 8` (`25.0%`) | `24,057` | `$0.0022` | `5.3 s` |
 | **`oracle_slice`** *(`--schema-depth 2`)* | **`83.4%`** | **`7.67 / 8` (`95.9%`)** | **`34,031`** | **`$0.0030`** | **`5.2 s`** |
 | **`routed_e2e`** *(unbounded `--schema` pitfall)* | `50.0%` | `7.0 / 8` (`87.5%`) | `598,784` *(see finding 4)* | `$0.1998` | `12.9 s` |
-| **`raw_spec`** *(7.9 MB JSON)* | — | **Not attempted** | — *(>2M est.; >1M window)* | — | — |
+| **`raw_spec`** *(7.9 MB JSON)* | `0.0%` | **`0.0 / 8`** *(`Prompt is too long`)* | `0` *(`exit 1`, `blocking_limit`)* | `$0.0000` | `0 ms` API *(`10.4–12.6 s` CLI wall)* |
 
 ### Per-task breakdown (`3` trials per cell; `1` trial on large `raw_spec`)
 
@@ -59,8 +59,8 @@ Comparing `raw_spec` against Vimanam strictly across the same 8 tasks where raw 
 | `oa_embeddings` (`POST /embeddings`) | OpenAPI YAML (`1.3 MB`) | `0/5` | `1/5` | **`5/5`** · `3/3` · `8,729` | `4.67/5` · `2,925` | `5/5` · `408,004` |
 | `oa_batches` (`POST /batches`) | OpenAPI YAML (`1.3 MB`) | `0/5` | `1/5` | `4/5` · `0/3` · `6,906` *(see finding 2)* | `3/5` · `3,550` | `5/5` · `407,998` |
 | `oa_files` (`POST /files`) | OpenAPI YAML (`1.3 MB`) | `0/4` | `1/4` | **`4/4`** · `3/3` · `6,178` | `3/4` · `2,834` | `4/4` · `407,986` |
-| `oa_stripe_customers` (`POST /v1/customers`) | OpenAPI JSON (`7.9 MB`) | `0/4` | `1/4` | **`4/4`** · `3/3` · `559,554` *(t2: `19,712`)* | `3.67/4` · `7,256` | **Not attempted** |
-| `oa_stripe_payment_intents` (`POST /v1/payment_intents`) | OpenAPI JSON (`7.9 MB`) | `0/4` | `1/4` | `3/4` · `0/3` · `39,230` *(see finding 2)* | **`4/4`** · `26,775` | **Not attempted** |
+| `oa_stripe_customers` (`POST /v1/customers`) | OpenAPI JSON (`7.9 MB`) | `0/4` | `1/4` | **`4/4`** · `3/3` · `559,554` *(t2: `19,712`)* | `3.67/4` · `7,256` | **`0/4`** · `Prompt is too long` (`exit 1`) |
+| `oa_stripe_payment_intents` (`POST /v1/payment_intents`) | OpenAPI JSON (`7.9 MB`) | `0/4` | `1/4` | `3/4` · `0/3` · `39,230` *(see finding 2)* | **`4/4`** · `26,775` | **`0/4`** · `Prompt is too long` (`exit 1`) |
 | `pb_health_watch` (`Health.Watch`) | Protobuf (`1.7 KB`) | `2/6` | `6/6` | **`6/6`** · `3/3` · `5,881` | `6/6` · `2,707` | `6/6` · `2,167` |
 | `pb_otel_trace` (`TraceService.Export`) | Protobuf (`32 KB`) | `2.33/7` | `2.33/7` | **`6.33/7`** · `2/3` · `21,153` | `3/7` · `3,691` *(depth-3 cutoff)* | `7/7` · `11,844` |
 | `pb_otel_metrics` (`MetricsService.Export`) | Protobuf (`47 KB`) | `5/5` | `1.67/5` | **`5/5`** · `3/3` · `33,959` | `2.33/5` · `3,740` *(depth-3 cutoff)* | `5/5` · `17,230` |
