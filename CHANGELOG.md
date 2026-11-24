@@ -24,6 +24,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   request and non-breaking on a response. In v2/v1 JSON the change has
   target `other` at the `/enum` pointer. With both fixes, the OpenAI
   `a01e367..373f26a` diff drops from 62 breaking findings to 4, all genuine.
+- `diff` rates any schema change at or beneath a `not` keyword as Review.
+  `not` reverses every compatibility direction, so the ordinary request and
+  response rules misclassified those changes.
 - OpenAPI 3.1 `type` arrays keep `"null"` (#166): `["string", "null"]` now
   reads as `string` with `nullable: true`, so it renders `string | null` and
   `diff` classifies `"string"` ↔ `["string", "null"]` exactly like OAS 3.0

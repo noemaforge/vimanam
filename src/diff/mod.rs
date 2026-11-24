@@ -50,7 +50,7 @@ mod render;
 mod value;
 
 pub use render::write_diff;
-pub(crate) use value::{Location, diff_values, locate};
+pub(crate) use value::{Location, diff_values, locate, under_not};
 pub use value::{ValueChange, ValueChangeKind};
 
 use std::collections::{HashMap, HashSet};
@@ -355,6 +355,10 @@ impl SpecDiff {
 /// | `nullable` became `false` | Non-breaking |
 /// | anything else | Review |
 ///
+/// Any change at or beneath a `not` keyword (in either table) is Review: `not`
+/// reverses every direction above, so narrowing the excluded schema widens
+/// what is accepted or returned, and vice versa.
+///
 /// When a property is removed, the companion "removed from `required`" row for
 /// the same property is not reported at all (see `value_changes`).
 pub fn severity(change: &Change) -> Severity {
@@ -408,6 +412,10 @@ fn became(kind: &ValueChangeKind, flag: bool) -> bool {
 fn request_schema_severity(change: &ValueChange) -> Severity {
     use ValueChangeKind::{Added, Removed};
 
+    if under_not(&change.pointer) {
+        return Severity::Review;
+    }
+
     match (locate(&change.pointer), &change.kind) {
         (Location::RequiredElement, Added(_)) => Severity::Breaking,
         (Location::RequiredElement, Removed(_)) => Severity::NonBreaking,
@@ -435,6 +443,10 @@ fn response_schema_severity(change: &ValueChange) -> Severity {
     {
         // The response used to document a body and no longer does.
         return Severity::Breaking;
+    }
+
+    if under_not(&change.pointer) {
+        return Severity::Review;
     }
 
     match (locate(&change.pointer), &change.kind) {
@@ -1494,6 +1506,15 @@ mod tests {
 
     #[test]
     fn severity_request_schema_review_rows() {
+        // `not` reverses direction: dropping an excluded enum forbids more.
+        assert_eq!(
+            request(removed("/properties/s/not/enum", json!(["a"]))),
+            Severity::Review
+        );
+        assert_eq!(
+            request(added("/not", json!({"type": "string"}))),
+            Severity::Review
+        );
         assert_eq!(
             request(changed("/format", json!("float"), json!("double"))),
             Severity::Review
@@ -1600,6 +1621,15 @@ mod tests {
 
     #[test]
     fn severity_response_schema_review_rows() {
+        // `not` reverses direction: a smaller excluded set widens the output.
+        assert_eq!(
+            response(removed("/not/enum/a", json!("a"))),
+            Severity::Review
+        );
+        assert_eq!(
+            response(removed("/properties/s/not/properties/x", json!({}))),
+            Severity::Review
+        );
         // Dropping the restriction widens the response like a new member.
         assert_eq!(
             response(removed("/properties/s/enum", json!(["a", "b"]))),

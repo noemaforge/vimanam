@@ -577,3 +577,33 @@ fn diff_whole_enum_keyword_follows_direction() {
         "{stdout}"
     );
 }
+
+// `not` reverses every direction, so changes beneath it are left to review.
+#[test]
+fn diff_changes_under_not_are_review() {
+    let pointer = format!("{ITEM_INPUT}/note");
+    let excluded = json!({"type": "string", "not": {"type": "string", "enum": ["a"]}});
+    // Dropping the excluded enum makes `not` match every string: no longer a
+    // safe non-breaking widening, so it must not pass silently either way.
+    let (stdout, code) = type_array_diff(
+        |old| set(old, &pointer, excluded.clone()),
+        |new| {
+            set(
+                new,
+                &pointer,
+                json!({"type": "string", "not": {"type": "string"}}),
+            )
+        },
+    );
+    assert_eq!(code, 0, "{stdout}");
+    assert!(
+        stdout.contains("0 breaking, 0 non-breaking, 1 to review"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains(
+            "| Request schema changed | `POST /items` | `/properties/note/not/enum` removed |"
+        ),
+        "{stdout}"
+    );
+}

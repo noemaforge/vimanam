@@ -147,6 +147,22 @@ fn empty_counterpart(child: Node, present: &Value) -> Option<Value> {
     }
 }
 
+/// True when `pointer` addresses a `not` keyword or anything beneath one,
+/// walked with the schema grammar so a *property* named `not` does not count.
+/// Under `not` every compatibility direction is reversed (narrowing the
+/// excluded set widens the schema), so callers leave such changes to review.
+pub(crate) fn under_not(pointer: &str) -> bool {
+    let mut node = Node::Schema;
+    for segment in pointer.split('/').skip(1) {
+        let segment = decode_json_pointer_token(segment);
+        if node == Node::Schema && segment == "not" {
+            return true;
+        }
+        node = node.child(&segment);
+    }
+    false
+}
+
 /// Encodes a JSON Pointer reference token (RFC 6901): `~` → `~0`, `/` → `~1`.
 fn encode_json_pointer_token(token: &str) -> String {
     token.replace('~', "~0").replace('/', "~1")
@@ -481,6 +497,12 @@ mod tests {
         assert_eq!(locate("/properties/s/enum/a"), Location::EnumElement);
         assert_eq!(locate("/properties/s/enum"), Location::Enum);
         assert_eq!(locate("/properties/enum"), Location::Property);
+        assert!(under_not("/not"));
+        assert!(under_not("/properties/a/not/enum/x"));
+        assert!(under_not("/allOf/0/not/type"));
+        assert!(!under_not("/properties/not"));
+        assert!(!under_not("/properties/not/type"));
+        assert!(!under_not("/notes"));
         assert_eq!(
             locate("/additionalProperties"),
             Location::AdditionalProperties

@@ -261,3 +261,56 @@ fn v2_whole_enum_keyword_follows_direction() {
     assert_eq!(request[0].3, "non_breaking");
     assert_eq!(code, Some(0));
 }
+
+/// Pins the JSON shape of a whole-`enum` keyword change (`Location::Enum`):
+/// target `other` at the `/enum` pointer, in both contract versions.
+#[test]
+fn dropped_request_enum_json_shape_in_v1_and_v2() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut spec: Value =
+        serde_json::from_str(&std::fs::read_to_string(TYPE_ARRAY).unwrap()).unwrap();
+    spec["components"]["schemas"]["ItemInput"]["properties"]["status"]
+        .as_object_mut()
+        .unwrap()
+        .remove("enum");
+    let new = dir.path().join("new.json");
+    std::fs::write(&new, serde_json::to_string(&spec).unwrap()).unwrap();
+    let run = |contract: &str| -> Value {
+        let output = vimanam()
+            .args(["diff", TYPE_ARRAY])
+            .arg(&new)
+            .args(["--format", "json", "--contract", contract])
+            .output()
+            .unwrap();
+        serde_json::from_slice(&output.stdout).unwrap()
+    };
+    let request_change = |document: &Value| -> Value {
+        let matches: Vec<&Value> = document["changes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|c| {
+                c["details"]["schema_change"]["pointer"] == "/properties/status/enum"
+                    && (c["kind"] == "request_schema_changed"
+                        || c["native_kind"] == "request_schema_changed")
+            })
+            .collect();
+        assert_eq!(matches.len(), 1, "{document}");
+        matches[0].clone()
+    };
+
+    let v2 = request_change(&run("2"));
+    assert_eq!(v2["kind"], "constraint_changed");
+    assert_eq!(v2["severity"], "non_breaking");
+    assert_eq!(v2["native"]["pointer"], "/properties/status/enum");
+    assert_eq!(v2["details"]["schema_change"]["target"], "other");
+    assert_eq!(v2["details"]["schema_change"]["operation"], "removed");
+    assert_eq!(v2["details"]["schema_change"]["member"], Value::Null);
+
+    let v1 = request_change(&run("1"));
+    assert_eq!(v1["kind"], "request_schema_changed");
+    assert_eq!(v1["severity"], "non_breaking");
+    assert_eq!(v1["details"]["schema_change"]["target"], "other");
+    assert_eq!(v1["details"]["schema_change"]["operation"], "removed");
+    assert_eq!(v1["details"]["schema_change"]["member"], Value::Null);
+}
