@@ -358,7 +358,7 @@ pub(super) fn generate_by_service<W: Write>(
     render_schema_definitions(writer, &mut schema_ctx)?;
 
     Ok(ViewRender {
-        omissions: schema_ctx.take_omissions(),
+        omissions: schema_ctx.take_omission_lines(),
         schema_uses: schema_ctx.schema_uses().clone(),
     })
 }
@@ -443,7 +443,7 @@ pub(super) fn generate_by_method<W: Write>(
     render_schema_definitions(writer, &mut schema_ctx)?;
 
     Ok(ViewRender {
-        omissions: schema_ctx.take_omissions(),
+        omissions: schema_ctx.take_omission_lines(),
         schema_uses: schema_ctx.schema_uses().clone(),
     })
 }
@@ -511,7 +511,7 @@ pub(super) fn generate_by_path<W: Write>(
     render_schema_definitions(writer, &mut schema_ctx)?;
 
     Ok(ViewRender {
-        omissions: schema_ctx.take_omissions(),
+        omissions: schema_ctx.take_omission_lines(),
         schema_uses: schema_ctx.schema_uses().clone(),
     })
 }
@@ -538,7 +538,7 @@ pub(super) fn generate_flat<W: Write>(
     render_schema_definitions(writer, &mut schema_ctx)?;
 
     Ok(ViewRender {
-        omissions: schema_ctx.take_omissions(),
+        omissions: schema_ctx.take_omission_lines(),
         schema_uses: schema_ctx.schema_uses().clone(),
     })
 }

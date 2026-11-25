@@ -31,6 +31,8 @@ pub(crate) use views::{removing_filters, service_is_visible, visible_endpoints};
 // `diff` compares the response schema the renderer would document.
 pub(crate) use schema::{PREFER_REF_DESCRIPTION_EXT, response_schema};
 // The `--costs` analysis measures schema use sites and per-schema renders.
+#[cfg(feature = "cli")]
+pub(crate) use schema::AUTO_SCHEMA_DEPTH_THRESHOLD;
 pub(crate) use schema::SchemaUse;
 #[cfg(feature = "cli")]
 pub(crate) use schema::{
@@ -95,6 +97,126 @@ pub fn generate_markdown_with_notices<W: Write>(
 ///
 /// Crate-visible so `--stats` can size trial renders without a token budget.
 pub(crate) fn render<W: Write>(
+    writer: &mut W,
+    doc: &ApiDocumentation,
+    config: &DocConfig,
+) -> Result<ViewRender> {
+    let resolved = resolve_schema_depth(doc, config);
+    let mut rendered = render_resolved(writer, doc, &resolved)?;
+    if let Some(bound_notice) = &resolved.notice {
+        rendered.omissions.insert(0, bound_notice.clone());
+    }
+    Ok(rendered)
+}
+
+/// A configuration whose effective `--schema-depth` has been decided once,
+/// so every measurement of one run (`--stats`, `--costs` rows and slices)
+/// uses the same depth as the whole render.
+pub(crate) struct ResolvedConfig<'c> {
+    pub config: std::borrow::Cow<'c, DocConfig>,
+    /// Stderr notice when the depth was chosen automatically (#160).
+    pub notice: Option<String>,
+}
+
+impl ResolvedConfig<'_> {
+    /// The automatically chosen depth, if any.
+    pub(crate) fn auto_depth(&self) -> Option<usize> {
+        self.notice.as_ref().and(self.config.schema_depth)
+    }
+}
+
+/// Bounds a selected slice at [`schema::AUTO_SCHEMA_DEPTH`] when
+/// `--schema-depth` is not set and the slice's roots reach more than
+/// [`schema::AUTO_SCHEMA_DEPTH_THRESHOLD`] component schemas (#160). Slices are
+/// standalone `--schema`/`--schema-field` reads and `--operation`/
+/// `--operation-id` renders at `--detail full --include-schemas`; whole
+/// documents, which already render each component once, are unchanged.
+pub(crate) fn resolve_schema_depth<'c>(
+    doc: &ApiDocumentation,
+    config: &'c DocConfig,
+) -> ResolvedConfig<'c> {
+    let unchanged = ResolvedConfig {
+        config: std::borrow::Cow::Borrowed(config),
+        notice: None,
+    };
+    if config.schema_depth.is_some() {
+        return unchanged;
+    }
+    let selected;
+    let roots: Vec<&crate::models::Schema> = if schema_selection::active(config) {
+        let Ok(found) = schema_selection::selections(doc, config) else {
+            return unchanged;
+        };
+        selected = found;
+        selected.iter().map(|(_, schema)| schema).collect()
+    } else if config.operation_selector.is_some()
+        && config.detail_level == DetailLevel::Full
+        && config.include_schemas
+    {
+        visible_endpoints(doc, config)
+            .into_iter()
+            .flat_map(schema::rendered_endpoint_schemas)
+            .collect()
+    } else {
+        return unchanged;
+    };
+    let threshold = schema::AUTO_SCHEMA_DEPTH_THRESHOLD;
+    if schema::reachable_component_count(doc, roots, threshold) <= threshold {
+        return unchanged;
+    }
+    let depth = schema::AUTO_SCHEMA_DEPTH;
+    let mut bounded = config.clone();
+    bounded.schema_depth = Some(depth);
+    ResolvedConfig {
+        config: std::borrow::Cow::Owned(bounded),
+        notice: Some(format!(
+            "vimanam: selection reaches more than {threshold} component schemas and --schema-depth is not set; bounding schema expansion at --schema-depth {depth} (pass --schema-depth 0..=24 to choose)"
+        )),
+    }
+}
+
+/// Renders exactly at the resolved depth, never re-deciding it. When the depth
+/// was chosen automatically, a one-line blockquote after the document title
+/// says so, so a reader of the Markdown alone (e.g. `-o` output) knows the
+/// slice is bounded.
+pub(crate) fn render_resolved<W: Write>(
+    writer: &mut W,
+    doc: &ApiDocumentation,
+    resolved: &ResolvedConfig,
+) -> Result<ViewRender> {
+    let Some(depth) = resolved.auto_depth() else {
+        return render_configured(writer, doc, &resolved.config);
+    };
+    let mut buffer = Vec::new();
+    let rendered = render_configured(&mut buffer, doc, &resolved.config)?;
+    // Every view starts with `# {title}` written verbatim, so a title holding
+    // a newline spans several lines; the schema selection escapes its title
+    // onto one line. Place the note after the whole title either way.
+    let views_title = format!("# {}\n", doc.title);
+    let split = if buffer.starts_with(views_title.as_bytes()) {
+        views_title.len()
+    } else {
+        buffer
+            .iter()
+            .position(|byte| *byte == b'\n')
+            .map_or(0, |index| index + 1)
+    };
+    writer.write_all(&buffer[..split])?;
+    write!(
+        writer,
+        "\n> Schema expansion is bounded at --schema-depth {depth}: this selection reaches more than {} component schemas. Follow the per-row retrieval commands, or pass --schema-depth N (0..=24) to choose another bound.\n",
+        schema::AUTO_SCHEMA_DEPTH_THRESHOLD
+    )?;
+    let rest = &buffer[split..];
+    // Exactly one blank line before what followed the title.
+    if !rest.starts_with(b"\n") {
+        writeln!(writer)?;
+    }
+    writer.write_all(rest)?;
+    Ok(rendered)
+}
+
+fn render_configured<W: Write>(
     writer: &mut W,
     doc: &ApiDocumentation,
     config: &DocConfig,

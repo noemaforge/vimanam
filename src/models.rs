@@ -573,7 +573,9 @@ pub struct DocConfig {
     // "Schema Definitions" section (the fully self-contained output).
     /// Expand references at each use site instead of linking definitions.
     pub inline_schemas: bool,
-    /// Maximum schema traversal edges from a root, in `0..=24`.
+    /// Maximum schema traversal edges from a root, in `0..=24`. When unset, a
+    /// selected slice whose roots reach more than 200 component schemas is
+    /// rendered at depth 2 (with a notice); everything else is unbounded.
     pub schema_depth: Option<usize>,
     /// Named schemas to render independently of endpoint reachability.
     pub schema_names: Vec<String>,

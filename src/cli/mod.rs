@@ -387,6 +387,9 @@ pub fn run<W: Write>(cli: &Cli, output: &mut W, notice: &mut dyn FnMut(&str)) ->
     if cli.stats {
         let stats = stats::compute(&api_doc, &config).context("Failed to compute stats")?;
         stats::write_stats(output, &stats).context("Failed to write stats")?;
+        if let Some(bound) = &stats.notice {
+            notice(bound);
+        }
         warn_filtered_out_selectors(&api_doc, &config, notice);
         return Ok(false);
     }
@@ -398,6 +401,9 @@ pub fn run<W: Write>(cli: &Cli, output: &mut W, notice: &mut dyn FnMut(&str)) ->
     if cli.costs {
         let costs = costs::compute(&api_doc, &config).context("Failed to compute token costs")?;
         costs::write_costs(output, &costs).context("Failed to write token costs")?;
+        if let Some(bound) = &costs.notice {
+            notice(bound);
+        }
         warn_filtered_out_selectors(&api_doc, &config, notice);
         return Ok(false);
     }

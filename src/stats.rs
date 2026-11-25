@@ -31,7 +31,10 @@ use std::io::Write;
 
 use anyhow::Result;
 
-use crate::markdown::{estimate_tokens, render, service_is_visible, visible_endpoints};
+use crate::markdown::{
+    ResolvedConfig, estimate_tokens, render_resolved, resolve_schema_depth, service_is_visible,
+    visible_endpoints,
+};
 use crate::models::{ApiDocumentation, DocConfig};
 
 /// One row of the table: a service, its visible endpoint count, and the
@@ -53,22 +56,29 @@ pub(crate) struct Stats {
     pub total_endpoints: usize,
     /// Estimated tokens of one render of the whole filtered document.
     pub total_tokens: usize,
+    /// Stderr notice when `--schema-depth` was chosen automatically (#160);
+    /// every row and TOTAL were measured at that depth.
+    pub notice: Option<String>,
 }
 
 /// Estimates the token size of rendering `doc` under `config` at the
 /// configured detail level (no budget stepping: `--stats` conflicts with
 /// `--max-tokens`).
-fn estimate_render(doc: &ApiDocumentation, config: &DocConfig) -> Result<usize> {
+fn estimate_render(doc: &ApiDocumentation, resolved: &ResolvedConfig) -> Result<usize> {
     let mut buffer = Vec::new();
     // Discard omission notices and use-site observations: stats sizes trial
     // renders and must stay silent.
-    let _rendered = render(&mut buffer, doc, config)?;
+    let _rendered = render_resolved(&mut buffer, doc, resolved)?;
     Ok(estimate_tokens(&buffer))
 }
 
 /// Computes the per-service and total statistics (see the module docs for the
 /// exact scoping rules).
 pub(crate) fn compute(doc: &ApiDocumentation, config: &DocConfig) -> Result<Stats> {
+    // Decide the effective schema depth once, so rows match TOTAL and the
+    // real render of the same flags.
+    let resolved = resolve_schema_depth(doc, config);
+    let config: &DocConfig = &resolved.config;
     let endpoints = visible_endpoints(doc, config);
 
     let mut rows = Vec::new();
@@ -96,7 +106,13 @@ pub(crate) fn compute(doc: &ApiDocumentation, config: &DocConfig) -> Result<Stat
         rows.push(ServiceStats {
             name: service.name.clone(),
             endpoints: count,
-            tokens: estimate_render(doc, &service_config)?,
+            tokens: estimate_render(
+                doc,
+                &ResolvedConfig {
+                    config: std::borrow::Cow::Owned(service_config),
+                    notice: resolved.notice.clone(),
+                },
+            )?,
         });
     }
 
@@ -105,13 +121,14 @@ pub(crate) fn compute(doc: &ApiDocumentation, config: &DocConfig) -> Result<Stat
     let total_tokens = if endpoints.is_empty() {
         0
     } else {
-        estimate_render(doc, config)?
+        estimate_render(doc, &resolved)?
     };
 
     Ok(Stats {
         rows,
         total_endpoints: endpoints.len(),
         total_tokens,
+        notice: resolved.notice.clone(),
     })
 }
 
@@ -201,6 +218,7 @@ mod tests {
             ],
             total_endpoints: 49,
             total_tokens: 6300,
+            notice: None,
         };
 
         assert_eq!(

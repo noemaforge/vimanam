@@ -294,10 +294,10 @@ fn full_detail_links_schema_refs_to_definitions() {
         .success()
         // The use site is a single linked row, not a re-inlined subtree.
         .stdout(predicate::str::contains(
-            "| `request` | [CreatePetRequest](#schema-createpetrequest) | - | - |",
+            "| `(request body)` | [CreatePetRequest](#schema-createpetrequest) | - | - |",
         ))
         .stdout(predicate::str::contains(
-            "| `response` | [Pet](#schema-pet) | - | - |",
+            "| `(response body)` | [Pet](#schema-pet) | - | - |",
         ))
         // The shared schemas are expanded once in the definitions section.
         .stdout(predicate::str::contains("## Schema Definitions"))
@@ -367,15 +367,15 @@ fn inline_schemas_expands_refs_at_each_use_site() {
         .assert()
         .success()
         .stdout(predicate::str::contains(
-            "| `request.name` | string | Yes | Pet name |",
+            "| `name` | string | Yes | Pet name |",
         ))
         .stdout(predicate::str::contains(
-            "| `request.category.id` | string | Yes | Category identifier |",
+            "| `category.id` | string | Yes | Category identifier |",
         ))
         .stdout(predicate::str::contains(
-            "| `response.allOf[1].id` | string | Yes | Pet identifier |",
+            "| `allOf[1].id` | string | Yes | Pet identifier |",
         ))
-        .stdout(predicate::str::contains("request.variant.oneOf[0]"))
+        .stdout(predicate::str::contains("| `variant.oneOf[0]` |"))
         .stdout(predicate::str::contains("## Schema Definitions").not());
 }
 

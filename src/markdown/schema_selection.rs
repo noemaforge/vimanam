@@ -29,7 +29,10 @@ pub(crate) fn validate(doc: &ApiDocumentation, config: &DocConfig) -> Result<()>
     Ok(())
 }
 
-fn selections(doc: &ApiDocumentation, config: &DocConfig) -> Result<Vec<(String, Schema)>> {
+pub(super) fn selections(
+    doc: &ApiDocumentation,
+    config: &DocConfig,
+) -> Result<Vec<(String, Schema)>> {
     let mut result = Vec::new();
     for name in &config.schema_names {
         let schema = doc
@@ -197,9 +200,15 @@ pub(super) fn render<W: Write>(
         "# {} — Selected schemas\n",
         super::split::escape(&doc.title)
     )?;
+    let named = match config.schema_depth {
+        Some(depth) => format!(
+            "named-schema selectors retain complete schemas up to --schema-depth {depth}, with deeper branches replaced by retrieval commands"
+        ),
+        None => "named-schema selectors retain complete schemas".to_string(),
+    };
     writeln!(
         writer,
-        "> Explicit schema read. Field selectors omit unselected sibling subtrees and their references; named-schema selectors retain complete schemas. Absence here does not mean absence from the spec.\n"
+        "> Explicit schema read. Field selectors omit unselected sibling subtrees and their references; {named}. Absence here does not mean absence from the spec.\n"
     )?;
     if config.operation_selector.is_some() {
         writeln!(writer, "## Operation context\n")?;
@@ -250,12 +259,26 @@ pub(super) fn render<W: Write>(
             super::split::proto_path_flags(source, &config.proto_paths),
             super::split::quote_shell(name)
         );
-        writeln!(
-            writer,
-            "\nRetrieve the complete named schema without selection/depth limits:\n\n```sh\n{command}\n```\n"
-        )?;
+        // A large named schema is itself auto-bounded (#160), so do not
+        // promise an unlimited read for it.
+        let threshold = super::schema::AUTO_SCHEMA_DEPTH_THRESHOLD;
+        let large = doc.schemas.get(name).is_some_and(|schema| {
+            super::schema::reachable_component_count(doc, [schema], threshold) > threshold
+        });
+        if large {
+            writeln!(
+                writer,
+                "\nRetrieve the named schema without field selection (it reaches more than {threshold} component schemas, so expansion is bounded at --schema-depth {} unless --schema-depth is passed):\n\n```sh\n{command}\n```\n",
+                super::schema::AUTO_SCHEMA_DEPTH
+            )?;
+        } else {
+            writeln!(
+                writer,
+                "\nRetrieve the complete named schema without selection/depth limits:\n\n```sh\n{command}\n```\n"
+            )?;
+        }
     }
     ctx.set_active_selector(None);
     render_schema_definitions(writer, &mut ctx)?;
-    Ok(ctx.take_omissions())
+    Ok(ctx.take_omission_lines())
 }
