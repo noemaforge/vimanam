@@ -98,6 +98,15 @@ The merge scenario showed no measured benefit (6.5% slower here), with two
 additional probes. Timings vary by machine and load; the raw file retains the
 sample ranges, and these measurements are not a promise for other repositories.
 
+## `benchmark-diff-refs.py`
+
+The timing check for `vimanam diff` on large `$ref` graphs (#152). It uses only the standard library, needs Git, and uses the same `--corpus` layout as `benchmark-public.py` (`openai-repo/`, `stripe-openapi/`). It extracts pinned OpenAI and Stripe revisions and runs each pair serially in Markdown, v1 JSON and v2 JSON. It reports the median and min–max wall time, peak RSS (`wait4`), and output bytes and SHA-256. With `--baseline BIN` it runs a second binary on the same inputs and exits 1 if any output differs where the baseline finished within `--timeout`. The Stripe `2bab976..bcfd59f` release pair is kept as a known timeout: its one changed component sits under millions of reference paths.
+
+```bash
+python3 scripts/benchmark-diff-refs.py --binary target/release/vimanam \
+  --baseline /tmp/vimanam-main --corpus /tmp/vimanam-eval-corpus --runs 5
+```
+
 ## `benchmark-public.py` and `eval-context-accuracy.py`
 
 Reproducible evaluation scripts backing the [Benchmarks](https://noemaforge.github.io/vimanam/benchmarks/) section (`v2.2 standalone & LLM eval`, `v2.2 vs v2.1 upgrade`, and `v2.2 vs external tools`). Both use public open-source specifications (pinned SHAs for Stripe OpenAPI, OpenAI OpenAPI, GitHub GraphQL, SpaceX Land GraphQL, OpenTelemetry Proto, and gRPC Health) plus three checked-in synthetic multi-file Protobuf specs under `scripts/eval-fixtures/protos/`:

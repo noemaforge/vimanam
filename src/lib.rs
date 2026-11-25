@@ -38,6 +38,7 @@ pub mod markdown;
 mod models;
 mod parser;
 mod report;
+mod resolve;
 pub mod selection;
 #[cfg(feature = "cli")]
 mod stats;

@@ -2,7 +2,7 @@
 //! type facts are review because a type can occur in both input and output.
 use super::*;
 use crate::diff::{self, Location, ValueChange, ValueChangeKind};
-use crate::utils::resolve_schema_value;
+use crate::resolve::{DocResolver, PairResolver, contains_ref, schema_json};
 use crate::{ApiDocumentation, Endpoint, Schema};
 use serde_json::json;
 use std::collections::{HashMap, HashSet};
@@ -418,16 +418,33 @@ pub fn diff_with(
     new: &ApiDocumentation,
     matching: diff::EndpointMatching,
 ) -> anyhow::Result<Vec<Change>> {
-    diff_from(old, new, &diff::diff_with(old, new, matching))
+    let resolver = PairResolver::new(&old.schemas, &new.schemas);
+    let legacy = diff::diff_with_resolver(old, new, matching, &resolver);
+    diff_from(old, new, &legacy, &resolver)
 }
 
 /// [`diff_with`] over an already computed endpoint diff of the same specs, so
 /// callers that also render it compute operation moves once.
+///
+/// `resolver` must be built over the same two specs' schemas; moved operations
+/// only re-key endpoints, so it serves the aligned old copy too.
 pub(crate) fn diff_from(
     old: &ApiDocumentation,
     new: &ApiDocumentation,
     legacy: &diff::SpecDiff,
+    resolver: &PairResolver,
 ) -> anyhow::Result<Vec<Change>> {
+    diff_from_surfaces(old, new, legacy, resolver).map(|(changes, _, _)| changes)
+}
+
+/// [`diff_from`], also returning the old and new surfaces ([`adapt`]) it
+/// built, so a caller that serializes them does not adapt each spec again.
+pub(crate) fn diff_from_surfaces(
+    old: &ApiDocumentation,
+    new: &ApiDocumentation,
+    legacy: &diff::SpecDiff,
+    resolver: &PairResolver,
+) -> anyhow::Result<(Vec<Change>, Contract, Contract)> {
     // Moved operations: (method, old path) -> new path.
     let moved: HashMap<(&str, &str), &str> = legacy
         .changes
@@ -456,17 +473,21 @@ pub(crate) fn diff_from(
         aligned = copy;
         &aligned
     };
-    let changes = compare_aligned(old, new, legacy)?;
+    let new_surface = adapt(new);
+    let aligned_surface = adapt(old);
+    let changes = compare_aligned(old, new, legacy, resolver, &aligned_surface, &new_surface)?;
     if moved.is_empty() {
-        return Ok(changes);
+        return Ok((changes, aligned_surface, new_surface));
     }
-    Ok(restore_removal_sides(
+    let original_surface = adapt(original_old);
+    let changes = restore_removal_sides(
         changes,
-        original_old,
-        old,
-        new,
+        &original_surface,
+        &aligned_surface,
+        &new_surface,
         &moved,
-    ))
+    );
+    Ok((changes, original_surface, new_surface))
 }
 
 /// Re-keys removal facts on moved operations from the aligned old copy (old
@@ -474,13 +495,11 @@ pub(crate) fn diff_from(
 /// location, so they resolve in the old surface exactly as in exact mode.
 fn restore_removal_sides(
     mut changes: Vec<Change>,
-    original_old: &ApiDocumentation,
-    aligned_old: &ApiDocumentation,
-    new: &ApiDocumentation,
+    original: &Contract,
+    aligned: &Contract,
+    new: &Contract,
     moved: &HashMap<(&str, &str), &str>,
 ) -> Vec<Change> {
-    let original = adapt(original_old);
-    let aligned = adapt(aligned_old);
     debug_assert_eq!(original.entities.len(), aligned.entities.len());
     let subjects: HashMap<&str, &str> = aligned
         .entities
@@ -489,7 +508,7 @@ fn restore_removal_sides(
         .filter(|(a, o)| a.id != o.id)
         .map(|(a, o)| (a.id.as_str(), o.id.as_str()))
         .collect();
-    let new_ids: HashSet<String> = adapt(new).entities.into_iter().map(|e| e.id).collect();
+    let new_ids: HashSet<&str> = new.entities.iter().map(|e| e.id.as_str()).collect();
     // (method, new path) -> old path
     let old_paths: HashMap<(&str, &str), &str> = moved
         .iter()
@@ -506,7 +525,7 @@ fn restore_removal_sides(
         let Some(&subject) = subjects.get(change.subject.as_str()) else {
             continue;
         };
-        if !removal && new_ids.contains(&change.subject) {
+        if !removal && new_ids.contains(change.subject.as_str()) {
             continue;
         }
         change.subject = subject.to_string();
@@ -530,6 +549,9 @@ fn compare_aligned(
     old: &ApiDocumentation,
     new: &ApiDocumentation,
     legacy: &diff::SpecDiff,
+    resolver: &PairResolver,
+    old_surface: &Contract,
+    new_surface: &Contract,
 ) -> anyhow::Result<Vec<Change>> {
     // Endpoint lookup for each legacy change: old spec first, then new.
     let mut by_key: HashMap<(&str, &str), &Endpoint> = HashMap::new();
@@ -666,8 +688,6 @@ fn compare_aligned(
     }
     // Named type changes remain independent of reachability. Review avoids
     // claiming a directional verdict for unused or mixed-use definitions.
-    let old_surface = adapt(old);
-    let new_surface = adapt(new);
     let types = |c: &Contract| Contract {
         entities: c
             .entities
@@ -678,8 +698,8 @@ fn compare_aligned(
         ..c.clone()
     };
     changes.extend(compare(
-        &types(&old_surface),
-        &types(&new_surface),
+        &types(old_surface),
+        &types(new_surface),
         &OpenApiAdapter,
     )?);
     // The mature endpoint differ intentionally omits some neutral facts (for
@@ -733,8 +753,8 @@ fn compare_aligned(
         })
         .collect();
     let supplemental = compare(
-        &operations(&old_surface),
-        &operations(&new_surface),
+        &operations(old_surface),
+        &operations(new_surface),
         &OpenApiAdapter,
     )?
     .into_iter()
@@ -745,11 +765,11 @@ fn compare_aligned(
             .and_then(Value::as_str)
             .unwrap_or("");
         (candidate.kind == ChangeKind::DeprecatedChanged
-            && has_operation_schema_root(&candidate.subject, &old_surface, &new_surface)
+            && has_operation_schema_root(&candidate.subject, old_surface, new_surface)
             && !later_request_body_subject(
                 &candidate.subject,
-                &old_surface,
-                &new_surface,
+                old_surface,
+                new_surface,
                 &first_body_ids,
             ))
             || (candidate.kind == ChangeKind::ConstraintChanged
@@ -774,7 +794,7 @@ fn compare_aligned(
     for candidate in supplemental {
         let mut candidate = candidate;
         if candidate.kind == ChangeKind::DeprecatedChanged {
-            promote_schema_fact_to_use_root(&mut candidate, &old_surface, &new_surface);
+            promote_schema_fact_to_use_root(&mut candidate, old_surface, new_surface);
         }
         if !changes.iter().any(|existing| {
             existing.subject == candidate.subject
@@ -808,15 +828,27 @@ fn compare_aligned(
             if next.parameter_in == "body" && first_body_name(after) != Some(next.name.as_str()) {
                 continue;
             }
-            let left = parameter
-                .schema
-                .as_ref()
-                .map(|s| resolve_schema_value(s, old))
+            // Only ref-bearing schemas can hide a deprecation change the
+            // legacy differ strips; provably identical ones have none. Each
+            // schema is serialized once for the ref check, the proof and the
+            // resolution.
+            let left_json = parameter.schema.as_ref().map(schema_json);
+            let right_json = next.schema.as_ref().map(schema_json);
+            if !(left_json.as_ref().is_some_and(contains_ref)
+                || right_json.as_ref().is_some_and(contains_ref))
+            {
+                continue;
+            }
+            if let (Some(left), Some(right)) = (&left_json, &right_json)
+                && resolver.values_equal(left, right)
+            {
+                continue;
+            }
+            let left = left_json
+                .map(|value| resolver.old.resolve_value(&value))
                 .unwrap_or_else(|| extensions_value(&parameter.extensions));
-            let right = next
-                .schema
-                .as_ref()
-                .map(|s| resolve_schema_value(s, new))
+            let right = right_json
+                .map(|value| resolver.new.resolve_value(&value))
                 .unwrap_or_else(|| extensions_value(&next.extensions));
             let subject = entity_id(
                 Format::Openapi,
@@ -827,19 +859,15 @@ fn compare_aligned(
                     escape(&parameter.name)
                 ),
             );
-            if parameter.schema.as_ref().is_some_and(schema_contains_ref)
-                || next.schema.as_ref().is_some_and(schema_contains_ref)
-            {
-                append_deprecation_facts(
-                    &mut changes,
-                    &subject,
-                    before,
-                    &left,
-                    &right,
-                    Some(parameter.parameter_in.clone()),
-                    None,
-                );
-            }
+            append_deprecation_facts(
+                &mut changes,
+                &subject,
+                before,
+                &left,
+                &right,
+                Some(parameter.parameter_in.clone()),
+                None,
+            );
         }
         for (status, response) in &before.responses {
             let Some(next) = after.responses.get(status) else {
@@ -851,31 +879,34 @@ fn compare_aligned(
             ) else {
                 continue;
             };
-            let has_ref = schema_contains_ref(left) || schema_contains_ref(right);
-            let left = resolve_schema_value(left, old);
-            let right = resolve_schema_value(right, new);
+            let (left, right) = (schema_json(left), schema_json(right));
+            if !(contains_ref(&left) || contains_ref(&right))
+                || resolver.values_equal(&left, &right)
+            {
+                continue;
+            }
+            let left = resolver.old.resolve_value(&left);
+            let right = resolver.new.resolve_value(&right);
             let subject = entity_id(
                 Format::Openapi,
                 EntityKind::Result,
                 &format!("{root}/results/{}", escape(status)),
             );
-            if has_ref {
-                append_deprecation_facts(
-                    &mut changes,
-                    &subject,
-                    before,
-                    &left,
-                    &right,
-                    None,
-                    Some(status.clone()),
-                );
-            }
+            append_deprecation_facts(
+                &mut changes,
+                &subject,
+                before,
+                &left,
+                &right,
+                None,
+                Some(status.clone()),
+            );
         }
     }
     for e in &old.endpoints {
         if let Some(&next) = new_by_key.get(&(e.method.as_str(), e.path.as_str())) {
-            let before = pagination(e, old);
-            let after = pagination(next, new);
+            let before = pagination(e, &resolver.old);
+            let after = pagination(next, &resolver.new);
             if before != after && (before.is_some() || after.is_some()) {
                 let mut c = Change {
                     id: String::new(),
@@ -945,17 +976,6 @@ fn has_operation_schema_root(subject: &str, old: &Contract, new: &Contract) -> b
             .and_then(|id| find(new, id).or_else(|| find(old, id)));
     }
     false
-}
-
-fn schema_contains_ref(schema: &Schema) -> bool {
-    fn has_ref(value: &Value) -> bool {
-        match value {
-            Value::Object(map) => map.contains_key("$ref") || map.values().any(has_ref),
-            Value::Array(items) => items.iter().any(has_ref),
-            _ => false,
-        }
-    }
-    has_ref(&schema_value(schema))
 }
 
 fn append_deprecation_facts(
@@ -1223,6 +1243,16 @@ fn opaque_string(schema: &Value) -> bool {
             .is_some_and(|f| matches!(f, "date" | "date-time" | "time"))
 }
 
+/// JSON levels of a 2xx response schema that [`pagination`] reads: the root's
+/// `properties` (level 1) map property schemas (level 2), whose `type` and
+/// `properties` (level 3) it reads, and those child schemas (level 4), whose
+/// `type` and `format` it reads. Objects at level 5 and below are never
+/// inspected, so they are left unresolved: fully inlining a list response
+/// (`data: array of a cross-linked object`) can be enormous. Raise this if
+/// `pagination` ever reads deeper; `pagination_reads_only_the_shallow_levels`
+/// fails if the two drift apart.
+const PAGINATION_LEVELS: usize = 5;
+
 /// Inferred OpenAPI pagination evidence for one operation, or `None`.
 ///
 /// Requires at least one exact [`PAGINATION_CONTROLS`] query parameter and a
@@ -1243,7 +1273,16 @@ fn opaque_string(schema: &Value) -> bool {
 /// other. If the other side has broader-only evidence, it replaces 2.0.0's
 /// `null` and the fact's ID changes (pinned by
 /// `evidence_2_0_0_on_one_side_with_broader_evidence_on_the_other_changes_the_id`).
-fn pagination(e: &Endpoint, api: &ApiDocumentation) -> Option<Value> {
+fn pagination(e: &Endpoint, resolver: &DocResolver) -> Option<Value> {
+    pagination_with(e, &|schema| {
+        resolver.resolve_shallow(schema, PAGINATION_LEVELS)
+    })
+}
+
+/// [`pagination`] with the 2xx response resolution supplied by the caller,
+/// so `pagination_reads_only_the_shallow_levels` can check that full and
+/// shallow resolution yield the same evidence.
+fn pagination_with(e: &Endpoint, resolve: &dyn Fn(&Schema) -> Value) -> Option<Value> {
     let query = || e.parameters.iter().filter(|p| p.parameter_in == "query");
     let mut controls: Vec<Value> = query()
         .filter(|p| PAGINATION_CONTROLS.contains(&p.name.as_str()))
@@ -1259,9 +1298,7 @@ fn pagination(e: &Endpoint, api: &ApiDocumentation) -> Option<Value> {
         .responses
         .iter()
         .filter(|(s, _)| s.starts_with('2'))
-        .filter_map(|(s, r)| {
-            crate::markdown::response_schema(r).map(|schema| (s, resolve_schema_value(schema, api)))
-        })
+        .filter_map(|(s, r)| crate::markdown::response_schema(r).map(|schema| (s, resolve(schema))))
         .collect();
     let mut legacy: Vec<Value> = resolved
         .iter()
@@ -1382,4 +1419,104 @@ fn pagination_strength(evidence: &Value) -> (&'static str, String) {
         },
         rule,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{PAGINATION_LEVELS, pagination_with};
+    use crate::models::ApiDocumentation;
+    use crate::resolve::DocResolver;
+    use serde_json::{Value, json};
+
+    /// Pagination evidence for every endpoint, resolving 2xx responses either
+    /// fully or down to `levels` JSON levels.
+    fn evidence(api: &ApiDocumentation, levels: usize) -> Vec<Option<Value>> {
+        let resolver = DocResolver::new(&api.schemas);
+        api.endpoints
+            .iter()
+            .map(|e| pagination_with(e, &|schema| resolver.resolve_shallow(schema, levels)))
+            .collect()
+    }
+
+    /// Continuation, end-flag and list fields reached only through `$ref`s at
+    /// JSON levels 2 to 6 of a 2xx response, under every pagination rule.
+    fn deep_ref_spec() -> ApiDocumentation {
+        let r = |name: &str| json!({"$ref": format!("#/components/schemas/{name}")});
+        let responses = [
+            r("Body"),
+            json!({"allOf": [r("Body")]}),
+            json!({"$ref": "#/components/schemas/Body", "description": "sibling"}),
+            json!({"type": "object", "properties": {"items": r("List"), "meta": r("Meta")}}),
+        ];
+        let paths: serde_json::Map<String, Value> = responses
+            .iter()
+            .enumerate()
+            .flat_map(|(i, response)| {
+                ["page_token", "starting_after", "cursor"].map(|control| {
+                    (
+                        format!("/r{i}/{control}"),
+                        json!({"get": {
+                            "operationId": format!("r{i}_{control}"),
+                            "parameters": [
+                                {"name": "limit", "in": "query", "schema": {"type": "integer"}},
+                                {"name": control, "in": "query", "schema": {"type": "string"}}
+                            ],
+                            "responses": {"200": {"description": "ok", "content": {"application/json": {"schema": response}}}}
+                        }}),
+                    )
+                })
+            })
+            .collect();
+        let spec = json!({
+            "openapi": "3.0.3",
+            "info": {"title": "Deep", "version": "1"},
+            "paths": paths,
+            "components": {"schemas": {
+                "Tok": {"type": "string"},
+                "Flag": {"type": "boolean"},
+                "When": {"type": "string", "format": "date-time"},
+                "Item": {"type": "object", "properties": {"id": r("Tok"), "self": r("Item")}},
+                "List": {"type": "array", "items": r("Item")},
+                "Meta": {"type": "object", "properties": {
+                    "next_cursor": r("Tok"), "has_more": r("Flag"), "deep": r("Deep")
+                }},
+                "Deep": {"type": "object", "properties": {"cursor": r("Tok"), "next": r("Meta")}},
+                "Body": {"type": "object", "properties": {
+                    "data": r("List"), "page": r("Meta"), "next_page_token": r("Tok"),
+                    "starting_after": r("When"), "is_last": r("Flag")
+                }}
+            }}
+        });
+        crate::parse_openapi_bytes(&serde_json::to_vec(&spec).unwrap(), "json", None).unwrap()
+    }
+
+    #[test]
+    fn pagination_reads_only_the_shallow_levels() {
+        let mut specs = vec![("deep_ref_spec".to_string(), deep_ref_spec())];
+        let fixtures = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+        for entry in std::fs::read_dir(fixtures).unwrap() {
+            let path = entry.unwrap().path();
+            if matches!(
+                path.extension().and_then(|e| e.to_str()),
+                Some("json" | "yaml")
+            ) && let Ok(api) = crate::parse_openapi(&path)
+            {
+                specs.push((path.display().to_string(), api));
+            }
+        }
+        assert!(specs.len() > 20, "fixtures were not found");
+        for (name, api) in &specs {
+            assert_eq!(
+                evidence(api, PAGINATION_LEVELS),
+                evidence(api, usize::MAX),
+                "{name}: pagination reads deeper than PAGINATION_LEVELS"
+            );
+        }
+        // The generated spec is sensitive to the cut: one level fewer loses
+        // evidence, so the equality above is not vacuous.
+        let deep = deep_ref_spec();
+        let full = evidence(&deep, usize::MAX);
+        assert!(full.iter().filter(|e| e.is_some()).count() >= 6, "{full:?}");
+        assert_ne!(evidence(&deep, PAGINATION_LEVELS - 1), full);
+    }
 }

@@ -607,3 +607,81 @@ fn diff_changes_under_not_are_review() {
         "{stdout}"
     );
 }
+
+/// A spec whose components all reference each other: fully inlining any one
+/// of them visits every simple path through the graph (exponential), which
+/// made `diff` hang on Stripe's spec (#152).
+fn dense_ref_graph(components: usize, leaf_type: &str) -> serde_json::Value {
+    let names: Vec<String> = (0..components).map(|i| format!("N{i}")).collect();
+    let mut schemas = serde_json::Map::new();
+    for name in &names {
+        let properties: serde_json::Map<String, serde_json::Value> = names
+            .iter()
+            .filter(|other| *other != name)
+            .map(|other| {
+                (
+                    other.to_lowercase(),
+                    json!({"$ref": format!("#/components/schemas/{other}")}),
+                )
+            })
+            .chain([("id".to_string(), json!({"type": "string"}))])
+            .collect();
+        schemas.insert(
+            name.clone(),
+            json!({"type": "object", "properties": properties}),
+        );
+    }
+    schemas.insert("Leaf".into(), json!({"type": leaf_type}));
+    let paths: serde_json::Map<String, serde_json::Value> = names
+        .iter()
+        .map(|name| {
+            let response = json!({"$ref": format!("#/components/schemas/{name}")});
+            (
+                format!("/{}", name.to_lowercase()),
+                json!({"get": {
+                    "operationId": format!("get{name}"),
+                    "parameters": [{"name": "limit", "in": "query", "schema": {"type": "integer"}}],
+                    "responses": {"200": {"description": "ok", "content": {"application/json": {"schema": response}}}}
+                }}),
+            )
+        })
+        .chain([(
+            "/leaf".to_string(),
+            json!({"get": {"responses": {"200": {"description": "ok", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Leaf"}}}}}}}),
+        )])
+        .collect();
+    json!({
+        "openapi": "3.0.3",
+        "info": {"title": "Dense", "version": "1"},
+        "paths": paths,
+        "components": {"schemas": schemas}
+    })
+}
+
+#[test]
+fn diff_skips_resolving_provably_unchanged_cross_linked_schemas() {
+    let dir = tempfile::tempdir().unwrap();
+    let old = write_spec(&dir, "old.json", &dense_ref_graph(12, "string"));
+    let new = write_spec(&dir, "new.json", &dense_ref_graph(12, "integer"));
+    let run = |format: &str| {
+        let output = vimanam()
+            .timeout(std::time::Duration::from_secs(60))
+            .args(["diff", &old, &new, "--format", format])
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(0), "{output:?}");
+        String::from_utf8(output.stdout).unwrap()
+    };
+    // Only the unlinked Leaf changed; none of the dense graph is resolved.
+    let markdown = run("markdown");
+    assert!(markdown.contains("`GET /leaf`"), "{markdown}");
+    assert!(!markdown.contains("`GET /n"), "{markdown}");
+    let json: serde_json::Value = serde_json::from_str(&run("json")).unwrap();
+    let changes = json["changes"].as_array().unwrap();
+    assert!(!changes.is_empty(), "{json}");
+    for change in changes {
+        // Operation facts are all on /leaf; the named-type fact has no path.
+        let path = &change["native"]["path"];
+        assert!(path.is_null() || path == "/leaf", "{change}");
+    }
+}

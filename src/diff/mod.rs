@@ -63,7 +63,8 @@ use crate::markdown::{estimate_tokens, generate_markdown, response_schema};
 use crate::models::{ApiDocumentation, DocConfig, Endpoint, Parameter};
 use crate::report;
 pub use crate::report::EndpointRef;
-use crate::utils::{canonicalize_schema_value, resolve_schema_value};
+use crate::resolve::{DocResolver, PairResolver};
+use crate::utils::canonicalize_schema_value;
 
 use render::required_member_pointer;
 
@@ -484,6 +485,22 @@ pub fn diff_with(
     new: &ApiDocumentation,
     matching: EndpointMatching,
 ) -> SpecDiff {
+    diff_with_resolver(
+        old,
+        new,
+        matching,
+        &PairResolver::new(&old.schemas, &new.schemas),
+    )
+}
+
+/// [`diff_with`] with a caller-owned resolution cache for the same two specs,
+/// so later passes over them (the v2 contract facts) reuse its work.
+pub(crate) fn diff_with_resolver(
+    old: &ApiDocumentation,
+    new: &ApiDocumentation,
+    matching: EndpointMatching,
+    resolver: &PairResolver,
+) -> SpecDiff {
     let mut changes = Vec::new();
 
     // Lookup tables only; iteration always follows the endpoint vectors so the
@@ -507,7 +524,7 @@ pub fn diff_with(
     for (index, old_endpoint) in old.endpoints.iter().enumerate() {
         let key = (old_endpoint.method.as_str(), old_endpoint.path.as_str());
         if let Some(new_endpoint) = new_by_key.get(&key) {
-            diff_endpoint(old_endpoint, new_endpoint, old, new, &mut changes);
+            diff_endpoint(old_endpoint, new_endpoint, resolver, &mut changes);
         } else if let Some(pair) = moved_from[index] {
             let new_endpoint = &new.endpoints[pair.new];
             changes.push(Change {
@@ -519,7 +536,7 @@ pub fn diff_with(
                     new_operation_id: new_endpoint.operation_id.clone(),
                 },
             });
-            diff_endpoint(old_endpoint, new_endpoint, old, new, &mut changes);
+            diff_endpoint(old_endpoint, new_endpoint, resolver, &mut changes);
         } else {
             changes.push(Change {
                 endpoint: EndpointRef::from(old_endpoint),
@@ -664,8 +681,7 @@ fn version_normalized_path(path: &str) -> Option<String> {
 fn diff_endpoint(
     old_endpoint: &Endpoint,
     new_endpoint: &Endpoint,
-    old_doc: &ApiDocumentation,
-    new_doc: &ApiDocumentation,
+    resolver: &PairResolver,
     changes: &mut Vec<Change>,
 ) {
     // Attributed to the new endpoint: identical to the old one for an exact
@@ -691,30 +707,9 @@ fn diff_endpoint(
         });
     }
 
-    diff_parameters(
-        &endpoint,
-        old_endpoint,
-        new_endpoint,
-        old_doc,
-        new_doc,
-        changes,
-    );
-    diff_request_body(
-        &endpoint,
-        old_endpoint,
-        new_endpoint,
-        old_doc,
-        new_doc,
-        changes,
-    );
-    diff_responses(
-        &endpoint,
-        old_endpoint,
-        new_endpoint,
-        old_doc,
-        new_doc,
-        changes,
-    );
+    diff_parameters(&endpoint, old_endpoint, new_endpoint, resolver, changes);
+    diff_request_body(&endpoint, old_endpoint, new_endpoint, resolver, changes);
+    diff_responses(&endpoint, old_endpoint, new_endpoint, resolver, changes);
 }
 
 fn is_body(parameter: &Parameter) -> bool {
@@ -729,8 +724,7 @@ fn diff_parameters(
     endpoint: &EndpointRef,
     old_endpoint: &Endpoint,
     new_endpoint: &Endpoint,
-    old_doc: &ApiDocumentation,
-    new_doc: &ApiDocumentation,
+    resolver: &PairResolver,
     changes: &mut Vec<Change>,
 ) {
     let old_params: Vec<&Parameter> = old_endpoint
@@ -748,7 +742,7 @@ fn diff_parameters(
     for old_param in &old_params {
         match find_parameter(&new_params, old_param) {
             Some(new_param) => {
-                diff_parameter_pair(endpoint, old_param, new_param, old_doc, new_doc, changes)
+                diff_parameter_pair(endpoint, old_param, new_param, resolver, changes)
             }
             None => removed.push(old_param),
         }
@@ -786,7 +780,7 @@ fn diff_parameters(
                     new_location: new_param.parameter_in.clone(),
                 },
             });
-            diff_parameter_pair(endpoint, old_param, new_param, old_doc, new_doc, changes);
+            diff_parameter_pair(endpoint, old_param, new_param, resolver, changes);
         } else {
             changes.push(Change {
                 endpoint: endpoint.clone(),
@@ -826,8 +820,7 @@ fn diff_parameter_pair(
     endpoint: &EndpointRef,
     old_param: &Parameter,
     new_param: &Parameter,
-    old_doc: &ApiDocumentation,
-    new_doc: &ApiDocumentation,
+    resolver: &PairResolver,
     changes: &mut Vec<Change>,
 ) {
     let old_required = old_param.required.unwrap_or(false);
@@ -843,8 +836,22 @@ fn diff_parameter_pair(
         });
     }
 
-    let old_schema = parameter_schema_value(old_param, old_doc);
-    let new_schema = parameter_schema_value(new_param, new_doc);
+    let (old_schema, new_schema) = match (&old_param.schema, &new_param.schema) {
+        (Some(old_schema), Some(new_schema)) => {
+            let Some((mut old_schema, mut new_schema)) =
+                resolver.resolve_pair(old_schema, new_schema)
+            else {
+                return;
+            };
+            canonicalize_schema_value(&mut old_schema);
+            canonicalize_schema_value(&mut new_schema);
+            (old_schema, new_schema)
+        }
+        _ => (
+            parameter_schema_value(old_param, &resolver.old),
+            parameter_schema_value(new_param, &resolver.new),
+        ),
+    };
     for change in value_changes(&old_schema, &new_schema) {
         changes.push(Change {
             endpoint: endpoint.clone(),
@@ -860,9 +867,9 @@ fn diff_parameter_pair(
 /// The canonical type of a parameter: its resolved `schema` (OpenAPI 3), or
 /// for a Swagger 2 non-body parameter the inline `type`/`format`/`items`/`enum`
 /// keywords, which the model keeps in `extensions`. `Null` when it has neither.
-fn parameter_schema_value(parameter: &Parameter, doc: &ApiDocumentation) -> Value {
+fn parameter_schema_value(parameter: &Parameter, resolver: &DocResolver) -> Value {
     let mut value = match &parameter.schema {
-        Some(schema) => resolve_schema_value(schema, doc),
+        Some(schema) => resolver.resolve(schema),
         None => {
             let mut inline = serde_json::Map::new();
             for key in ["type", "format", "items", "enum"] {
@@ -882,15 +889,40 @@ fn parameter_schema_value(parameter: &Parameter, doc: &ApiDocumentation) -> Valu
 }
 
 /// The canonical resolved form of an optional schema; `Null` when absent.
-fn optional_schema_value(schema: Option<&crate::models::Schema>, doc: &ApiDocumentation) -> Value {
+fn optional_schema_value(schema: Option<&crate::models::Schema>, resolver: &DocResolver) -> Value {
     match schema {
         Some(schema) => {
-            let mut value = resolve_schema_value(schema, doc);
+            let mut value = resolver.resolve(schema);
             canonicalize_schema_value(&mut value);
             value
         }
         None => Value::Null,
     }
+}
+
+/// The changes between two optional schemas, each resolved against its own
+/// document; empty without resolving anything when they provably resolve to
+/// the same value.
+fn schema_changes(
+    old: Option<&crate::models::Schema>,
+    new: Option<&crate::models::Schema>,
+    resolver: &PairResolver,
+) -> Vec<ValueChange> {
+    let (old, new) = match (old, new) {
+        (Some(old), Some(new)) => {
+            let Some((mut old, mut new)) = resolver.resolve_pair(old, new) else {
+                return Vec::new();
+            };
+            canonicalize_schema_value(&mut old);
+            canonicalize_schema_value(&mut new);
+            (old, new)
+        }
+        (old, new) => (
+            optional_schema_value(old, &resolver.old),
+            optional_schema_value(new, &resolver.new),
+        ),
+    };
+    value_changes(&old, &new)
 }
 
 /// All differences between two canonical schemas, minus the redundant
@@ -926,8 +958,7 @@ fn diff_request_body(
     endpoint: &EndpointRef,
     old_endpoint: &Endpoint,
     new_endpoint: &Endpoint,
-    old_doc: &ApiDocumentation,
-    new_doc: &ApiDocumentation,
+    resolver: &PairResolver,
     changes: &mut Vec<Change>,
 ) {
     let old_body = old_endpoint.parameters.iter().find(|p| is_body(p));
@@ -964,9 +995,9 @@ fn diff_request_body(
                 });
             }
 
-            let old_schema = optional_schema_value(old_body.schema.as_ref(), old_doc);
-            let new_schema = optional_schema_value(new_body.schema.as_ref(), new_doc);
-            for change in value_changes(&old_schema, &new_schema) {
+            for change in
+                schema_changes(old_body.schema.as_ref(), new_body.schema.as_ref(), resolver)
+            {
                 changes.push(Change {
                     endpoint: endpoint.clone(),
                     kind: ChangeKind::RequestSchemaChanged { change },
@@ -982,8 +1013,7 @@ fn diff_responses(
     endpoint: &EndpointRef,
     old_endpoint: &Endpoint,
     new_endpoint: &Endpoint,
-    old_doc: &ApiDocumentation,
-    new_doc: &ApiDocumentation,
+    resolver: &PairResolver,
     changes: &mut Vec<Change>,
 ) {
     for (status, old_response) in &old_endpoint.responses {
@@ -997,9 +1027,9 @@ fn diff_responses(
             continue;
         };
 
-        let old_schema = optional_schema_value(response_schema(old_response), old_doc);
-        let new_schema = optional_schema_value(response_schema(new_response), new_doc);
-        for change in value_changes(&old_schema, &new_schema) {
+        let old_schema = response_schema(old_response);
+        let new_schema = response_schema(new_response);
+        for change in schema_changes(old_schema, new_schema, resolver) {
             changes.push(Change {
                 endpoint: endpoint.clone(),
                 kind: ChangeKind::ResponseSchemaChanged {
