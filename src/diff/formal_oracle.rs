@@ -5,6 +5,7 @@
 //! table; a mismatch names the function, the case index and the input. See
 //! `formal/README.md`, "Differential oracle".
 
+use std::collections::BTreeSet;
 use std::path::PathBuf;
 
 use serde_json::{Value, json};
@@ -14,6 +15,55 @@ use super::{ChangeKind, MoveRule, Severity, ValueChange, ValueChangeKind, severi
 use super::{diff_values, locate, under_not};
 use crate::diff::value::Location;
 use crate::report::EndpointRef;
+
+/// Every `ChangeKind` variant, by the name `variant` gives it. The test fails
+/// unless the oracle rates each one at least once.
+const ALL_VARIANTS: [&str; 14] = [
+    "EndpointAdded",
+    "EndpointRemoved",
+    "EndpointMoved",
+    "ParameterAdded",
+    "ParameterRemoved",
+    "ParameterRequiredChanged",
+    "ParameterLocationChanged",
+    "ParameterSchemaChanged",
+    "ResponseAdded",
+    "ResponseRemoved",
+    "OperationIdChanged",
+    "DeprecatedChanged",
+    "RequestSchemaChanged",
+    "ResponseSchemaChanged",
+];
+
+/// The variant's name. Deliberately exhaustive and wildcard-free: a new
+/// `ChangeKind` variant does not compile here until it is added, which means
+/// adding it to `ALL_VARIANTS`, to the Lean model's `Change` and `severity`
+/// (`formal/VimanamProofs/Severity.lean`) and to the oracle's cases, since
+/// the test requires every listed variant to be rated by at least one case.
+fn variant(kind: &ChangeKind) -> &'static str {
+    match kind {
+        ChangeKind::EndpointAdded => "EndpointAdded",
+        ChangeKind::EndpointRemoved { .. } => "EndpointRemoved",
+        ChangeKind::EndpointMoved { .. } => "EndpointMoved",
+        ChangeKind::ParameterAdded { .. } => "ParameterAdded",
+        ChangeKind::ParameterRemoved { .. } => "ParameterRemoved",
+        ChangeKind::ParameterRequiredChanged { .. } => "ParameterRequiredChanged",
+        ChangeKind::ParameterLocationChanged { .. } => "ParameterLocationChanged",
+        ChangeKind::ParameterSchemaChanged { .. } => "ParameterSchemaChanged",
+        ChangeKind::ResponseAdded { .. } => "ResponseAdded",
+        ChangeKind::ResponseRemoved { .. } => "ResponseRemoved",
+        ChangeKind::OperationIdChanged { .. } => "OperationIdChanged",
+        ChangeKind::DeprecatedChanged { .. } => "DeprecatedChanged",
+        ChangeKind::RequestSchemaChanged { .. } => "RequestSchemaChanged",
+        ChangeKind::ResponseSchemaChanged { .. } => "ResponseSchemaChanged",
+    }
+}
+
+/// `diff::severity` on `kind`, recording which variant was rated.
+fn rate(kind: ChangeKind, seen: &mut BTreeSet<&'static str>) -> Severity {
+    seen.insert(variant(&kind));
+    severity(&change(kind))
+}
 
 fn oracle_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("formal/oracle")
@@ -177,7 +227,7 @@ fn enum_schema(members: &Value) -> Value {
 }
 
 /// Replays one function's cases; returns the mismatches.
-fn replay(rust: &str, cases: &[Value]) -> Vec<String> {
+fn replay(rust: &str, cases: &[Value], seen: &mut BTreeSet<&'static str>) -> Vec<String> {
     let mut failures = Vec::new();
     for (index, case) in cases.iter().enumerate() {
         let input = &case["input"];
@@ -188,7 +238,7 @@ fn replay(rust: &str, cases: &[Value]) -> Vec<String> {
                 json!([location_name(locate(&pointer)), under_not(&pointer)])
             }
             "diff::severity(structural ChangeKind)" => {
-                json!(severity_name(severity(&change(structural(input)))))
+                json!(severity_name(rate(structural(input), seen)))
             }
             "diff::value::diff_values on an enum keyword" => {
                 let mut out = Vec::new();
@@ -202,13 +252,19 @@ fn replay(rust: &str, cases: &[Value]) -> Vec<String> {
                     out.into_iter()
                         .map(|value_change| {
                             let tag = kind_tag(&value_change.kind);
-                            let request = severity(&change(ChangeKind::RequestSchemaChanged {
-                                change: value_change.clone(),
-                            }));
-                            let response = severity(&change(ChangeKind::ResponseSchemaChanged {
-                                status: "200".into(),
-                                change: value_change.clone(),
-                            }));
+                            let request = rate(
+                                ChangeKind::RequestSchemaChanged {
+                                    change: value_change.clone(),
+                                },
+                                seen,
+                            );
+                            let response = rate(
+                                ChangeKind::ResponseSchemaChanged {
+                                    status: "200".into(),
+                                    change: value_change.clone(),
+                                },
+                                seen,
+                            );
                             json!([
                                 value_change.pointer,
                                 [tag, "other"],
@@ -221,7 +277,7 @@ fn replay(rust: &str, cases: &[Value]) -> Vec<String> {
             }
             _ => {
                 let kind = schema_change(rust, pointer(&input[0]), kind(&input[1]));
-                json!(severity_name(severity(&change(kind))))
+                json!(severity_name(rate(kind, seen)))
             }
         };
         if &actual != expected {
@@ -236,7 +292,16 @@ fn replay(rust: &str, cases: &[Value]) -> Vec<String> {
 #[test]
 fn oracle() {
     let replayed = ["Severity.json"];
-    let mut present: Vec<String> = std::fs::read_dir(oracle_dir())
+    let dir = oracle_dir();
+    if !dir.is_dir() {
+        // A packaged crate may leave formal/ out; the repository always has it.
+        eprintln!(
+            "skipping the formal oracle replay: {} does not exist",
+            dir.display()
+        );
+        return;
+    }
+    let mut present: Vec<String> = std::fs::read_dir(&dir)
         .expect("formal/oracle")
         .map(|entry| {
             entry
@@ -255,6 +320,7 @@ fn oracle() {
 
     let mut failures = Vec::new();
     let mut total = 0;
+    let mut seen = BTreeSet::new();
     for file in replayed {
         let vectors = load(file);
         for function in vectors["functions"].as_array().expect("functions") {
@@ -263,12 +329,21 @@ fn oracle() {
             assert!(!cases.is_empty(), "{file}: {rust} has no cases");
             total += cases.len();
             failures.extend(
-                replay(rust, cases)
+                replay(rust, cases, &mut seen)
                     .into_iter()
                     .map(|f| format!("{file}: {f}")),
             );
         }
     }
+    let unrated: Vec<&str> = ALL_VARIANTS
+        .iter()
+        .copied()
+        .filter(|name| !seen.contains(name))
+        .collect();
+    assert!(
+        unrated.is_empty(),
+        "no oracle case rates these ChangeKind variants: {unrated:?}"
+    );
     assert!(
         failures.is_empty(),
         "{} of {total} oracle cases disagree with the Lean model:\n{}",

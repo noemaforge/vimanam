@@ -7,6 +7,24 @@ the table, of whether a schema change narrows or widens the set of instances
 the schema admits. This file reads no Rust of its own (it has no entry in
 `formal/models.toml`); when the Rust table changes, `Severity.lean` is re-read
 and these proofs either still build or name the guarantee that broke.
+
+## What `effect` gives a direction
+
+Only these, so every direction theorem below is about these changes alone:
+a `required` member added or removed, an `enum` member added or removed, a
+whole `enum` keyword added or removed, and a boolean `nullable` or
+`additionalProperties` whose effective value changes (absent means `false`
+and `true` respectively).
+
+Every other change has no direction here, and the tables rate it Review (or,
+for `type` and properties, Breaking/Non-breaking by convention), even where
+JSON Schema would call it a narrowing or a widening: `maxLength`,
+`minLength`, `minimum`, `maximum`, `exclusiveMinimum`, `exclusiveMaximum`,
+`multipleOf`, `pattern`, `format`, `minItems`, `maxItems`, `uniqueItems`,
+`additionalProperties` between a boolean and a schema, `items` shape,
+`allOf`/`oneOf`/`anyOf` variants, `const`, `default`, and `type` (including
+adding `"null"` to a 3.1 `type` array). A theorem's "every change that
+narrows" means every change `effect` calls a narrowing.
 -/
 import VimanamProofs.Severity
 
@@ -199,14 +217,16 @@ theorem effect_of_bodyDropped (p : Pointer) (k : Kind) (h : bodyDropped p k = tr
 
 /-- Requests are contravariant: `request_schema_severity` (and so `severity`
 on `RequestSchemaChanged` and `ParameterSchemaChanged`) rates every change
-that narrows what a client may send as Breaking, unless it is under `not`. -/
+`effect` calls a narrowing of what a client may send as Breaking, unless it is
+under `not`. Narrowings `effect` gives no direction (`maxLength`, `minimum`,
+`pattern`, ...; see the header) are Review. -/
 theorem request_narrowing_breaking (p : Pointer) (k : Kind) (hk : k.Wf)
     (hn : underNot p = false) (he : effect (locate p) k = some .narrows) :
     requestSeverity p k = .breaking := by
   simp [requestSeverity, hn, requestRule_narrows _ _ hk he]
 
-/-- `request_schema_severity` never rates a change that widens what a client
-may send as Breaking. -/
+/-- `request_schema_severity` never rates a change `effect` calls a widening of
+what a client may send as Breaking. -/
 theorem request_widening_not_breaking (p : Pointer) (k : Kind) (hk : k.Wf)
     (he : effect (locate p) k = some .widens) :
     requestSeverity p k ≠ .breaking := by
@@ -216,8 +236,8 @@ theorem request_widening_not_breaking (p : Pointer) (k : Kind) (hk : k.Wf)
   · exact requestRule_widens _ _ hk he
 
 /-- Responses are covariant: `response_schema_severity` never rates a change
-that widens what a server may return as Non-breaking. It is Breaking or
-Review, so a widening is never silently accepted. -/
+`effect` calls a widening of what a server may return as Non-breaking. It is
+Breaking or Review, so such a widening is never silently accepted. -/
 theorem response_widening_not_nonBreaking (p : Pointer) (k : Kind) (hk : k.Wf)
     (he : effect (locate p) k = some .widens) :
     responseSeverity p k ≠ .nonBreaking := by
@@ -228,8 +248,8 @@ theorem response_widening_not_nonBreaking (p : Pointer) (k : Kind) (hk : k.Wf)
     · simp
     · exact responseRule_widens _ _ hk he
 
-/-- `response_schema_severity` never rates a change that narrows what a server
-may return as Breaking (the #169 rule). -/
+/-- `response_schema_severity` never rates a change `effect` calls a narrowing
+of what a server may return as Breaking (the #169 rule). -/
 theorem response_narrowing_not_breaking (p : Pointer) (k : Kind) (hk : k.Wf)
     (he : effect (locate p) k = some .narrows) :
     responseSeverity p k ≠ .breaking := by
@@ -357,8 +377,8 @@ theorem response_review_only_when_undirected (p : Pointer) (k : Kind)
 
 /-! ## The structural rows -/
 
-/-- `severity` dispatches a parameter schema change to the request table:
-parameters are part of what the client sends. -/
+/-- Table pin, not a variance result: `severity` dispatches a parameter schema
+change to the request table (parameters are part of what the client sends). -/
 theorem parameter_schema_is_request (p : Pointer) (k : Kind) :
     severity (.parameterSchemaChanged p k) = severity (.requestSchemaChanged p k) := rfl
 
@@ -371,9 +391,10 @@ theorem parameter_required_like_schema_required (now : Bool) (v : Val) :
     severity (.parameterAdded true) = requestRule .requiredElement (.added v) := by
   cases now <;> simp [severity, requestRule]
 
-/-- `severity`: removing anything a client calls, sends or handles (an
-endpoint, a parameter, a response code) or moving it is Breaking; adding an
-endpoint, a response code or an optional parameter is Non-breaking. -/
+/-- Table pin, not a variance result: `severity` rates removing anything a
+client calls, sends or handles (an endpoint, a parameter, a response code) or
+moving it as Breaking, and adding an endpoint, a response code or an optional
+parameter as Non-breaking. -/
 theorem removal_breaking_addition_not (d : Bool) :
     severity (.endpointRemoved d) = .breaking ∧ severity .endpointMoved = .breaking ∧
     severity .parameterRemoved = .breaking ∧ severity .parameterLocationChanged = .breaking ∧
@@ -382,14 +403,21 @@ theorem removal_breaking_addition_not (d : Bool) :
     severity .responseAdded = .nonBreaking := by
   simp [severity]
 
-/-- `severity` on `OperationIdChanged`: only gaining an operationId where there
-was none is Non-breaking; generated clients name methods after it, so any
-rename or removal is Breaking. -/
+/-- Table pin, not a variance result: `severity` on `OperationIdChanged`: only
+gaining an operationId where there was none is Non-breaking; generated
+clients name methods after it, so any rename or removal is Breaking. -/
 theorem operation_id (o n : Bool) :
     severity (.operationIdChanged o n) = .nonBreaking ↔ (o = false ∧ n = true) := by
   cases o <;> cases n <;> simp [severity]
 
-/-! ## Findings: no-ops the table rates Breaking -/
+/-! ## Findings: no-ops the table rates Breaking (#184)
+
+`noop` knows only the boolean keywords with a default (`nullable`,
+`additionalProperties`), so "the only no-ops" below means the only no-ops of
+that kind. Other no-ops are out of scope: `type: "string"` to
+`type: ["string"]` is rated Breaking too (also noted in #184). Once #184 is
+fixed these findings should become guarantees: no `noop` change is Breaking.
+-/
 
 theorem requestRule_noop_breaking :
     ∀ l k, k.Wf → noop l k = true → requestRule l k = .breaking →
@@ -407,12 +435,13 @@ theorem responseRule_noop_breaking :
       l = .nullable ∧ k = .removed .fls)
     (by decide)
 
-/-- Finding (open): `became` reads a removed boolean as flipping to the
+/-- Finding (open, #184): `became` reads a removed boolean as flipping to the
 opposite value and an added one as a change from it, ignoring the keyword's
 default. So `request_schema_severity` rates two no-ops Breaking: writing
 `nullable: false` (already the default) and dropping
-`additionalProperties: true` (absent already means `true`). These are the
-only no-ops it rates Breaking. -/
+`additionalProperties: true` (absent already means `true`). Among the no-ops
+`noop` recognises (boolean keywords at their default), these are the only
+ones it rates Breaking. -/
 theorem request_noop_breaking (p : Pointer) (k : Kind) (hk : k.Wf)
     (hnoop : noop (locate p) k = true) (h : requestSeverity p k = .breaking) :
     (locate p = .nullable ∧ k = .added .fls) ∨
@@ -430,9 +459,9 @@ theorem request_noop_breaking_witness :
       noop .additionalProperties (.removed .tru) := by
   decide
 
-/-- Finding (open): for the same reason `response_schema_severity` rates
-dropping `nullable: false` (a no-op) Breaking, and that is the only no-op it
-rates Breaking away from the root. -/
+/-- Finding (open, #184): for the same reason `response_schema_severity` rates
+dropping `nullable: false` (a no-op) Breaking, and among the no-ops `noop`
+recognises it is the only one it rates Breaking away from the root. -/
 theorem response_noop_breaking (p : Pointer) (k : Kind) (hk : k.Wf) (hr : p ≠ [])
     (hnoop : noop (locate p) k = true) (h : responseSeverity p k = .breaking) :
     locate p = .nullable ∧ k = .removed .fls := by

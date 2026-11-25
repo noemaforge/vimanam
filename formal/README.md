@@ -55,6 +55,17 @@ value); `nullable` (default `false`) and `additionalProperties` (default
 direction there. A table theorem then says, for example, that every change
 `effect` calls a narrowing is Breaking on the request side.
 
+`effect` gives a direction to those changes only. Every other change has
+none, and the tables rate it Review (`type` and properties excepted: Breaking
+or Non-breaking by convention), even where JSON Schema would call it a
+narrowing or a widening: `maxLength`, `minLength`, `minimum`, `maximum`,
+`exclusiveMinimum`, `exclusiveMaximum`, `multipleOf`, `pattern`, `format`,
+`minItems`, `maxItems`, `uniqueItems`, `additionalProperties` between a
+boolean and a schema, `items` shape, `allOf`/`oneOf`/`anyOf` variants,
+`const`, `default`, and `type` (including adding `"null"` to a 3.1 `type`
+array). So "every narrowing" in a theorem below means every narrowing
+`effect` recognises; the others are left to a human as Review.
+
 Every theorem states a property of named Rust behaviour, and its doc comment
 says which in one sentence. Lemmas that only serve proofs (`forall_of_check`,
 `locateGo_append`, ...) are used by a proof. The finite tables are proved by
@@ -68,10 +79,10 @@ to pointers through `locate` and `under_not`; nothing uses `native_decide`.
 
 | Theorem | Rust behaviour |
 | --- | --- |
-| `request_narrowing_breaking` | Requests are contravariant: every change that narrows what a client may send is Breaking, unless under `not`. |
-| `request_widening_not_breaking` | No change that widens what a client may send is Breaking. |
-| `response_widening_not_nonBreaking` | Responses are covariant: no change that widens what a server may return is Non-breaking (it is Breaking or Review). |
-| `response_narrowing_not_breaking` | No change that narrows what a server may return is Breaking (the #169 rule). |
+| `request_narrowing_breaking` | Requests are contravariant: every change `effect` calls a narrowing of what a client may send is Breaking, unless under `not`. |
+| `request_widening_not_breaking` | No change `effect` calls a widening of what a client may send is Breaking. |
+| `response_widening_not_nonBreaking` | Responses are covariant: no change `effect` calls a widening of what a server may return is Non-breaking (it is Breaking or Review). |
+| `response_narrowing_not_breaking` | No change `effect` calls a narrowing of what a server may return is Breaking (the #169 rule). |
 | `effect_swap` | Swapping old and new flips every change's direction (the specification is symmetric). |
 | `request_swap` | A Breaking request change with a direction, or a property removal, is Non-breaking with old and new swapped; `type` and `additionalProperties` are the exceptions. |
 | `response_swap` | A Breaking response change with a direction, or a property removal, is Non-breaking swapped. |
@@ -81,10 +92,10 @@ to pointers through `locate` and `under_not`; nothing uses `native_decide`.
 | `enum_keyword_removed` | A whole `enum` keyword disappearing: request Non-breaking, response Review. |
 | `request_review_only_when_undirected` | Every (location, change) pair with a direction has a Breaking or Non-breaking request verdict, except relaxing `additionalProperties` (Review). |
 | `response_review_only_when_undirected` | The response table falls through to Review only under `not`, without a direction, on a widening, or on `additionalProperties` (no row). |
-| `parameter_schema_is_request` | Parameter schemas use the request table. |
+| `parameter_schema_is_request` | Table pin: parameter schemas use the request table. |
 | `parameter_required_like_schema_required` | A parameter's `required` flag is rated like a `required` schema member. |
-| `removal_breaking_addition_not` | Removing or moving an endpoint, removing a parameter or response code, or moving a parameter is Breaking; adding an endpoint, response code or optional parameter is Non-breaking. |
-| `operation_id` | Only gaining an `operationId` is Non-breaking. |
+| `removal_breaking_addition_not` | Table pin: removing or moving an endpoint, removing a parameter or response code, or moving a parameter is Breaking; adding an endpoint, response code or optional parameter is Non-breaking. |
+| `operation_id` | Table pin: only gaining an `operationId` is Non-breaking. |
 | `request_noop_breaking`, `request_noop_breaking_witness` | Finding (open), see below. |
 | `response_noop_breaking`, `response_noop_breaking_witness` | Finding (open), see below. |
 
@@ -113,17 +124,22 @@ old Rust violates:
   request, a narrowing, was reported as member additions, each Non-breaking.
   Violates `EnumReport.request_narrowing_breaking`.
 
-Against the current Rust (open, not fixed in this change):
+Against the current Rust (open, filed as #184, not fixed in this change).
+Once #184 is fixed these should become guarantees, "no change `noop` calls a
+no-op is Breaking", replacing the two finding theorems:
 
 * `request_noop_breaking`: `became` reads a removed boolean as flipping and an
   added one as a change, ignoring the keyword's default. So the request table
   rates writing `nullable: false` (already the default) and dropping
   `additionalProperties: true` (absent already means `true`) as Breaking,
-  though neither changes what the schema admits. These are the only no-ops it
-  rates Breaking. The first is asserted as Breaking by
+  though neither changes what the schema admits. Among the no-ops `noop`
+  recognises (boolean keywords at their default), these are the only ones it
+  rates Breaking. Other no-ops are outside `noop`: `type: "string"` to
+  `type: ["string"]` is also rated Breaking (noted in #184). The first is asserted as Breaking by
   `severity_request_schema_breaking_rows` today.
 * `response_noop_breaking`: for the same reason the response table rates
-  dropping `nullable: false` Breaking; it is the only such no-op.
+  dropping `nullable: false` Breaking; it is the only such no-op `noop`
+  recognises.
 
 ## What the model does not cover
 
@@ -151,7 +167,10 @@ and whitespace normalised away.
 `scripts/formal/check-model-drift.py` recomputes it; the `model-drift`
 workflow runs it on every change to `src/diff/`, `formal/` or
 `scripts/formal/` and annotates the changed Rust with a warning when a model
-has drifted. To clear a warning, re-read the model against the Rust, update
+has drifted. When the model's `read_against` commit is in the clone and is
+the state its digest was taken at (CI checks out full history for this), the
+warning names only the refs that changed since it; otherwise it lists every
+ref of the model and says why. To clear a warning, re-read the model against the Rust, update
 it if the change matters, and run
 
 ```bash
@@ -174,7 +193,12 @@ reference: `lake exe oracle` evaluates them over fixed and generated inputs
 `ResponseSchemaChanged` and every structural `ChangeKind`), `locate`,
 `under_not` and `diff_values`, and fails with the function, case index and
 input of every mismatch. Nothing in the comparison restates the table in
-Rust. The test also fails when a file in `oracle/` has no replay.
+Rust. The test also fails when a file in `oracle/` has no replay, and when a
+`ChangeKind` variant is rated by no case: its `variant` function matches
+`ChangeKind` exhaustively with no wildcard, so a new variant does not compile
+until the oracle lists it (and then fails until the Lean model covers it). If
+`formal/oracle/` is absent (a packaged crate that excludes `formal/`), the
+test skips with a message.
 
 Covered: every fixed pointer (keyword lookalikes, `not` at several depths)
 with every change kind in both tables, random pointers over a keyword
@@ -201,7 +225,13 @@ That changes `ChangeKind` and `severity`, so the drift check flags
 `Change` and `severity` in `Severity.lean`, extend the oracle's replay and
 structural cases, regenerate the vectors, bump the digest, and add a
 theorem that a component change gets the request or response verdict of its
-direction. `Direction.lean` should not need to change.
+direction. `Direction.lean` should not need to change, with one check:
+component pointers are relative to the component, so the root rule
+(`bodyDropped`, `p = []`) now fires at a component root, and
+`response_swap`'s `p ≠ []` hypothesis must be re-checked there. The oracle
+test's `variant` match will not compile until the new variant is added.
+Expect a textual conflict next to `#[cfg(test)] mod formal_oracle;` in
+`src/diff/mod.rs`, where #182 adds `mod components;`.
 
 ## Next candidates
 

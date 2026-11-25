@@ -32,6 +32,7 @@ import argparse
 import hashlib
 import os
 import re
+import subprocess
 import sys
 import tomllib
 from pathlib import Path
@@ -156,12 +157,32 @@ def normalize(text: str, lit: list[bool]) -> str:
     return "".join(out)
 
 
-def ref_code(ref: str) -> str:
+def git_text(commit: str, path: str) -> str | None:
+    """The file at `commit`, or None when git cannot give it."""
+    try:
+        out = subprocess.run(
+            ["git", "-C", str(ROOT), "show", f"{commit}:{path}"],
+            capture_output=True,
+            check=True,
+        )
+    except (OSError, subprocess.CalledProcessError):
+        return None
+    return out.stdout.decode("utf-8", errors="replace")
+
+
+def ref_code(ref: str, commit: str | None = None) -> str:
+    """The normalised code of `ref` in the working tree, or at `commit`."""
     path, _, name = ref.partition("#")
-    file = ROOT / path
-    if not file.is_file():
-        raise ManifestError(f"{ref}: no such file")
-    code, lit = scan(file.read_text(encoding="utf-8"))
+    if commit is None:
+        file = ROOT / path
+        if not file.is_file():
+            raise ManifestError(f"{ref}: no such file")
+        text = file.read_text(encoding="utf-8")
+    else:
+        text = git_text(commit, path)
+        if text is None:
+            raise ManifestError(f"{ref}: not in {commit}")
+    code, lit = scan(text)
     blank = test_regions(code, lit)
 
     def in_test(pos: int) -> bool:
@@ -186,12 +207,12 @@ def ref_code(ref: str) -> str:
     return "\n".join(pieces)
 
 
-def digest(refs: list[str]) -> str:
+def digest(refs: list[str], commit: str | None = None) -> str:
     h = hashlib.sha256()
     for ref in sorted(refs):
         h.update(ref.encode())
         h.update(b"\n")
-        h.update(ref_code(ref).encode())
+        h.update(ref_code(ref, commit).encode())
         h.update(b"\n")
     return f"{SCHEME}:sha256:{h.hexdigest()}"
 
@@ -207,6 +228,8 @@ def load_manifest() -> list[dict]:
         for key in ("lean", "read_digest", "rust"):
             if key not in entry:
                 raise ManifestError(f"an entry lacks `{key}`: {entry}")
+        if "read_against" in entry and not re.fullmatch(r"[0-9a-f]{7,40}", entry["read_against"]):
+            raise ManifestError(f"{entry['lean']}: malformed read_against")
         if not (ROOT / entry["lean"]).is_file():
             raise ManifestError(f"{entry['lean']}: no such model file")
         m = DIGEST_RE.match(entry["read_digest"])
@@ -241,6 +264,22 @@ def bump(names: list[str]) -> None:
     MANIFEST.write_text(text, encoding="utf-8")
 
 
+def changed_refs(entry: dict) -> tuple[list[str], str]:
+    """The refs that changed since `read_against`, when that commit is in the
+    clone and is the state `read_digest` was taken at; otherwise every ref,
+    with the reason."""
+    commit = entry.get("read_against")
+    if not commit:
+        return entry["rust"], "; no read_against, so every ref is listed"
+    try:
+        if digest(entry["rust"], commit) != entry["read_digest"]:
+            return entry["rust"], f"; read_against {commit} is not the digest's state, so every ref is listed"
+        changed = [ref for ref in entry["rust"] if ref_code(ref, commit) != ref_code(ref)]
+    except ManifestError:
+        return entry["rust"], f"; read_against {commit} is not in this clone, so every ref is listed"
+    return changed, f"; changed since {commit}, see git diff {commit} -- src/diff"
+
+
 def check(strict: bool) -> int:
     models = load_manifest()
     drifted = []
@@ -250,13 +289,14 @@ def check(strict: bool) -> int:
     gha = os.environ.get("GITHUB_ACTIONS") == "true"
     for entry in drifted:
         stem = Path(entry["lean"]).stem
+        changed, why = changed_refs(entry)
         msg = (
             f"{entry['lean']} has drifted: the Rust it models changed since it was last read "
-            f"({', '.join(entry['rust'])}). Re-read the model against the Rust, update it if "
+            f"({', '.join(changed)}{why}). Re-read the model against the Rust, update it if "
             f"the change matters, then run: python3 -I scripts/formal/check-model-drift.py --bump {stem}"
         )
         if gha:
-            for ref in entry["rust"]:
+            for ref in changed:
                 print(f"::warning file={ref.partition('#')[0]}::{msg}")
         else:
             print(f"warning: {msg}", file=sys.stderr)

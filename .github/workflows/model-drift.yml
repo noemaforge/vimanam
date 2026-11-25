@@ -29,9 +29,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
+      # Full history, so each model's read_against resolves and a warning
+      # names only the refs that changed since it.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 0
 
       - name: Check model drift
         run: python3 -I scripts/formal/check-model-drift.py
