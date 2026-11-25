@@ -368,16 +368,29 @@ pub(crate) struct RefEdge {
 /// them are left as written.
 const ANNOTATIONS: [&str; 5] = ["description", "title", "example", "examples", "deprecated"];
 
-/// The schema-grammar role of a node while [`PairResolver::localize`] walks it.
-/// It only decides where refs are left alone (annotations); every other
-/// position treats a `$ref` object as a reference, as [`DocResolver::resolve`]
-/// does.
+/// The schema-grammar role of a node while [`PairResolver::localize`] walks
+/// it: the grammar `diff_values` and the severity table read (`value::Node`),
+/// plus annotations.
+///
+/// Only a schema position treats a `$ref` object as a reference (an edge, or
+/// a one-sided expansion). Outside the grammar (`default`, `const`, `enum`
+/// and `required` members, `if`/`then`/`else`, `prefixItems`, tuple `items`,
+/// `$defs`, `dependentSchemas`, unknown keywords, ...) a reference is not a
+/// schema use the table can rate (#186): each side is inlined there as
+/// [`DocResolver::resolve`] would, and compared as plain JSON at the use (or
+/// the component) that holds it, where every change is Review.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Role {
+    /// A schema object (`Node::Schema`).
     Schema,
-    /// `properties`-like maps and `allOf`-like lists: children are schemas.
+    /// A `properties`-like map or an `allOf`-like list: children are schemas
+    /// (`Node::PropertyMap`, `Node::SchemaList`); the container itself is
+    /// never a reference.
     Container,
-    Other,
+    /// Outside the grammar (`Node::Opaque`, `Node::Set`): inlined.
+    Value,
+    /// An annotation of a schema object: left as written (canonicalisation
+    /// drops it).
     Annotation,
 }
 
@@ -385,14 +398,13 @@ impl Role {
     fn child(self, key: &str) -> Role {
         match self {
             Role::Schema => match key {
-                "properties" | "patternProperties" | "definitions" | "$defs" | "allOf"
-                | "oneOf" | "anyOf" => Role::Container,
+                "properties" | "patternProperties" | "allOf" | "oneOf" | "anyOf" => Role::Container,
                 "items" | "additionalProperties" | "not" => Role::Schema,
                 _ if key.starts_with("x-") || ANNOTATIONS.contains(&key) => Role::Annotation,
-                _ => Role::Other,
+                _ => Role::Value,
             },
             Role::Container => Role::Schema,
-            Role::Other | Role::Annotation => self,
+            Role::Value | Role::Annotation => self,
         }
     }
 }
@@ -498,6 +510,41 @@ impl DocResolver<'_> {
     }
 }
 
+impl DocResolver<'_> {
+    /// `value` with every component reference replaced by its target (siblings
+    /// merged over it), recursively, as [`Self::resolve`] expands them; a
+    /// component already on `stack` (by name), or past [`MAX_RESOLVE_DEPTH`]
+    /// of them, stays the object as written. What [`PairResolver::localize`]
+    /// compares outside the schema grammar (#186).
+    fn inline(&self, value: &Value, stack: &mut Vec<String>) -> Value {
+        match value {
+            Value::Object(map) => {
+                if component_ref(map).is_some_and(|name| self.declares(&name)) {
+                    match self.expand_once(map, stack) {
+                        Some(expanded) => {
+                            let out = self.inline(&expanded, stack);
+                            stack.pop();
+                            out
+                        }
+                        None => value.clone(),
+                    }
+                } else {
+                    map.iter()
+                        .map(|(key, child)| (key.clone(), self.inline(child, stack)))
+                        .collect::<Map<String, Value>>()
+                        .into()
+                }
+            }
+            Value::Array(items) => items
+                .iter()
+                .map(|item| self.inline(item, stack))
+                .collect::<Vec<Value>>()
+                .into(),
+            other => other.clone(),
+        }
+    }
+}
+
 impl PairResolver<'_> {
     /// Whether component `name` provably resolves identically in both
     /// documents (it is declared, unchanged, and reaches only such
@@ -521,10 +568,12 @@ impl PairResolver<'_> {
     /// that reference is expanded in place (as [`DocResolver::resolve`]
     /// would) and the walk continues into it, so a schema moving between
     /// inline and referenced form is compared field by field; the inline side
-    /// shrinks at every step, so this terminates. Everything else, including
-    /// subtrees present on one side only and references under annotation
-    /// keywords, is kept as written. Key order is preserved, and a value
-    /// without component refs is returned unchanged.
+    /// shrinks at every step, so this terminates. Only schema positions of the
+    /// grammar the severity table reads hold references; outside it (see
+    /// [`Role`]) both sides are inlined in full and no edge is recorded (#186).
+    /// Everything else, including subtrees present on one side only and
+    /// references under annotation keywords, is kept as written. Key order is
+    /// preserved, and a value without component refs is returned unchanged.
     pub(crate) fn localize(
         &self,
         old: &Value,
@@ -543,10 +592,24 @@ impl PairResolver<'_> {
     }
 
     fn local(&self, old: &Value, new: &Value, role: Role, walk: &mut LocalWalk) -> (Value, Value) {
-        if role == Role::Annotation {
-            return (old.clone(), new.clone());
+        match role {
+            Role::Annotation => return (old.clone(), new.clone()),
+            Role::Value => {
+                // Equal values over unchanged components inline identically.
+                if self.values_equal(old, new) {
+                    return (old.clone(), new.clone());
+                }
+                return (
+                    self.old.inline(old, &mut Vec::new()),
+                    self.new.inline(new, &mut Vec::new()),
+                );
+            }
+            Role::Schema | Role::Container => {}
         }
         match (old, new) {
+            (Value::Object(before), Value::Object(after)) if role == Role::Container => {
+                self.local_maps(before, after, role, walk)
+            }
             (Value::Object(before), Value::Object(after)) => {
                 // Only a reference whose own document declares its target is
                 // a component reference; an undeclared one stays as written,
@@ -996,6 +1059,42 @@ mod tests {
         let (left, right, edges) = localized(&pair, value.clone(), value.clone());
         assert!(edges.is_empty());
         assert_eq!((left, right), (value.clone(), value));
+    }
+
+    /// #186: outside the schema grammar a reference is not an edge; each side
+    /// is inlined in full (cycles cut by name), as resolution would.
+    #[test]
+    fn localize_inlines_refs_outside_the_schema_grammar() {
+        let (old, new) = (graph("string"), graph("integer"));
+        let pair = PairResolver::new(&old, &new);
+        let value = json!({
+            "type": "object",
+            "properties": {"a": reference("A")},
+            "default": reference("C"),
+            "if": reference("B"),
+            "prefixItems": [reference("C")],
+            "$defs": {"d": {"not": reference("C")}},
+            "enum": [reference("C")],
+            "const": reference("Node"),
+        });
+        let (left, right, edges) = localized(&pair, value.clone(), value);
+        // Only the `properties` use is an edge.
+        assert_eq!(edges, [("A".to_string(), "A".to_string())]);
+        for (side, ty) in [(&left, "string"), (&right, "integer")] {
+            assert_eq!(side["properties"]["a"], json!({}));
+            assert_eq!(side["default"], json!({"type": ty}));
+            assert_eq!(side["if"], json!({"type": "array", "items": {"type": ty}}));
+            assert_eq!(side["prefixItems"], json!([{"type": ty}]));
+            assert_eq!(side["$defs"]["d"]["not"], json!({"type": ty}));
+            assert_eq!(side["enum"], json!([{"type": ty}]));
+            // `Node` is unchanged on both sides: equal, so left as written.
+            assert_eq!(side["const"], reference("Node"));
+        }
+        // Equal values over unchanged components are left as written.
+        let same = json!({"default": reference("Other")});
+        let (left, right, edges) = localized(&pair, same.clone(), same.clone());
+        assert!(edges.is_empty());
+        assert_eq!((left, right), (same.clone(), same));
     }
 
     #[test]

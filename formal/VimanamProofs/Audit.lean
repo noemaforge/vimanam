@@ -43,12 +43,6 @@ import VimanamProofs
 #print axioms Vimanam.Severity.parameter_required_like_schema_required
 #print axioms Vimanam.Severity.removal_breaking_addition_not
 #print axioms Vimanam.Severity.operation_id
-#print axioms Vimanam.Severity.requestRule_noop_breaking
-#print axioms Vimanam.Severity.responseRule_noop_breaking
-#print axioms Vimanam.Severity.request_noop_breaking
-#print axioms Vimanam.Severity.request_noop_breaking_witness
-#print axioms Vimanam.Severity.response_noop_breaking
-#print axioms Vimanam.Severity.response_noop_breaking_witness
 #print axioms Vimanam.Severity.locateGo_append_general
 #print axioms Vimanam.Severity.locate_append_schema
 #print axioms Vimanam.Severity.underNot_append_schema
@@ -57,6 +51,13 @@ import VimanamProofs
 #print axioms Vimanam.Severity.component_negated_review
 #print axioms Vimanam.Severity.component_matches_inline
 #print axioms Vimanam.Severity.component_negated_matches_inline
+#print axioms Vimanam.Severity.requestRule_noop
+#print axioms Vimanam.Severity.responseRule_noop
+#print axioms Vimanam.Severity.request_noop_nonBreaking
+#print axioms Vimanam.Severity.response_noop_nonBreaking
+#print axioms Vimanam.Severity.noop_never_breaking
+#print axioms Vimanam.Severity.issue184_repros
+#print axioms Vimanam.Severity.issue184_component_repros
 
 #print axioms Vimanam.EnumReport.locate_member
 #print axioms Vimanam.EnumReport.underNot_member
@@ -69,6 +70,11 @@ import VimanamProofs
 #print axioms Vimanam.EnumReport.request_narrowing_breaking
 #print axioms Vimanam.EnumReport.request_widening_not_breaking
 
+#print axioms Vimanam.History.pre184_request_noop_breaking
+#print axioms Vimanam.History.pre184_response_noop_breaking
+#print axioms Vimanam.History.pre184_witnesses
+#print axioms Vimanam.History.fix184_request_only_noops
+#print axioms Vimanam.History.fix184_response_only_noops
 #print axioms Vimanam.History.outside
 #print axioms Vimanam.History.pre175_response_narrowing_breaking
 #print axioms Vimanam.History.round1_enum_deletion_silent

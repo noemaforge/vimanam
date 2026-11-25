@@ -17,16 +17,95 @@ Each theorem here is a real bug, kept as a finding:
 * Before #175 the same reporting made introducing an `enum` on a request,
   which narrows what a client may send, a list of member additions, each
   Non-breaking.
+* #184: until the fix, `became` ignored a boolean keyword's default, so
+  writing `nullable: false` or dropping `additionalProperties: true` in a
+  request, and dropping `nullable: false` in a response, were Breaking
+  though none of them changes anything. Found by this model before it was
+  fixed; the fix changed the verdict of no-ops and nothing else.
 
 The current Rust's counterparts are `Severity.response_narrowing_not_breaking`,
-`EnumReport.response_widening_flagged` and
-`EnumReport.request_narrowing_breaking`.
+`EnumReport.response_widening_flagged`,
+`EnumReport.request_narrowing_breaking` and `Severity.noop_never_breaking`.
 -/
 import VimanamProofs.EnumReport
 
 namespace Vimanam.History
 
 open Vimanam.Severity Vimanam.EnumReport
+
+/-! ## Before #184 -/
+
+/-- `became` before #184: a removed boolean read as flipping to the opposite
+value and an added one as a change from it, whatever the keyword's default. -/
+def becamePre184 (k : Kind) (flag : Bool) : Bool :=
+  match k with
+  | .added v | .changed _ v => v.bool? == some flag
+  | .removed v =>
+    match v.bool? with
+    | some was => was != flag
+    | none => false
+
+/-- The match of `request_schema_severity` before #184 (`be2bd87`). -/
+def requestRulePre184 : Loc → Kind → Severity
+  | .additionalProperties, k => if becamePre184 k false then .breaking else .review
+  | .nullable, k =>
+    if becamePre184 k true then .nonBreaking
+    else if becamePre184 k false then .breaking
+    else .review
+  | l, k => requestRule l k
+
+/-- The match of `response_schema_severity` before #184 (`be2bd87`). -/
+def responseRulePre184 : Loc → Kind → Severity
+  | .additionalProperties, _ => .review
+  | .nullable, k =>
+    if becamePre184 k true then .breaking
+    else if becamePre184 k false then .nonBreaking
+    else .review
+  | l, k => responseRule l k
+
+/-- Finding #184: the pre-#184 request table rated two no-ops Breaking,
+writing `nullable: false` and dropping `additionalProperties: true`; among
+the no-ops `noop` recognises, only those. -/
+theorem pre184_request_noop_breaking :
+    ∀ l k, k.Wf → noop l k = true → requestRulePre184 l k = .breaking →
+      (l = .nullable ∧ k = .added .fls) ∨ (l = .additionalProperties ∧ k = .removed .tru) :=
+  forall_of_check
+    (P := fun l k => k.Wf → noop l k = true → requestRulePre184 l k = .breaking →
+      (l = .nullable ∧ k = .added .fls) ∨ (l = .additionalProperties ∧ k = .removed .tru))
+    (by decide)
+
+/-- Finding #184: the pre-#184 response table rated dropping `nullable: false`
+Breaking, the only such no-op. -/
+theorem pre184_response_noop_breaking :
+    ∀ l k, k.Wf → noop l k = true → responseRulePre184 l k = .breaking →
+      l = .nullable ∧ k = .removed .fls :=
+  forall_of_check
+    (P := fun l k => k.Wf → noop l k = true → responseRulePre184 l k = .breaking →
+      l = .nullable ∧ k = .removed .fls)
+    (by decide)
+
+/-- The three no-ops did occur, each Breaking. -/
+theorem pre184_witnesses :
+    requestRulePre184 .nullable (.added .fls) = .breaking ∧
+    requestRulePre184 .additionalProperties (.removed .tru) = .breaking ∧
+    responseRulePre184 .nullable (.removed .fls) = .breaking := by
+  decide
+
+/-- The #184 fix changed the request table on no-ops only. -/
+theorem fix184_request_only_noops :
+    ∀ l k, k.Wf → requestRule l k ≠ requestRulePre184 l k → noop l k = true :=
+  forall_of_check
+    (P := fun l k => k.Wf → requestRule l k ≠ requestRulePre184 l k → noop l k = true)
+    (by decide)
+
+/-- The #184 fix changed the response table on no-ops only. -/
+theorem fix184_response_only_noops :
+    ∀ l k, k.Wf → responseRule l k ≠ responseRulePre184 l k → noop l k = true :=
+  forall_of_check
+    (P := fun l k => k.Wf → responseRule l k ≠ responseRulePre184 l k → noop l k = true)
+    (by decide)
+
+/-! ## Before #175 -/
 
 /-- The match of `response_schema_severity` before #175 (`bd051f8^`): no
 `Enum` location, no `under_not` check, and member removal Breaking. -/
@@ -39,8 +118,8 @@ def responseRulePre175 : Loc → Kind → Severity
   | .requiredElement, .removed _ => .breaking
   | .requiredElement, .added _ => .nonBreaking
   | .nullable, k =>
-    if became k true then .breaking
-    else if became k false then .nonBreaking
+    if becamePre184 k true then .breaking
+    else if becamePre184 k false then .nonBreaking
     else .review
   | _, _ => .review
 
@@ -54,7 +133,7 @@ def responseRuleRound1 : Loc → Kind → Severity
 whole-`enum` rows (the location did not exist). -/
 def requestRulePre175 : Loc → Kind → Severity
   | .enum, _ => .review
-  | l, k => requestRule l k
+  | l, k => requestRulePre184 l k
 
 /-- `diff_values` on an `enum` keyword before #175: `empty_counterpart`
 compared a missing `enum` with an empty set, so gaining or losing the keyword

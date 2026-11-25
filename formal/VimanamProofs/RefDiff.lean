@@ -44,6 +44,15 @@ way `diff_values` does, except at a `$ref`:
 3. **Anything else**, including a reference to an undeclared component and a
    reference facing a non-object or nothing, is compared as written.
 
+Rules 1 and 2 apply only at schema positions of the `diff_values` grammar
+(`Node.schema`). Where the walk leaves the grammar (`Node.opaq`, `Node.set`:
+`default`, `const`, `enum` members, `if`, `prefixItems`, `$defs`, ...), a
+reference is not a schema use the table can rate (#186): both sides are
+inlined in full (`Side.inline`, components as deserialised, cut by name on
+the chain or after `maxResolveDepth`) and compared as plain JSON (`rawCmp`)
+at the current owner, where `locate` makes every change Review, as diffing
+did before #182.
+
 A hop is a *state* `(X, Y, mask, neg)`. The pair's content is visible at a
 state except under the masked top-level keys (overlay masking: a key a
 sibling overrides at the hop comes from the sibling, not from the
@@ -69,9 +78,9 @@ owner (or its owner was so reached); verdicts there are Review, as
   location change), the request body, or a response status present on both
   sides, with the schemas `diff/mod.rs` takes for them (`uses`). Schemas are
   read as `models::Schema` deserialisation leaves them (`schemaNorm`).
-* References are followed only at positions of the `diff_values` grammar
-  (`Node`); elsewhere (`default`, `if`, `prefixItems`, `$defs`, ...) a
-  `$ref` is a value. #182 follows them there too (#186).
+* References are hops only at schema positions of the `diff_values` grammar
+  (`Node`); elsewhere (`default`, `if`, `prefixItems`, `$defs`, ...) they are
+  inlined (#186, see above).
 * Not modelled: parameter, request-body and response `$ref`s, non-object
   component targets beyond "compare as written", and everything outside
   schema comparison (structural endpoint changes).
@@ -305,9 +314,12 @@ def refName? (r : String) : Option String :=
 #guard refName? "#/components/schemas/x~1y" == some "x/y"
 #guard refName? "other.json#/X" == none
 
-/-- One document's (canonicalised) components. -/
+/-- One document's components: canonicalised (`comps`, what a hop
+compares) and as deserialised (`raw`, what a reference outside the schema
+grammar is replaced by: `DocResolver::component_value`). The same names. -/
 structure Side where
   comps : List (String × J)
+  raw : List (String × J)
 
 def Side.target (s : Side) (name : String) : J := (s.comps.lookup name).getD .null
 
@@ -361,6 +373,22 @@ def merge (t : J) (sibs : List (String × J)) : J :=
   match t with
   | .obj tk => .obj ((tk.filter fun (k, _) => !(sibs.any (·.1 == k))) ++ sibs)
   | _ => .obj sibs
+
+/-- `j` with every component reference replaced by its target as
+deserialised (siblings merged over it), recursively, as
+`DocResolver::inline` does outside the schema grammar (#186): a component
+already on `stack` (by name), or past `maxResolveDepth` of them, stays the
+object as written. -/
+partial def Side.inline (s : Side) (stack : List String) (j : J) : J :=
+  match s.declRef? j with
+  | some (x, sibs) =>
+    if stack.length ≥ maxResolveDepth || stack.contains x then j
+    else s.inline (x :: stack) (merge ((s.raw.lookup x).getD .null) sibs)
+  | none =>
+    match j with
+    | .obj kvs => .obj (kvs.map fun (k, v) => (k, s.inline stack v))
+    | .arr xs => .arr (xs.map (s.inline stack))
+    | j => j
 
 /-! ## Changes and the local walk -/
 
@@ -421,6 +449,52 @@ def setSegment : J → String
   | .str s => s
   | j => j.render
 
+/-- `diff_nodes` with no references left: objects key-wise, sets as sets,
+other arrays by index, scalars by equality. Used beneath a position the
+schema grammar does not know (`Node.opaq`, `Node.set`), where nothing is a
+schema any more. -/
+partial def rawCmp (node : Node) (p : Pointer) (o n : J) : W Unit := do
+  match o, n with
+  | .obj ok, .obj nk =>
+    for (k, ov) in ok do
+      match nk.lookup k with
+      | some nv => rawCmp (node.child k) (p ++ [k]) ov nv
+      | none => emit (p ++ [k]) (.removed ov)
+    for (k, nv) in nk do
+      if (ok.lookup k).isNone then emit (p ++ [k]) (.added nv)
+  | .arr xs, .arr ys =>
+    match node with
+    | .set _ =>
+      for x in xs do
+        if !ys.contains x then emit (p ++ [setSegment x]) (.removed x)
+      for y in ys do
+        if !xs.contains y then emit (p ++ [setSegment y]) (.added y)
+    | _ =>
+      let common := min xs.length ys.length
+      for i in [0:common] do
+        rawCmp (node.child (toString i)) (p ++ [toString i]) xs[i]! ys[i]!
+      for i in [common:xs.length] do
+        emit (p ++ [toString i]) (.removed xs[i]!)
+      for i in [common:ys.length] do
+        emit (p ++ [toString i]) (.added ys[i]!)
+  | _, _ => if o == n then pure () else emit p (.changed o n)
+
+/-- Whether the walk is at a position the schema grammar does not know: a
+`Node.opaq` or `Node.set` node. It is entered only from a schema node
+(`Node.child`), so `p`'s last token is the keyword that left the grammar. -/
+def outsideGrammar : Node → Bool
+  | .opaq | .set _ => true
+  | _ => false
+
+/-- `canonicalize_schema` beneath `$defs`/`definitions` (which it treats as
+maps of schemas though `diff_values` does not): applied to what inlining put
+there, as the Rust canonicalises after inlining. Elsewhere outside the
+grammar canonicalisation does not reach. -/
+def canonOutside (p : Pointer) (j : J) : J :=
+  match p.getLast?, j with
+  | some k, .obj m => if k == "$defs" || k == "definitions" then .obj (m.map fun (n, s) => (n, canon s)) else j
+  | _, _ => j
+
 mutual
 
 /-- Compares `o` and `n` at `p` (a `node` of the schema grammar), resolving
@@ -431,6 +505,12 @@ periodically (see `expand`; main's name-keyed cut instead compares a literal
 `$ref` against an expansion). -/
 partial def go (os ns : Side) (chain : List (Pointer × J × J)) (node : Node) (p : Pointer)
     (o n : J) : W Unit := do
+  -- Outside the grammar a reference is not a schema use (#186): each side
+  -- is inlined as it was before #181 and compared as plain JSON, at this
+  -- owner, where `locate` rates everything Review.
+  if outsideGrammar node then
+    rawCmp node p (canonOutside p (os.inline [] o)) (canonOutside p (ns.inline [] n))
+    return
   let ro := if node == .schema then os.declRef? o else none
   let rn := if node == .schema then ns.declRef? n else none
   match ro, rn with
@@ -536,8 +616,8 @@ def walk (os ns : Side) (o n : J) : Out :=
   ((go os ns [] .schema [] o n).run {}).2
 
 #guard
-  let s : Side := ⟨[("A", .obj [("type", .str "string")])]⟩
-  let t : Side := ⟨[("A", .obj [("type", .str "integer")])]⟩
+  let s : Side := ⟨[("A", .obj [("type", .str "string")])], [("A", .obj [("type", .str "string")])]⟩
+  let t : Side := ⟨[("A", .obj [("type", .str "integer")])], [("A", .obj [("type", .str "integer")])]⟩
   let r := .obj [("$ref", .str "#/components/schemas/A"), ("nullable", .bool true)]
   let out := walk s t r r
   -- The sibling is compared at the use (unchanged); the target via a hop.
@@ -594,7 +674,8 @@ def side (doc : J) : Side :=
     | _ => []
   let comps := entries ((doc.field? "components").bind (·.field? "schemas"))
   let defs := (entries (doc.field? "definitions")).filter fun (k, _) => (comps.lookup k).isNone
-  ⟨(comps ++ defs).map fun (k, v) => (k, canon (schemaNorm v))⟩
+  let all := comps ++ defs
+  ⟨all.map fun (k, v) => (k, canon (schemaNorm v)), all.map fun (k, v) => (k, schemaNorm v)⟩
 
 /-- Endpoint matching: exact `(METHOD, path)`. Move pairing (operationId,
 `v<digits>` segments) only renames the use in Markdown and v2 output; the v1
@@ -902,6 +983,24 @@ private def oas3 (comps : List (String × J)) (resp : J) : J :=
   let same := props [("x", obj1 "type" (.str "string"))]
   let g := grouped (oas3 [("P", same), ("D", same)] (ref "P")) (oas3 [("P", same), ("D", same)] (ref "D"))
   g.length == 1 && g[0]!.severity == .review
+
+-- Outside the grammar (#186) a reference is inlined at the use, not a hop:
+-- one Review record at its full pointer, as before #182.
+#guard
+  let check (r : J) (ptr : Pointer) :=
+    let g := grouped (oas3 [("P", obj1 "type" (.str "string"))] r)
+      (oas3 [("P", obj1 "type" (.str "integer"))] r)
+    g.length == 1 && g[0]!.owner == .use && g[0]!.ptr == ptr && g[0]!.severity == .review
+  check (.obj [("type", .str "object"), ("default", ref "P")]) ["default", "type"]
+    && check (obj1 "if" (ref "P")) ["if", "type"]
+    && check (obj1 "prefixItems" (.arr [ref "P"])) ["prefixItems", "0", "type"]
+    && check (obj1 "$defs" (obj1 "d" (obj1 "not" (ref "P")))) ["$defs", "d", "not", "type"]
+
+-- An inlined self-reference stops at the component already on the chain.
+#guard
+  let t (ty : String) := .obj [("type", .str ty), ("default", ref "T")]
+  let g := grouped (oas3 [("T", t "object")] (ref "T")) (oas3 [("T", t "array")] (ref "T"))
+  g.length == 2 && g.all (·.owner == .pair "T" "T")
 
 -- Under `not`, a component's enum narrowing is Review, as it is inline.
 #guard

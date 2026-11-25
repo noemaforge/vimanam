@@ -13,7 +13,8 @@ a shrunk repro per disagreement class.
 
 Inputs: the fixed cases in formal/refdiff/cases/ (repros from #182's review
 rounds) and `--seeds` generated pairs (cycles, siblings over refs, retargets,
-aliases, one-sided components, mixed ref spellings, refs under `not`).
+aliases, one-sided components, mixed ref spellings, refs under `not`, refs
+outside the schema grammar such as `default`, `if` and `prefixItems`).
 
 Comparisons (see formal/README.md, "Reference semantics of `$ref` diffs"):
 
@@ -77,6 +78,36 @@ class Gen:
         # them left every other seed's documents as they were.
         self.r31 = random.Random(seed * 7919 + 1)
         self.v31 = not self.oas2 and self.r31.random() < 0.15
+        # References outside the schema grammar (#186) likewise: their own
+        # stream, so seeds without them are unchanged.
+        self.rog = random.Random(seed * 104729 + 3)
+        self.og = self.rog.random() < 0.2
+
+    # Keywords the schema grammar does not know, each holding a reference:
+    # values (`default`, `const`, an `enum` member) and applicators whose
+    # effect the severity table does not rate.
+    OUTSIDE = ["default", "const", "enum", "if", "then", "prefixItems", "$defs",
+               "dependentSchemas", "propertyNames", "contains"]
+
+    def outside(self, s: dict) -> None:
+        """Adds a reference at a keyword outside the grammar, from `rog`."""
+        r = self.rog
+        if not self.og or r.random() < 0.6:
+            return
+        base = "#/definitions/" if (self.oas2 or r.random() < 0.2) else "#/components/schemas/"
+        ref: dict = {"$ref": base + enc(r.choice(NAMES))}
+        if r.random() < 0.2:
+            ref["nullable"] = r.choice([True, False])
+        key = r.choice(self.OUTSIDE)
+        if key == "enum":
+            if "enum" not in s:
+                s["enum"] = ["p", ref]
+        elif key == "prefixItems":
+            s[key] = [ref]
+        elif key in ("$defs", "dependentSchemas"):
+            s[key] = {"d": {"not": ref} if r.random() < 0.3 else ref}
+        else:
+            s[key] = ref
 
     def ref(self, name: str, siblings: bool = True) -> dict:
         r = self.r
@@ -106,6 +137,7 @@ class Gen:
             s["nullable"] = True
         if self.v31 and self.r31.random() < 0.4:
             s["type"] = [s["type"], "null"] if self.r31.random() < 0.7 else [s["type"]]
+        self.outside(s)
         return s
 
     def schema(self, depth: int) -> dict:
@@ -124,6 +156,7 @@ class Gen:
             for p in r.sample(["data", "next", "id", "meta", "items", "type"], r.randint(1, 3))
         }
         s = {"type": "object", "properties": props}
+        self.outside(s)
         if r.random() < 0.35:
             s["required"] = r.sample(list(props), 1)
         if r.random() < 0.1:
@@ -278,6 +311,27 @@ def norm_change(op: str, before, after) -> str:
     return f"changed {norm_value(before)} -> {norm_value(after)}"
 
 
+def norm_ptr(ptr: str) -> str:
+    """A pointer with every `required`/`enum` member token that is a JSON
+    object or array (`set_element_segment`: compact JSON) re-rendered with
+    sorted keys. Both sides write the member's JSON text, in their own key
+    order (`Lean.Json` sorts keys on input; `serde_json` keeps insertion
+    order), and only an inlined reference (#186) puts an object there."""
+    if "{" not in ptr and "[" not in ptr:
+        return ptr
+    out = []
+    for token in ptr.split("/"):
+        raw = token.replace("~1", "/").replace("~0", "~")
+        if raw[:1] in ("{", "["):
+            try:
+                raw = json.dumps(json.loads(raw), sort_keys=True, separators=(",", ":"))
+                token = raw.replace("~", "~0").replace("/", "~1")
+            except ValueError:
+                pass
+        out.append(token)
+    return "/".join(out)
+
+
 def model_grouped(m: dict) -> tuple[Counter, set[tuple]]:
     """Records as a multiset of tuples, and those reached under `not`."""
     out: Counter = Counter()
@@ -286,7 +340,7 @@ def model_grouped(m: dict) -> tuple[Counter, set[tuple]]:
         o = r["owner"]
         owner = "use" if o is None else f"{o['old']}->{o['new']}"
         c = r["change"]
-        rec = (r["use"], owner, r["ptr"], norm_change(c["op"], c.get("before"), c.get("after")), r["severity"])
+        rec = (r["use"], owner, norm_ptr(r["ptr"]), norm_change(c["op"], c.get("before"), c.get("after")), r["severity"])
         out[rec] += 1
         if r["neg"]:
             neg.add(rec)
@@ -302,7 +356,8 @@ def model_per_path(m: dict) -> Counter:
     out: Counter = Counter()
     for r in m["per_path"]:
         c = r["change"]
-        out[(r["use"], r["ptr"], norm_change(c["op"], c.get("before"), c.get("after")), r["severity"])] += 1
+        out[(r["use"], norm_ptr(r["ptr"]), norm_change(c["op"], c.get("before"), c.get("after")),
+             r["severity"])] += 1
     return out
 
 
@@ -336,7 +391,7 @@ def rust_records(rust: dict, grouped: bool) -> tuple[Counter, set[tuple]]:
             comp = d.get("component")
             old_comp = d.get("old_component", comp)
             owner = "use" if comp is None else f"{old_comp}->{comp}"
-            pointer = sc["pointer"]
+            pointer = norm_ptr(sc["pointer"])
             # #182 writes the retarget fact as a change of the component names
             # at `/$ref`; the model's record for it is `retargeted X -> Y` at
             # the pair root.
@@ -348,7 +403,7 @@ def rust_records(rust: dict, grouped: bool) -> tuple[Counter, set[tuple]]:
             if d.get("under_not"):
                 neg.add(t)
         else:
-            out[(use, sc["pointer"], change, rec["severity"])] += 1
+            out[(use, norm_ptr(sc["pointer"]), change, rec["severity"])] += 1
     return out, neg
 
 
@@ -442,27 +497,7 @@ def name_cuts(found: list, rust: Counter, is_q1) -> list:
     return out
 
 
-# ── known gaps ──────────────────────────────────────────────────────────────
-
-# `Node.child` (formal/VimanamProofs/Severity.lean): the schema grammar the
-# model follows `$ref`s in.
-def node_child(node: str, key: str) -> str:
-    if node == "schema":
-        if key in ("properties", "patternProperties"):
-            return "pmap"
-        if key in ("allOf", "oneOf", "anyOf"):
-            return "slist"
-        if key in ("items", "additionalProperties", "not"):
-            return "schema"
-        if key in ("required", "enum"):
-            return "set"
-        return "opaq"
-    if node in ("pmap", "slist"):
-        return "schema"
-    return "opaq"
-
-
-ANNOTATIONS = ("description", "title", "example", "examples", "deprecated")
+# ── reachability ────────────────────────────────────────────────────────────
 
 
 def ref_name(r) -> str | None:
@@ -474,102 +509,32 @@ def ref_name(r) -> str | None:
     return None
 
 
-def encode(token: str) -> str:
-    return token.replace("~", "~0").replace("/", "~1")
-
-
-class Gaps:
-    """Where #182 follows a component `$ref` the model does not (#186), per
-    use, from the model's export of the use schemas and components.
-
-    For each use and side, walking the use schema and every component it
-    reaches (through any reference, as #182 does): `positions[owner]` are the
-    owner-relative pointers of references outside the `diff_values` grammar
-    (owner `use`, or a component name); `reached` is every component
-    reachable from such a reference's target; `grammar` is every component
-    the use reaches through grammar positions only (as the model does); `all`
-    is every component the use reaches at all. A record is #186's when its
-    owner pair has a side in `reached` but not in `grammar` (a component the
-    use also reaches through the grammar is compared normally), or its
-    pointer is at or beneath one of its owner's positions."""
+class Reaches:
+    """Every component each use reaches on each side, through any reference
+    anywhere (the Q1 check's notion of "the use reaches it"), from the
+    model's export of the use schemas and components."""
 
     def __init__(self, m: dict):
-        self.by_use: dict[str, dict] = {}
+        self.by_use: dict[str, dict[str, set[str]]] = {}
         comps = m["components"]
         for u in m["uses"]:
-            sides = {}
-            for side in ("old", "new"):
-                sides[side] = self._side(u[side], comps[side])
-            self.by_use[u["id"]] = sides
+            self.by_use[u["id"]] = {side: self._side(u[side], comps[side]) for side in ("old", "new")}
 
     @staticmethod
-    def _side(schema, comps: dict) -> dict:
-        positions: dict[str, set[str]] = defaultdict(set)
-        targets: set[str] = set()
-        seen_all: set[str] = set()
-        seen_grammar: set[str] = set()
-        # (owner, value, reached through grammar positions only)
-        todo: list[tuple[str, object, bool]] = [("use", schema, True)]
-
-        def walk(owner, v, node, ptr, grammar):
-            if isinstance(v, dict):
-                n = ref_name(v.get("$ref"))
-                if n is not None and n in comps:
-                    via_grammar = grammar and node == "schema"
-                    if node != "schema":
-                        positions[owner].add(ptr)
-                        targets.add(n)
-                    if via_grammar and n not in seen_grammar:
-                        seen_grammar.add(n)
-                        seen_all.add(n)
-                        todo.append((n, comps[n], True))
-                    elif n not in seen_all:
-                        seen_all.add(n)
-                        todo.append((n, comps[n], False))
-                for k, c in v.items():
-                    if k == "$ref":
-                        continue
-                    if node == "schema" and (k.startswith("x-") or k in ANNOTATIONS):
-                        continue
-                    walk(owner, c, node_child(node, k), f"{ptr}/{encode(k)}", grammar)
-            elif isinstance(v, list):
-                for i, c in enumerate(v):
-                    walk(owner, c, node_child(node, str(i)), f"{ptr}/{i}", grammar)
-
-        while todo:
-            owner, v, grammar = todo.pop()
-            walk(owner, v, "schema", "", grammar)
-        reached: set[str] = set()
-        stack = list(targets)
+    def _side(schema, comps: dict) -> set[str]:
+        seen: set[str] = set()
+        stack = [r for r in component_refs(schema) if r in comps]
         while stack:
             n = stack.pop()
-            if n in reached:
+            if n in seen:
                 continue
-            reached.add(n)
+            seen.add(n)
             stack.extend(r for r in component_refs(comps[n]) if r in comps)
-        return {"positions": positions, "reached": reached, "grammar": seen_grammar, "all": seen_all}
-
-    def covers(self, rec) -> bool:
-        sides = self.by_use.get(rec[0])
-        if sides is None:
-            return False
-        if rec[1] == "use":
-            owners = {"old": "use", "new": "use"}
-        else:
-            o, n = rec[1].split("->", 1) if "->" in rec[1] else (rec[1], rec[1])
-            for side, name in (("old", o), ("new", n)):
-                if name in sides[side]["reached"] and name not in sides[side]["grammar"]:
-                    return True
-            owners = {"old": o, "new": n}
-        return any(under(rec[2], p) for side in ("old", "new")
-                   for p in sides[side]["positions"].get(owners[side], ()))
-
-    def any(self) -> bool:
-        return any(sides[s]["positions"] for sides in self.by_use.values() for s in ("old", "new"))
+        return seen
 
     def reaches(self, use: str, side: str) -> set[str]:
         sides = self.by_use.get(use)
-        return sides[side]["all"] if sides else set()
+        return sides[side] if sides else set()
 
 
 def component_refs(v):
@@ -755,7 +720,7 @@ def ref_values(rec) -> set[str]:
     return set(REF_TOKEN.findall(rec[3]))
 
 
-def q1_checker(gaps: "Gaps", m: dict):
+def q1_checker(gaps: "Reaches", m: dict):
     """The Q1 condition for a pair, given its disagreements: a Review record
     at a `$ref` key, where the use reaches (on either side) a component in
     an alias loop, or leading into one, that is named by
@@ -900,9 +865,7 @@ def main() -> int:
     main_agree = 0
     errors = []
     for (name, o, n), m, pr, mn in zip(pairs, models, prs, mains):
-        gaps = Gaps(m)
-        gap = gaps.any()
-        q1_for = q1_checker(gaps, m)
+        q1_for = q1_checker(Reaches(m), m)
         if pr is None or "error" in pr:
             errors.append((name, "rust", pr))
         else:
@@ -912,13 +875,6 @@ def main() -> int:
             is_q1 = q1_for(found)
             for kind, mrec, rrec in found:
                 rec = mrec if mrec is not None else rrec
-                # The model does not follow references outside the schema
-                # grammar; #182 does, and rates what it finds there (#186).
-                # A record both sides report (a verdict or flag mismatch) is
-                # never put down to that.
-                paired = kind.startswith(("verdict", "under-not-flag"))
-                if not paired and gaps.covers(rec):
-                    kind = "known-rust-bug-#186"
                 by_class[kind].append((name, o, n, mrec, rrec, is_q1(rec)))
         if mn is not None:
             if "error" in mn:
@@ -928,8 +884,7 @@ def main() -> int:
             if mp == rp:
                 main_agree += 1
             else:
-                cls = "refs outside the grammar (#186)" if gap else "differ"
-                main_by_class[cls].append((name, o, n, sorted((mp - rp).elements()),
+                main_by_class["differ"].append((name, o, n, sorted((mp - rp).elements()),
                                            sorted((rp - mp).elements())))
 
     unallowed = [(kind, i) for kind, items in sorted(by_class.items()) for i in items
@@ -958,7 +913,7 @@ def main() -> int:
                                            text=True, check=True).stdout)
             return any(k == kind for k, _, _ in classify_grouped(*model_grouped(mm), *rust_records(pr, True)))
 
-        if not args.no_shrink and kind != "known-rust-bug-#186":
+        if not args.no_shrink:
             old, new = shrink(old, new, still, tmp)
         base = repro_dir / kind
         base.with_suffix(".old.json").write_text(json.dumps(old, indent=1) + "\n")
@@ -968,7 +923,7 @@ def main() -> int:
         pr = run_rust(args.pr, po, pn)
         diffs = [] if pr is None or "error" in pr else [
             d for d in classify_grouped(*model_grouped(mm), *rust_records(pr, True))
-            if d[0] == kind or kind == "known-rust-bug-#186"]
+            if d[0] == kind]
         shrunk[kind] = (name, po, pn, diffs)
 
     write_report(out, args, pairs, by_class, main_by_class, errors, shrunk, main_agree, rules, unallowed)

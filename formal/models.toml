@@ -33,6 +33,7 @@ rust = [
   "src/diff/mod.rs#Direction",
   "src/diff/mod.rs#severity",
   "src/diff/mod.rs#became",
+  "src/diff/mod.rs#at_default",
   "src/diff/mod.rs#request_schema_severity",
   "src/diff/mod.rs#response_schema_severity",
   "src/diff/value.rs#ValueChangeKind",

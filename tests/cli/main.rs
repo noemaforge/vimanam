@@ -8,6 +8,7 @@ mod diff_components;
 mod diff_json;
 mod diff_moves;
 mod diff_refs;
+mod diff_verdicts;
 mod neutral_json;
 mod report;
 mod schema_selection;

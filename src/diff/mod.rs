@@ -459,6 +459,7 @@ impl SpecDiff {
 /// | `additionalProperties` became `false` | Breaking |
 /// | `nullable` became `true` | Non-breaking |
 /// | `nullable` became `false` (clients sending `null` now fail) | Breaking |
+/// | `nullable: false` or `additionalProperties: true` added or removed (the default either way) | Non-breaking |
 /// | anything else (`format`, bounds, `pattern`, `items` shape, `allOf`/`oneOf`/`anyOf` variants, other `additionalProperties`) | Review |
 ///
 /// Response schemas (what the client receives):
@@ -477,7 +478,13 @@ impl SpecDiff {
 /// | member added to `required` | Non-breaking |
 /// | `nullable` became `true` | Breaking |
 /// | `nullable` became `false` | Non-breaking |
+/// | `nullable: false` or `additionalProperties: true` added or removed (the default either way) | Non-breaking |
 /// | anything else | Review |
+///
+/// "Became" is about the effective value: an absent `nullable` is `false`
+/// (OpenAPI 3.0) and an absent `additionalProperties` is `true` (JSON
+/// Schema), so writing or dropping either at that default changes nothing
+/// (#184).
 ///
 /// Any change at or beneath a `not` keyword (in either table) is Review: `not`
 /// reverses every direction above, so narrowing the excluded schema widens
@@ -500,6 +507,14 @@ impl SpecDiff {
 /// A use that reaches the component through a `not` keyword (at the use or
 /// in any component on the way) gets its own record, which is Review, like
 /// any change under `not`; uses reaching it plainly keep their verdict.
+///
+/// Only schema positions the tables read hold such uses (the root,
+/// `properties`/`patternProperties` values, `allOf`/`oneOf`/`anyOf` members,
+/// `items`, `additionalProperties`, `not`). A `$ref` anywhere else
+/// (`default`, `const`, `enum` members, `if`/`then`/`else`, `prefixItems`,
+/// `$defs`, ...) is inlined on each side and compared in place, so a change
+/// there is reported at its full pointer under the use (or component) that
+/// holds it, and is Review like every change at such a pointer (#186).
 ///
 /// So a narrowed `enum` on a component shared by a request and a response is
 /// a breaking request record plus a non-breaking response record, and
@@ -558,18 +573,31 @@ pub fn severity(change: &Change) -> Severity {
     }
 }
 
-/// True when the change leaves a boolean keyword equal to `flag` (added or
-/// changed to it, or removed when its old value was the opposite).
-fn became(kind: &ValueChangeKind, flag: bool) -> bool {
+/// True when the change moves a boolean keyword whose absent value is
+/// `default` to `flag` (#184): adding it counts only when `flag` is not the
+/// default (writing the default changes nothing), changing it counts when the
+/// new value is `flag`, and removing it counts only when the old value was
+/// not `flag` and the default is (dropping the keyword leaves its default).
+fn became(kind: &ValueChangeKind, flag: bool, default: bool) -> bool {
     match kind {
-        ValueChangeKind::Added(Value::Bool(now))
-        | ValueChangeKind::Changed {
+        ValueChangeKind::Added(Value::Bool(now)) => *now == flag && flag != default,
+        ValueChangeKind::Changed {
             new: Value::Bool(now),
             ..
         } => *now == flag,
-        ValueChangeKind::Removed(Value::Bool(was)) => *was != flag,
+        ValueChangeKind::Removed(Value::Bool(was)) => *was != flag && default == flag,
         _ => false,
     }
+}
+
+/// True when a boolean keyword is written or dropped at its default value,
+/// which changes nothing (#184).
+fn at_default(kind: &ValueChangeKind, default: bool) -> bool {
+    matches!(
+        kind,
+        ValueChangeKind::Added(Value::Bool(value)) | ValueChangeKind::Removed(Value::Bool(value))
+            if *value == default
+    )
 }
 
 fn request_schema_severity(change: &ValueChange) -> Severity {
@@ -589,9 +617,12 @@ fn request_schema_severity(change: &ValueChange) -> Severity {
         (Location::EnumElement, Added(_)) => Severity::NonBreaking,
         (Location::Enum, Added(_)) => Severity::Breaking,
         (Location::Enum, Removed(_)) => Severity::NonBreaking,
-        (Location::AdditionalProperties, kind) if became(kind, false) => Severity::Breaking,
-        (Location::Nullable, kind) if became(kind, true) => Severity::NonBreaking,
-        (Location::Nullable, kind) if became(kind, false) => Severity::Breaking,
+        // `additionalProperties` defaults to `true`, `nullable` to `false`.
+        (Location::AdditionalProperties, kind) if at_default(kind, true) => Severity::NonBreaking,
+        (Location::AdditionalProperties, kind) if became(kind, false, true) => Severity::Breaking,
+        (Location::Nullable, kind) if at_default(kind, false) => Severity::NonBreaking,
+        (Location::Nullable, kind) if became(kind, true, false) => Severity::NonBreaking,
+        (Location::Nullable, kind) if became(kind, false, false) => Severity::Breaking,
         _ => Severity::Review,
     }
 }
@@ -627,8 +658,10 @@ fn response_schema_severity(change: &ValueChange) -> Severity {
         (Location::Enum, Added(_)) => Severity::NonBreaking,
         (Location::RequiredElement, Removed(_)) => Severity::Breaking,
         (Location::RequiredElement, Added(_)) => Severity::NonBreaking,
-        (Location::Nullable, kind) if became(kind, true) => Severity::Breaking,
-        (Location::Nullable, kind) if became(kind, false) => Severity::NonBreaking,
+        (Location::AdditionalProperties, kind) if at_default(kind, true) => Severity::NonBreaking,
+        (Location::Nullable, kind) if at_default(kind, false) => Severity::NonBreaking,
+        (Location::Nullable, kind) if became(kind, true, false) => Severity::Breaking,
+        (Location::Nullable, kind) if became(kind, false, false) => Severity::NonBreaking,
         _ => Severity::Review,
     }
 }
@@ -1686,9 +1719,78 @@ mod tests {
             request(removed("/nullable", json!(true))),
             Severity::Breaking
         );
+        // Dropping the default `true` is no change; dropping `false` is no
+        // narrowing either (absent means `true`), see the no-op test.
         assert_eq!(
-            request(added("/properties/a/nullable", json!(false))),
+            request(changed("/properties/a/nullable", json!(true), json!(false))),
             Severity::Breaking
+        );
+    }
+
+    /// #184: writing or dropping `nullable: false` or
+    /// `additionalProperties: true` leaves the keyword at its default, so it
+    /// is no change in either table (and not Breaking, as it was).
+    #[test]
+    fn severity_keyword_at_default_is_a_no_op() {
+        for pointer in ["/nullable", "/properties/a/nullable", "/items/nullable"] {
+            assert_eq!(request(added(pointer, json!(false))), Severity::NonBreaking);
+            assert_eq!(
+                request(removed(pointer, json!(false))),
+                Severity::NonBreaking
+            );
+            assert_eq!(
+                response(added(pointer, json!(false))),
+                Severity::NonBreaking
+            );
+            assert_eq!(
+                response(removed(pointer, json!(false))),
+                Severity::NonBreaking
+            );
+        }
+        for pointer in [
+            "/additionalProperties",
+            "/properties/a/additionalProperties",
+        ] {
+            assert_eq!(request(added(pointer, json!(true))), Severity::NonBreaking);
+            assert_eq!(
+                request(removed(pointer, json!(true))),
+                Severity::NonBreaking
+            );
+            assert_eq!(response(added(pointer, json!(true))), Severity::NonBreaking);
+            assert_eq!(
+                response(removed(pointer, json!(true))),
+                Severity::NonBreaking
+            );
+        }
+        // Under `not` everything stays Review.
+        assert_eq!(
+            request(added("/not/nullable", json!(false))),
+            Severity::Review
+        );
+        // Moving off the default still has its direction.
+        assert_eq!(
+            request(added("/nullable", json!(true))),
+            Severity::NonBreaking
+        );
+        assert_eq!(
+            response(added("/nullable", json!(true))),
+            Severity::Breaking
+        );
+        assert_eq!(
+            request(removed("/nullable", json!(true))),
+            Severity::Breaking
+        );
+        assert_eq!(
+            response(removed("/nullable", json!(true))),
+            Severity::NonBreaking
+        );
+        assert_eq!(
+            request(added("/additionalProperties", json!(false))),
+            Severity::Breaking
+        );
+        assert_eq!(
+            request(removed("/additionalProperties", json!(false))),
+            Severity::Review
         );
     }
 
