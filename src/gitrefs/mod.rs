@@ -18,15 +18,59 @@
 
 use anyhow::{Context, Result, anyhow, bail};
 use serde::{Deserialize, de::IgnoredAny};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::ffi::{OsStr, OsString};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Component, Path, PathBuf};
-use std::process::{Command, Output};
+use std::process::{Child, ChildStdin, ChildStdout, Command, Output, Stdio};
+use std::sync::{Arc, Mutex, MutexGuard};
 
 /// A discovered, non-bare Git repository, including linked worktrees.
-#[derive(Debug, Clone)]
+///
+/// Clones share one session: resolved commits, tree listings and rename
+/// edges are cached per object ID, and committed blobs are read through one
+/// long-lived `git cat-file --batch` child instead of a process per blob.
+/// The child is closed and reaped when the last clone is dropped.
+#[derive(Clone)]
 pub struct Repository {
     root: PathBuf,
+    session: Arc<Mutex<Session>>,
+}
+
+impl std::fmt::Debug for Repository {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Repository")
+            .field("root", &self.root)
+            .finish_non_exhaustive()
+    }
+}
+
+/// Per-repository caches. Every key is either a caller's reference string or
+/// a commit object ID, and every value is immutable for that ID, so caching
+/// cannot change results (a moving branch is resolved once per session).
+#[derive(Default)]
+struct Session {
+    commits: HashMap<String, String>,
+    /// Raw `ls-tree -r --full-tree -z` output per commit.
+    listings: HashMap<String, Arc<[u8]>>,
+    /// Path-limited regular-file lookups per (commit, path).
+    entries: HashMap<(String, PathBuf), Option<Entry>>,
+    edges: HashMap<(String, String), Vec<u8>>,
+    shallow: Option<Vec<u8>>,
+    /// Answer path lookups from one full listing per commit (set when the
+    /// caller will need full listings anyway, such as protobuf imports).
+    full_listings: bool,
+    blobs: BlobState,
+}
+
+#[derive(Default)]
+enum BlobState {
+    #[default]
+    Unstarted,
+    Running(BlobReader),
+    /// The batch reader failed once; use per-blob `git show` from then on so
+    /// failures keep their exact messages.
+    Disabled,
 }
 
 /// Bytes from a regular file in a committed Git tree.
@@ -57,6 +101,24 @@ impl Repository {
                 .parent()
                 .ok_or_else(|| anyhow!("No existing directory above {}", start.display()))?;
         }
+        // One process answers both questions for an ordinary worktree. Any
+        // other outcome repeats the original two-step checks so bare, missing
+        // and .git-directory cases keep their exact errors.
+        let combined = run(
+            directory,
+            [
+                OsStr::new("rev-parse"),
+                OsStr::new("--is-bare-repository"),
+                OsStr::new("--show-toplevel"),
+            ],
+        )?;
+        if combined.status.success()
+            && let Some(root) = combined.stdout.strip_prefix(b"false\n")
+            && let Some(root) = root.strip_suffix(b"\n")
+            && !root.is_empty()
+        {
+            return Ok(Self::new(path_bytes(root)?));
+        }
         let bare = run(
             directory,
             [OsStr::new("rev-parse"), OsStr::new("--is-bare-repository")],
@@ -73,7 +135,20 @@ impl Repository {
             "find repository root",
         )?;
         let root = path_bytes(root.strip_suffix(b"\n").unwrap_or(&root))?;
-        Ok(Self { root })
+        Ok(Self::new(root))
+    }
+
+    fn new(root: PathBuf) -> Self {
+        Self {
+            root,
+            session: Arc::default(),
+        }
+    }
+
+    fn session(&self) -> MutexGuard<'_, Session> {
+        self.session
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
     /// Absolute root of the worktree.
@@ -228,6 +303,9 @@ impl Repository {
     }
 
     fn resolve(&self, reference: &str) -> Result<String> {
+        if let Some(commit) = self.session().commits.get(reference) {
+            return Ok(commit.clone());
+        }
         let revision = format!("{reference}^{{commit}}");
         let output = run(
             &self.root,
@@ -243,21 +321,23 @@ impl Repository {
                 "Git ref does not name an available commit: {reference:?} (check shallow clone history)"
             );
         }
-        Ok(std::str::from_utf8(&output.stdout)?.trim().to_owned())
+        let commit = std::str::from_utf8(&output.stdout)?.trim().to_owned();
+        let mut session = self.session();
+        session.commits.insert(reference.to_owned(), commit.clone());
+        // A full commit ID resolves to itself, so later lookups by the ID
+        // (such as a pinned follow anchor) need no process either.
+        session.commits.insert(commit.clone(), commit.clone());
+        Ok(commit)
     }
 
     fn at_commit(&self, commit: &str, path: &Path) -> Result<MaterializedSpec> {
         validate_path(path)?;
-        let entry = self
-            .tree(commit, Some(path))?
-            .into_iter()
-            .find(|e| e.path == path)
-            .ok_or_else(|| {
-                anyhow!(
-                    "Git path is missing or is not a regular file at {commit}: {}",
-                    path.display()
-                )
-            })?;
+        let entry = self.lookup(commit, path)?.ok_or_else(|| {
+            anyhow!(
+                "Git path is missing or is not a regular file at {commit}: {}",
+                path.display()
+            )
+        })?;
         Ok(MaterializedSpec {
             commit: commit.to_owned(),
             path: entry.path,
@@ -265,7 +345,58 @@ impl Repository {
         })
     }
 
+    /// The regular file at exactly `path`, from a cached full listing when one
+    /// exists (only for already-normal paths, whose bytes the listing holds
+    /// verbatim), else from a cached path-limited `ls-tree`.
+    fn lookup(&self, commit: &str, path: &Path) -> Result<Option<Entry>> {
+        let key = (commit.to_owned(), path.to_path_buf());
+        if let Some(entry) = self.session().entries.get(&key) {
+            return Ok(entry.clone());
+        }
+        let normal = path.components().collect::<PathBuf>().as_os_str() == path.as_os_str();
+        let (listing, full) = {
+            let session = self.session();
+            (session.listings.get(commit).cloned(), session.full_listings)
+        };
+        let entries = match listing {
+            Some(listing) if normal => parse_tree(&listing)?,
+            None if normal && full => parse_tree(&self.listing(commit)?)?,
+            _ => self.tree(commit, Some(path))?,
+        };
+        let entry = entries.into_iter().find(|e| e.path == path);
+        self.session().entries.insert(key, entry.clone());
+        Ok(entry)
+    }
+
+    /// Read whole-commit listings (once per commit) instead of path-limited
+    /// ones, for callers that will enumerate those commits anyway.
+    pub(crate) fn prefer_full_listings(&self) {
+        self.session().full_listings = true;
+    }
+
+    /// Raw NUL-delimited `ls-tree -r --full-tree -z` records for every entry
+    /// (all modes, including symlinks and submodules) at a resolved commit,
+    /// listed once per session.
+    pub(crate) fn listing(&self, commit: &str) -> Result<Arc<[u8]>> {
+        if let Some(listing) = self.session().listings.get(commit) {
+            return Ok(listing.clone());
+        }
+        let bytes: Arc<[u8]> = checked(
+            &self.root,
+            ["ls-tree", "-r", "--full-tree", "-z", commit, "--"],
+            "list committed files",
+        )?
+        .into();
+        self.session()
+            .listings
+            .insert(commit.to_owned(), bytes.clone());
+        Ok(bytes)
+    }
+
     fn tree(&self, commit: &str, path: Option<&Path>) -> Result<Vec<Entry>> {
+        let Some(path) = path else {
+            return parse_tree(&self.listing(commit)?);
+        };
         let mut args = vec![
             OsString::from("ls-tree"),
             "-r".into(),
@@ -274,37 +405,33 @@ impl Repository {
             commit.into(),
             "--".into(),
         ];
-        if let Some(path) = path {
-            // The subprocess uses --literal-pathspecs, and returned paths are
-            // compared exactly so a directory cannot select its descendants.
-            args.push(path.as_os_str().to_owned());
-        }
-        let bytes = checked(&self.root, &args, "list committed files")?;
-        let mut entries = Vec::new();
-        for record in bytes.split(|b| *b == 0).filter(|r| !r.is_empty()) {
-            let (header, name) = record.split_at(
-                record
-                    .iter()
-                    .position(|b| *b == b'\t')
-                    .context("Invalid Git tree record")?,
-            );
-            let fields = std::str::from_utf8(header)?
-                .split_whitespace()
-                .collect::<Vec<_>>();
-            if fields.len() != 3 {
-                bail!("Invalid Git tree header");
-            }
-            if ["100644", "100755"].contains(&fields[0]) && fields[1] == "blob" {
-                entries.push(Entry {
-                    path: path_bytes(&name[1..])?,
-                    oid: fields[2].to_owned(),
-                });
-            }
-        }
-        Ok(entries)
+        // The subprocess uses --literal-pathspecs, and returned paths are
+        // compared exactly so a directory cannot select its descendants.
+        args.push(path.as_os_str().to_owned());
+        parse_tree(&checked(&self.root, &args, "list committed files")?)
     }
 
+    /// Read a blob through the session's `git cat-file --batch` child. Any
+    /// batch failure (spawn, I/O, missing or non-blob object, malformed
+    /// response) disables the batch reader and repeats the read with the
+    /// original per-blob `git show`, so errors keep their exact text.
     fn blob(&self, oid: &str) -> Result<Vec<u8>> {
+        {
+            let mut session = self.session();
+            if matches!(session.blobs, BlobState::Unstarted) {
+                session.blobs = match BlobReader::spawn(&self.root) {
+                    Ok(reader) => BlobState::Running(reader),
+                    Err(_) => BlobState::Disabled,
+                };
+            }
+            if let BlobState::Running(reader) = &mut session.blobs {
+                if let Some(bytes) = reader.read(oid) {
+                    return Ok(bytes);
+                }
+                // Dropping the reader kills and reaps the child.
+                session.blobs = BlobState::Disabled;
+            }
+        }
         self.git(
             ["show", "--no-ext-diff", "--no-textconv", oid, "--"],
             "read committed blob",
@@ -318,11 +445,19 @@ impl Repository {
     // Only optimize backward comparisons whose complete interval is linear.
     // Path-limited log simplification is not equivalent to our merge semantics.
     fn follow_linear(&self, base: &str, tip: &str, path: &Path) -> Result<Option<PathBuf>> {
-        if self.git(
-            ["rev-parse", "--is-shallow-repository"],
-            "check shallow history",
-        )? != b"false\n"
-        {
+        let shallow = self.session().shallow.clone();
+        let shallow = match shallow {
+            Some(shallow) => shallow,
+            None => {
+                let shallow = self.git(
+                    ["rev-parse", "--is-shallow-repository"],
+                    "check shallow history",
+                )?;
+                self.session().shallow = Some(shallow.clone());
+                shallow
+            }
+        };
+        if shallow != b"false\n" {
             return Ok(None);
         }
         let range = format!("{base}..{tip}");
@@ -381,7 +516,11 @@ impl Repository {
     }
 
     fn edge_changes(&self, parent: &str, child: &str) -> Result<Vec<u8>> {
-        self.git(
+        let key = (parent.to_owned(), child.to_owned());
+        if let Some(changes) = self.session().edges.get(&key) {
+            return Ok(changes.clone());
+        }
+        let changes = self.git(
             [
                 "diff-tree",
                 "--no-commit-id",
@@ -397,7 +536,9 @@ impl Repository {
                 "--",
             ],
             "inspect renames",
-        )
+        )?;
+        self.session().edges.insert(key, changes.clone());
+        Ok(changes)
     }
 
     fn trace(
@@ -513,9 +654,112 @@ impl TraceState {
     }
 }
 
+#[derive(Clone)]
 struct Entry {
     path: PathBuf,
     oid: String,
+}
+
+/// Regular files (`100644`/`100755` blobs) from NUL-delimited `ls-tree -z`
+/// records; symlinks, submodules and trees are skipped.
+fn parse_tree(bytes: &[u8]) -> Result<Vec<Entry>> {
+    let mut entries = Vec::new();
+    for record in bytes.split(|b| *b == 0).filter(|r| !r.is_empty()) {
+        let (header, name) = record.split_at(
+            record
+                .iter()
+                .position(|b| *b == b'\t')
+                .context("Invalid Git tree record")?,
+        );
+        let fields = std::str::from_utf8(header)?
+            .split_whitespace()
+            .collect::<Vec<_>>();
+        if fields.len() != 3 {
+            bail!("Invalid Git tree header");
+        }
+        if ["100644", "100755"].contains(&fields[0]) && fields[1] == "blob" {
+            entries.push(Entry {
+                path: path_bytes(&name[1..])?,
+                oid: fields[2].to_owned(),
+            });
+        }
+    }
+    Ok(entries)
+}
+
+/// A long-lived `git cat-file --batch` child. It prints raw object bytes:
+/// no textconv, filters or external diff apply (`--textconv`/`--filters` are
+/// never passed), matching `git show --no-ext-diff --no-textconv <blob>`.
+struct BlobReader {
+    child: Child,
+    stdin: Option<ChildStdin>,
+    stdout: Option<BufReader<ChildStdout>>,
+}
+
+impl BlobReader {
+    fn spawn(root: &Path) -> std::io::Result<Self> {
+        let mut child = git_command(root)
+            .args(["cat-file", "--batch"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            // Errors are reproduced by the `git show` fallback; an unread
+            // stderr pipe could otherwise fill and stall the child.
+            .stderr(Stdio::null())
+            .spawn()?;
+        let stdin = child.stdin.take();
+        let stdout = child.stdout.take().map(BufReader::new);
+        Ok(Self {
+            child,
+            stdin,
+            stdout,
+        })
+    }
+
+    /// One request/response round trip; `None` on anything unexpected.
+    fn read(&mut self, oid: &str) -> Option<Vec<u8>> {
+        // Only object IDs from `ls-tree` are sent: a revision expression
+        // could otherwise name a different object or contain a newline.
+        if !matches!(oid.len(), 40 | 64) || !oid.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return None;
+        }
+        let stdin = self.stdin.as_mut()?;
+        stdin.write_all(oid.as_bytes()).ok()?;
+        stdin.write_all(b"\n").ok()?;
+        stdin.flush().ok()?;
+        let stdout = self.stdout.as_mut()?;
+        let mut header = Vec::new();
+        stdout.read_until(b'\n', &mut header).ok()?;
+        let header = std::str::from_utf8(header.strip_suffix(b"\n")?).ok()?;
+        let mut fields = header.split(' ');
+        let (Some(name), Some("blob"), Some(size), None) =
+            (fields.next(), fields.next(), fields.next(), fields.next())
+        else {
+            return None;
+        };
+        if !name.eq_ignore_ascii_case(oid) {
+            return None;
+        }
+        let size = size.parse::<usize>().ok()?;
+        let mut bytes = vec![0; size];
+        stdout.read_exact(&mut bytes).ok()?;
+        let mut terminator = [0];
+        stdout.read_exact(&mut terminator).ok()?;
+        (terminator == *b"\n").then_some(bytes)
+    }
+}
+
+impl Drop for BlobReader {
+    fn drop(&mut self) {
+        // Closing stdin ends an idle child; closing stdout makes a child that
+        // is still writing an abandoned response fail with EPIPE. Kill as a
+        // backstop, then always reap so no zombie outlives the session.
+        drop(self.stdin.take());
+        drop(self.stdout.take());
+        if !matches!(self.child.try_wait(), Ok(Some(_))) {
+            let _ = self.child.kill();
+        }
+        let _ = self.child.wait();
+    }
 }
 
 fn unique(paths: BTreeSet<PathBuf>, reference: &str) -> Result<PathBuf> {
@@ -621,28 +865,33 @@ where
     I: IntoIterator<Item = S>,
     S: AsRef<OsStr>,
 {
-    Command::new("git")
+    git_command(directory).args(args).output().map_err(|error| {
+        if error.kind() == std::io::ErrorKind::NotFound {
+            anyhow!("Git executable not found on PATH")
+        } else {
+            anyhow!(error).context("Failed to launch Git")
+        }
+    })
+}
+
+/// Git with this module's fixed hardening: no pager, replace objects, glob
+/// pathspecs, colour, or inherited repository/index/pathspec environment.
+fn git_command(directory: &Path) -> Command {
+    let mut command = Command::new("git");
+    command
         .arg("--no-pager")
         .arg("--no-replace-objects")
         .arg("--literal-pathspecs")
         .args(["-c", "color.ui=false"])
         .arg("-C")
         .arg(directory)
-        .args(args)
         .env_remove("GIT_DIR")
         .env_remove("GIT_WORK_TREE")
         .env_remove("GIT_INDEX_FILE")
         .env_remove("GIT_GLOB_PATHSPECS")
         .env_remove("GIT_NOGLOB_PATHSPECS")
-        .env_remove("GIT_ICASE_PATHSPECS")
-        .output()
-        .map_err(|error| {
-            if error.kind() == std::io::ErrorKind::NotFound {
-                anyhow!("Git executable not found on PATH")
-            } else {
-                anyhow!(error).context("Failed to launch Git")
-            }
-        })
+        .env_remove("GIT_ICASE_PATHSPECS");
+    command
 }
 
 fn checked<I, S>(directory: &Path, args: I, operation: &str) -> Result<Vec<u8>>
@@ -703,4 +952,112 @@ fn sniff(bytes: &[u8], extension: &str) -> bool {
         let _ = (&h.info.title, &h.info.version, &h.paths);
         h.swagger.as_deref() == Some("2.0") || h.openapi.is_some_and(|v| v.starts_with("3."))
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn git(root: &Path, args: &[&str]) -> String {
+        let output = Command::new("git")
+            .current_dir(root)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{args:?}");
+        String::from_utf8(output.stdout).unwrap().trim().to_owned()
+    }
+
+    fn repository() -> Option<(tempfile::TempDir, Repository)> {
+        if !Command::new("git")
+            .arg("--version")
+            .output()
+            .is_ok_and(|o| o.status.success())
+        {
+            return None;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        git(root, &["init", "-q"]);
+        std::fs::write(root.join("a.txt"), "alpha\n").unwrap();
+        git(root, &["add", "a.txt"]);
+        git(
+            root,
+            &[
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.invalid",
+                "-c",
+                "commit.gpgsign=false",
+                "commit",
+                "-qm",
+                "init",
+            ],
+        );
+        let repo = Repository::discover(root).unwrap();
+        Some((dir, repo))
+    }
+
+    #[test]
+    fn batch_reader_rejects_missing_non_blob_and_non_oid_requests() {
+        let Some((dir, _)) = repository() else {
+            return;
+        };
+        let root = dir.path();
+        let blob = git(root, &["rev-parse", "HEAD:a.txt"]);
+        let tree = git(root, &["rev-parse", "HEAD^{tree}"]);
+        let mut reader = BlobReader::spawn(root).unwrap();
+        assert_eq!(reader.read(&blob).unwrap(), b"alpha\n");
+        assert!(reader.read("HEAD:a.txt").is_none());
+        assert!(reader.read(&tree).is_none());
+        let mut reader = BlobReader::spawn(root).unwrap();
+        assert!(reader.read(&"0".repeat(40)).is_none());
+    }
+
+    #[test]
+    fn batch_failure_falls_back_to_the_original_blob_error() {
+        let Some((_dir, repo)) = repository() else {
+            return;
+        };
+        let error = repo.blob(&"0".repeat(40)).unwrap_err().to_string();
+        assert!(
+            error.starts_with("Git could not read committed blob: "),
+            "{error}"
+        );
+        assert!(matches!(repo.session().blobs, BlobState::Disabled));
+        // The per-blob fallback still serves later reads.
+        let commit = repo.resolve("HEAD").unwrap();
+        assert_eq!(
+            repo.at_commit(&commit, Path::new("a.txt")).unwrap().bytes,
+            b"alpha\n"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn dropping_the_last_session_reaps_the_batch_child() {
+        let Some((_dir, repo)) = repository() else {
+            return;
+        };
+        let commit = repo.resolve("HEAD").unwrap();
+        let clone = repo.clone();
+        clone.at_commit(&commit, Path::new("a.txt")).unwrap();
+        let pid = match &repo.session().blobs {
+            BlobState::Running(reader) => reader.child.id(),
+            _ => panic!("batch reader did not start"),
+        };
+        let alive = || {
+            Command::new("kill")
+                .args(["-0", &pid.to_string()])
+                .stderr(Stdio::null())
+                .status()
+                .unwrap()
+                .success()
+        };
+        drop(clone);
+        assert!(alive(), "a remaining clone keeps the session");
+        drop(repo);
+        assert!(!alive(), "batch child {pid} was not reaped");
+    }
 }

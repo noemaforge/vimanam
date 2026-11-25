@@ -654,3 +654,45 @@ fn candidates_sniff_high_alias_anchor_ratio_yaml() {
     let doc = vimanam::parse_openapi_bytes(&spec.bytes, "yaml", Some(&spec.path)).unwrap();
     assert_eq!(doc.endpoints.len(), 120);
 }
+
+#[test]
+fn one_session_reads_exact_blob_bytes_despite_textconv_and_filters() {
+    let Some(repo) = Repo::new() else {
+        return;
+    };
+    // Every file is routed through a textconv and smudge/clean filter that
+    // would uppercase or replace content if Git applied it to blob reads.
+    repo.write(".gitattributes", "* diff=upper filter=mangle\n");
+    repo.git(&["config", "diff.upper.textconv", "tr a-z A-Z <"]);
+    repo.git(&["config", "filter.mangle.smudge", "echo mangled"]);
+    repo.git(&["config", "filter.mangle.clean", "cat"]);
+    let files: [(&str, &[u8]); 4] = [
+        ("api.json", SPEC.as_bytes()),
+        ("empty.txt", b""),
+        (
+            "lines.txt",
+            b"a 0123456789abcdef0123456789abcdef01234567 blob 7\n\nmissing\n",
+        ),
+        ("binary.bin", b"\0\x01\xff\n\0tail-without-newline"),
+    ];
+    for (path, bytes) in files {
+        std::fs::write(repo.root().join(path), bytes).unwrap();
+    }
+    let commit = repo.commit("bytes");
+    let api = repo.api();
+    let clone = api.clone();
+    for _ in 0..2 {
+        for (path, bytes) in files {
+            for session in [&api, &clone] {
+                let snapshot = session.materialize(&commit, path).unwrap();
+                assert_eq!(snapshot.bytes, bytes, "{path}");
+                assert_eq!(snapshot.commit, commit);
+            }
+        }
+    }
+    drop(api);
+    assert_eq!(
+        clone.materialize("HEAD", "api.json").unwrap().bytes,
+        SPEC.as_bytes()
+    );
+}
