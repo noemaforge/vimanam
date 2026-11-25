@@ -37,6 +37,7 @@ python3 -I scripts/formal/check-model-drift.py
 | `OracleExport/` | `lake exe oracle`: writes `oracle/*.json` from the model definitions. `lake exe refdiff`: evaluates `RefDiff.lean` on spec pairs. |
 | `refdiff/cases/`, `refdiff/expected/` | Fixed spec pairs for the `$ref` model (#182's review-round repros `r1`–`r3`, #185's `r4`–`r5`, including 62- to 66-hop alias chains around the 64-hop cap) and the model's pinned grouped output on them. |
 | `refdiff/allowlist.json` | The known disagreements `refdiff-harness.py --ci` accepts. |
+| `refdiff/negative/` | Cases and record corruptions (`checks.json`) that `--ci` must reject, run by `scripts/formal/check-refdiff-negative.sh`. |
 | `oracle/` | The committed oracle vectors. |
 | `models.toml` | Which Rust each model reads, with a fingerprint of it. |
 
@@ -255,9 +256,9 @@ line, every answer names only `propext`, `Quot.sound`, `Classical.choice`),
 and checks the oracle vectors and that `refdiff/expected/` is the
 reference model's current output on `refdiff/cases/`
 (`scripts/formal/check-refdiff.sh`). It then builds the Rust (release) and
-runs `refdiff-harness.py --ci` on the fixed cases and seeds 1 to 60, so it
-also runs on changes to `src/` and `Cargo.*`. Actions are pinned to commit
-SHAs.
+runs `refdiff-harness.py --ci` on the fixed cases and seeds 1 to 60, then
+`scripts/formal/check-refdiff-negative.sh`, so it also runs on changes to
+`src/` and `Cargo.*`. Actions are pinned to commit SHAs.
 
 ## Re-reading after a rule change
 
@@ -281,8 +282,9 @@ the same specification in prose.
 
 * **Components** are, in either OpenAPI version, every `components.schemas`
   entry, then every top-level `definitions` entry whose name is not taken
-  (`parser::extract_schemas`; the Rust also skips a `definitions` entry it
-  cannot parse as a schema, which is not specified here). A `$ref` names a component when it is
+  (`parser::extract_schemas`; the Rust also skips, with a warning, a
+  `definitions` entry it cannot parse as a schema, a Rust bug, #188, which
+  is not specified here). A `$ref` names a component when it is
   `#/components/schemas/NAME` or `#/definitions/NAME`, in either kind of
   document, with the token decoded (`~1` is `/`, `~0` is `~`). The two
   spellings are the same name everywhere below. Any other `$ref`, or one
@@ -367,9 +369,12 @@ at their opaque pointer). The model does not follow them, so for such a
 reference it reports nothing, and the `refdiff/cases/r4-ref-*` cases pin
 that. The intended output is to be decided in the Lean model with the fix
 for #186. The harness puts a disagreement in `known-rust-bug-#186` only when
-it is reached through such a reference: its owner pair has a side reachable
-from the target of an out-of-grammar reference that the use reaches, or its
-pointer is at or beneath such a reference in its owner.
+it is reached through such a reference and nowhere else: its owner pair has
+a side reachable from the target of an out-of-grammar reference that the
+use reaches, and that the use does not also reach through grammar positions
+alone; or its pointer is at or beneath such a reference in its owner. A
+disagreement both sides report (a verdict or `under_not` mismatch) is never
+put there.
 
 ### Owners, states and reach
 
@@ -455,9 +460,16 @@ allowlist holds the known limits: Q1, a Review record at a `$ref` key from a
 content-free alias loop (`C = {"$ref": C}`, possibly with siblings, facing an
 undeclared reference or inline schema: the model takes the fixpoint, the
 Rust compares the literal `$ref`), and `known-rust-bug-#186`. The Q1 rule's
-alias-loop condition is enforced, not assumed: the record must name, as its
-owner pair or a `ref:` value, a component that is in an alias loop or leads
-into one, on either side.
+alias-loop condition is enforced, not assumed: the record's use must reach,
+on either side, a component in an alias loop or leading into one, named by
+the record's `ref:` values (or its counterpart's at the same use, owner and
+pointer), or by its owner pair when that component is a pure alias (a
+`$ref` and nothing else; a change in an alias's other siblings is real).
+`scripts/formal/check-refdiff-negative.sh`, which the `lean` workflow runs
+after `--ci`, wraps the binary with `refdiff-mutate.py` to drop, rename,
+inject or re-rate records on the cases in `refdiff/negative/` as
+`checks.json` lists, and fails unless `--ci` rejects every one through the
+allowlist (each case first passes with the unmodified binary).
 
 `known-rust-bug-#187` is not allowlisted. #182's `expand_once` (and the
 resolver before #182) cuts one-sided expansion by component name: a
@@ -468,7 +480,8 @@ misses changes beneath the cut, Breaking ones included, and can also report
 false ones: a recursive component unrolled inline, with nothing changed,
 exits 3. The class names every unmatched record of a use and owner at or
 beneath a pointer `P` where the Rust has an added/removed record at
-`P/$ref`, except Review records at a `$ref` key.
+`P/$ref` (the cut site included), except Review records at a `$ref` key
+that meet the Q1 condition.
 
 ### Not covered
 

@@ -23,7 +23,13 @@ for old in refdiff/cases/*.old.json; do
   name="$(basename "$old" .old.json)"
   printf '%s\t%s\t%s\n' "$old" "refdiff/cases/$name.new.json" "$tmp/$name.json" >> "$tmp/batch.tsv"
 done
-.lake/build/bin/refdiff --batch "$tmp/batch.tsv"
+# A model that does not terminate fails here rather than at the job timeout
+# (the whole batch takes about a second). `perl -e alarm` is portable where
+# coreutils `timeout` is not (macOS).
+if ! perl -e 'alarm shift; exec @ARGV or exit 127' 300 .lake/build/bin/refdiff --batch "$tmp/batch.tsv"; then
+  echo "error: lake exe refdiff failed or did not finish the cases in 300s" >&2
+  exit 1
+fi
 rm "$tmp/batch.tsv"
 # Keep the grouped view only (the per-path view of an adversarial case runs
 # to megabytes), one record per line, sorted, so a review diff names records.

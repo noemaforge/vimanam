@@ -587,7 +587,7 @@ def endpoints (doc : J) : List Endpoint :=
 `components.schemas` entry, then every top-level `definitions` entry whose
 name is not taken, in either OpenAPI version; as deserialised,
 canonicalised. (The Rust skips a `definitions` entry `models::Schema` cannot
-parse; such inputs are not specified.) -/
+parse, #188; such inputs are not specified.) -/
 def side (doc : J) : Side :=
   let entries (j : Option J) : List (String × J) := match j with
     | some (.obj kvs) => kvs

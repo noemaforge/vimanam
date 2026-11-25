@@ -220,7 +220,7 @@ def build_model() -> Path:
 
 # Seconds for one `refdiff --batch` run over every pair; a model that does not
 # terminate fails the run here instead of hanging it.
-MODEL_TIMEOUT = 1800
+MODEL_TIMEOUT = 300
 
 
 def run_model(exe: Path, pairs: list[tuple[Path, Path]], work: Path) -> list[dict]:
@@ -362,7 +362,7 @@ def suffix_of(longer: str, shorter: str) -> bool:
 
 
 def classify_grouped(model: Counter, model_neg: set[tuple], rust: Counter,
-                     rust_neg: set[tuple]) -> list[tuple[str, tuple | None, tuple | None]]:
+                     rust_neg: set[tuple], q1_for=None) -> list[tuple[str, tuple | None, tuple | None]]:
     """Pairs up model-only and Rust-only records (as multisets) and names
     each difference."""
     only_m = sorted((model - rust).elements())
@@ -417,25 +417,25 @@ def classify_grouped(model: Counter, model_neg: set[tuple], rust: Counter,
             used_r[r] -= 1
             continue
         found.append(("extra-in-rust" + ("-component" if r[1] != "use" else "-at-use"), None, r))
-    return name_cuts(found, rust)
+    return name_cuts(found, rust, q1_for(found) if q1_for else (lambda rec: True))
 
 
-def name_cuts(found: list, rust: Counter) -> list:
+def name_cuts(found: list, rust: Counter, is_q1) -> list:
     """Renames the disagreements a component-name cut of one-sided expansion
     explains (#187). #182's `expand_once` stops when the component is already on its
     side's expansion stack and compares the literal `{"$ref": X}` with the
     other side's inline schema (an added/removed `$ref` record at `P/$ref`);
     the model keeps expanding while the compared value pair is new. Every
     unmatched record of the same use and owner at or beneath `P` is then
-    `known-rust-bug-#187`, except Review records at a `$ref` key, which
-    keep their class (Q1)."""
+    `known-rust-bug-#187`, except Review records at a `$ref` key for which
+    the Q1 condition holds (`is_q1`), which keep their class."""
     cuts = {(r[0], r[1], r[2][: -len("/$ref")]) for r in rust
             if r[2].endswith("/$ref") and r[3].split(" ")[0] in ("added", "removed")}
     out = []
     for kind, m, r in found:
         rec = m if m is not None else r
         if (kind.startswith(("missing-in-rust", "extra-in-rust"))
-                and not (rec[2].endswith("/$ref") and rec[4] == "review")
+                and not (rec[2].endswith("/$ref") and rec[4] == "review" and is_q1(rec))
                 and any(u == rec[0] and o == rec[1] and under(rec[2], p) for u, o, p in cuts)):
             kind = "known-rust-bug-#187"
         out.append((kind, m, r))
@@ -485,10 +485,13 @@ class Gaps:
     For each use and side, walking the use schema and every component it
     reaches (through any reference, as #182 does): `positions[owner]` are the
     owner-relative pointers of references outside the `diff_values` grammar
-    (owner `use`, or a component name), and `reached` is every component
-    reachable from such a reference's target. A record is #186's when its
-    owner pair has a side in `reached`, or its pointer is at or beneath one
-    of its owner's positions."""
+    (owner `use`, or a component name); `reached` is every component
+    reachable from such a reference's target; `grammar` is every component
+    the use reaches through grammar positions only (as the model does); `all`
+    is every component the use reaches at all. A record is #186's when its
+    owner pair has a side in `reached` but not in `grammar` (a component the
+    use also reaches through the grammar is compared normally), or its
+    pointer is at or beneath one of its owner's positions."""
 
     def __init__(self, m: dict):
         self.by_use: dict[str, dict] = {}
@@ -503,32 +506,39 @@ class Gaps:
     def _side(schema, comps: dict) -> dict:
         positions: dict[str, set[str]] = defaultdict(set)
         targets: set[str] = set()
-        seen: set[str] = set()
-        todo: list[tuple[str, object]] = [("use", schema)]
+        seen_all: set[str] = set()
+        seen_grammar: set[str] = set()
+        # (owner, value, reached through grammar positions only)
+        todo: list[tuple[str, object, bool]] = [("use", schema, True)]
 
-        def walk(owner, v, node, ptr):
+        def walk(owner, v, node, ptr, grammar):
             if isinstance(v, dict):
                 n = ref_name(v.get("$ref"))
                 if n is not None and n in comps:
+                    via_grammar = grammar and node == "schema"
                     if node != "schema":
                         positions[owner].add(ptr)
                         targets.add(n)
-                    if n not in seen:
-                        seen.add(n)
-                        todo.append((n, comps[n]))
+                    if via_grammar and n not in seen_grammar:
+                        seen_grammar.add(n)
+                        seen_all.add(n)
+                        todo.append((n, comps[n], True))
+                    elif n not in seen_all:
+                        seen_all.add(n)
+                        todo.append((n, comps[n], False))
                 for k, c in v.items():
                     if k == "$ref":
                         continue
                     if node == "schema" and (k.startswith("x-") or k in ANNOTATIONS):
                         continue
-                    walk(owner, c, node_child(node, k), f"{ptr}/{encode(k)}")
+                    walk(owner, c, node_child(node, k), f"{ptr}/{encode(k)}", grammar)
             elif isinstance(v, list):
                 for i, c in enumerate(v):
-                    walk(owner, c, node_child(node, str(i)), f"{ptr}/{i}")
+                    walk(owner, c, node_child(node, str(i)), f"{ptr}/{i}", grammar)
 
         while todo:
-            owner, v = todo.pop()
-            walk(owner, v, "schema", "")
+            owner, v, grammar = todo.pop()
+            walk(owner, v, "schema", "", grammar)
         reached: set[str] = set()
         stack = list(targets)
         while stack:
@@ -536,20 +546,8 @@ class Gaps:
             if n in reached:
                 continue
             reached.add(n)
-
-            def refs(v):
-                if isinstance(v, dict):
-                    r = ref_name(v.get("$ref"))
-                    if r is not None and r in comps:
-                        yield r
-                    for c in v.values():
-                        yield from refs(c)
-                elif isinstance(v, list):
-                    for c in v:
-                        yield from refs(c)
-
-            stack.extend(refs(comps[n]))
-        return {"positions": positions, "reached": reached}
+            stack.extend(r for r in component_refs(comps[n]) if r in comps)
+        return {"positions": positions, "reached": reached, "grammar": seen_grammar, "all": seen_all}
 
     def covers(self, rec) -> bool:
         sides = self.by_use.get(rec[0])
@@ -559,8 +557,9 @@ class Gaps:
             owners = {"old": "use", "new": "use"}
         else:
             o, n = rec[1].split("->", 1) if "->" in rec[1] else (rec[1], rec[1])
-            if o in sides["old"]["reached"] or n in sides["new"]["reached"]:
-                return True
+            for side, name in (("old", o), ("new", n)):
+                if name in sides[side]["reached"] and name not in sides[side]["grammar"]:
+                    return True
             owners = {"old": o, "new": n}
         return any(under(rec[2], p) for side in ("old", "new")
                    for p in sides[side]["positions"].get(owners[side], ()))
@@ -568,17 +567,37 @@ class Gaps:
     def any(self) -> bool:
         return any(sides[s]["positions"] for sides in self.by_use.values() for s in ("old", "new"))
 
+    def reaches(self, use: str, side: str) -> set[str]:
+        sides = self.by_use.get(use)
+        return sides[side]["all"] if sides else set()
 
-def alias_loops(comps: dict) -> set[str]:
-    """Components from which a chain of component references, each a whole
-    component `{"$ref": ..., <siblings>}`, comes back to a component already
-    on it: alias loops, and the aliases leading into them (Q1)."""
+
+def component_refs(v):
+    """Every component name `v` references, anywhere."""
+    if isinstance(v, dict):
+        r = ref_name(v.get("$ref"))
+        if r is not None:
+            yield r
+        for c in v.values():
+            yield from component_refs(c)
+    elif isinstance(v, list):
+        for c in v:
+            yield from component_refs(c)
+
+
+def alias_loops(comps: dict, pure: bool) -> set[str]:
+    """Components from which a chain of aliases comes back to a component
+    already on it: alias loops, and the aliases leading into them (Q1). With
+    `pure`, an alias is a component that is a `$ref` and nothing else (the
+    exported components are canonicalised, so annotation and `x-*` siblings
+    are already gone); otherwise any component with a `$ref` key, whatever
+    siblings it has (`X = {"$ref": X, "required": ["s"]}` is a loop too)."""
     out = set()
     for start in comps:
         seen = [start]
         cur = comps[start]
-        while isinstance(cur, dict):
-            n = ref_name(cur.get("$ref"))
+        while isinstance(cur, dict) and "$ref" in cur and (not pure or set(cur) == {"$ref"}):
+            n = ref_name(cur["$ref"])
             if n is None or n not in comps:
                 break
             if n in seen:
@@ -716,22 +735,46 @@ def load_allowlist() -> list[dict]:
 REF_TOKEN = re.compile(r"ref:(\S+)")
 
 
-def record_names(rec) -> set[str]:
-    """The component names a record mentions: its owner pair and `ref:`
-    values."""
-    names = set(REF_TOKEN.findall(rec[3]))
-    if rec[1] != "use":
-        names.update(rec[1].split("->", 1))
-    return names
+def ref_values(rec) -> set[str]:
+    """The component names a record's change values mention (`ref:NAME`)."""
+    return set(REF_TOKEN.findall(rec[3]))
 
 
-def allowed(kind: str, mrec, rrec, rules: list[dict], loops: set[str] = frozenset(),
-            peers: set[str] = frozenset()) -> str | None:
+def q1_checker(gaps: "Gaps", m: dict):
+    """The Q1 condition for a pair, given its disagreements: a Review record
+    at a `$ref` key, where the use reaches (on either side) a component in
+    an alias loop, or leading into one, that is named by
+    * the record's `ref:` values, or those of its counterpart disagreement
+      at the same use, owner and pointer (an alias may have siblings), or
+    * the record's owner pair, when that component is a pure alias (its
+      content is the loop, so a `$ref` record there is the artefact).
+    A `ref:` value naming anything else, a loop the use does not reach, or
+    an owner whose alias has content (a change in that content is real)
+    does not qualify."""
+    comps = m["components"]
+    loose = alias_loops(comps["old"], False) | alias_loops(comps["new"], False)
+    pure = alias_loops(comps["old"], True) | alias_loops(comps["new"], True)
+    def factory(found):
+        peers: dict[tuple, set[str]] = defaultdict(set)
+        for _, mrec, rrec in found:
+            for x in (mrec, rrec):
+                if x is not None:
+                    peers[x[:3]] |= ref_values(x)
+
+        def is_q1(rec) -> bool:
+            if not (rec[2].endswith("/$ref") and rec[4] == "review"):
+                return False
+            reach = gaps.reaches(rec[0], "old") | gaps.reaches(rec[0], "new")
+            owners = set(rec[1].split("->", 1)) if rec[1] != "use" else set()
+            return bool((ref_values(rec) | peers[rec[:3]]) & loose & reach or owners & pure & reach)
+        return is_q1
+    return factory
+
+
+def allowed(kind: str, mrec, rrec, rules: list[dict], q1: bool = False) -> str | None:
     """The allowlist rule a disagreement falls under, if any. A rule with
-    `"requires": "alias-loop"` only covers a record that names (as its owner
-    pair or a `ref:` value), or whose counterpart disagreement at the same
-    use, owner and pointer names (`peers`), a component in an alias loop or
-    leading into one on either side (`loops`): the harness checks the Q1
+    `"requires": "alias-loop"` only covers a disagreement for which the
+    harness found the Q1 condition (`q1`, from `q1_checker`): it checks the
     condition, it does not assume it."""
     rec = mrec if mrec is not None else rrec
     for rule in rules:
@@ -743,8 +786,7 @@ def allowed(kind: str, mrec, rrec, rules: list[dict], loops: set[str] = frozense
             continue
         if "verdict" in rule and not all(x is None or x[4] == rule["verdict"] for x in (mrec, rrec)):
             continue
-        names = set(peers).union(*(record_names(x) for x in (mrec, rrec) if x is not None))
-        if rule.get("requires") == "alias-loop" and not names & loops:
+        if rule.get("requires") == "alias-loop" and not q1:
             continue
         return rule["name"]
     return None
@@ -786,6 +828,8 @@ def main() -> int:
     ap.add_argument("--out", required=True, help="output directory (report.md, repros)")
     ap.add_argument("--no-shrink", action="store_true")
     ap.add_argument("--jobs", type=int, default=os.cpu_count() or 4)
+    ap.add_argument("--cases", type=Path, default=CASES,
+                    help="fixed cases directory (default formal/refdiff/cases)")
     ap.add_argument("--ci", action="store_true",
                     help="no shrinking; exit 1 on a Rust error or timeout, or on a grouped "
                          "disagreement formal/refdiff/allowlist.json does not cover")
@@ -801,7 +845,7 @@ def main() -> int:
     exe = build_model()
 
     pairs: list[tuple[str, Path, Path]] = []
-    for old in sorted(CASES.glob("*.old.json")):
+    for old in sorted(args.cases.glob("*.old.json")):
         pairs.append((old.name[: -len(".old.json")], old, old.with_name(old.name.replace(".old.", ".new."))))
     gen_dir = out / "generated"
     gen_dir.mkdir()
@@ -826,27 +870,24 @@ def main() -> int:
     for (name, o, n), m, pr, mn in zip(pairs, models, prs, mains):
         gaps = Gaps(m)
         gap = gaps.any()
-        loops = alias_loops(m["components"]["old"]) | alias_loops(m["components"]["new"])
+        q1_for = q1_checker(gaps, m)
         if pr is None or "error" in pr:
             errors.append((name, "rust", pr))
         else:
             mg, mneg = model_grouped(m)
             rg, rneg = rust_records(pr, True)
-            found = classify_grouped(mg, mneg, rg, rneg)
-            # The component names every disagreement at one (use, owner,
-            # pointer) mentions: a Q1 record's alias loop may be named only
-            # by its counterpart on the other side.
-            peers: dict[tuple, set[str]] = defaultdict(set)
-            for _, mrec, rrec in found:
-                for x in (mrec, rrec):
-                    if x is not None:
-                        peers[x[:3]] |= record_names(x)
+            found = classify_grouped(mg, mneg, rg, rneg, q1_for)
+            is_q1 = q1_for(found)
             for kind, mrec, rrec in found:
+                rec = mrec if mrec is not None else rrec
                 # The model does not follow references outside the schema
                 # grammar; #182 does, and rates what it finds there (#186).
-                rec = mrec if mrec is not None else rrec
-                by_class["known-rust-bug-#186" if gaps.covers(rec) else kind].append(
-                    (name, o, n, mrec, rrec, loops, peers[rec[:3]]))
+                # A record both sides report (a verdict or flag mismatch) is
+                # never put down to that.
+                paired = kind.startswith(("verdict", "under-not-flag"))
+                if not paired and gaps.covers(rec):
+                    kind = "known-rust-bug-#186"
+                by_class[kind].append((name, o, n, mrec, rrec, is_q1(rec)))
         if mn is not None:
             if "error" in mn:
                 errors.append((name, "per-path", mn))
@@ -860,7 +901,7 @@ def main() -> int:
                                            sorted((rp - mp).elements())))
 
     unallowed = [(kind, i) for kind, items in sorted(by_class.items()) for i in items
-                 if allowed(kind, i[3], i[4], rules, i[5], i[6]) is None]
+                 if allowed(kind, i[3], i[4], rules, i[5]) is None]
 
     # Shrink one representative per class.
     repro_dir = out / "repro"
@@ -922,7 +963,7 @@ def fmt(rec):
 def write_report(out, args, pairs, by_class, main_by_class, errors, shrunk, main_agree, rules, unallowed):
     lines = ["# `$ref` diff: Lean reference model vs Rust", ""]
     lines += [f"- pairs: {len(pairs)} ({sum(1 for p in pairs if not p[0].startswith('seed'))} fixed cases "
-              f"from formal/refdiff/cases, {args.seeds} generated seeds × 2 directions)",
+              f"from {args.cases}, {args.seeds} generated seeds × 2 directions)",
               f"- grouped comparison: `{args.pr}`", f"- per-path comparison: `{args.main}`", ""]
     lines += ["## Grouped view vs `--rust` (v1 records)", "",
               "Record: `use | owner | pointer | change | severity` (owner `use` = the use site, "
@@ -930,7 +971,7 @@ def write_report(out, args, pairs, by_class, main_by_class, errors, shrunk, main
               "| Class | Records | Pairs | Allowlisted | Repro |", "| --- | ---: | ---: | ---: | --- |"]
     for kind, items in sorted(by_class.items()):
         rep = shrunk.get(kind)
-        ok = sum(1 for i in items if allowed(kind, i[3], i[4], rules, i[5], i[6]) is not None)
+        ok = sum(1 for i in items if allowed(kind, i[3], i[4], rules, i[5]) is not None)
         lines.append(f"| `{kind}` | {len(items)} | {len({i[0] for i in items})} | {ok} | "
                      f"{rep[1].name if rep else ''} |")
     lines += ["", f"Outside the allowlist (`formal/refdiff/allowlist.json`): {len(unallowed)} records.", ""]
