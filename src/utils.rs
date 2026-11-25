@@ -128,92 +128,6 @@ pub(crate) fn resolve_schema_reference<'a>(
     None
 }
 
-/// Maximum number of `$ref` expansions on one chain in
-/// [`resolve_schema_value`]. Termination is already guaranteed by the cycle
-/// guard (`ref_stack`), so this is purely a size guard against a spec whose
-/// acyclic reference chains are absurdly long; plain object and array nesting
-/// does not count towards it. Deliberately far above the renderer's nesting
-/// cap: the diff must see a change however deep it sits.
-const MAX_RESOLVE_DEPTH: usize = 64;
-
-/// Materialises `schema` as a self-contained JSON value with every component
-/// `$ref` replaced by its target, recursively.
-///
-/// This is the resolved-shape view that `diff` compares: two operations whose
-/// objects are byte-identical still differ here when a shared schema they
-/// reference changed. Resolution rules:
-///
-/// - An object of the form `{"$ref": r, ...siblings}` is replaced by the target
-///   of `r`, with any sibling keys merged over it (siblings win).
-/// - A reference already being expanded on the current chain is left as the
-///   literal `{"$ref": r}` object, so self-referential schemas terminate.
-/// - A reference that cannot be resolved is likewise left literal, so two specs
-///   that are equally unresolved compare equal instead of diverging.
-/// - Expansion stops after [`MAX_RESOLVE_DEPTH`] `$ref` hops on one chain;
-///   anything beyond is kept as written. Descending plain objects and arrays
-///   does not consume the budget.
-pub(crate) fn resolve_schema_value(schema: &Schema, doc: &ApiDocumentation) -> Value {
-    let value = serde_json::to_value(schema).unwrap_or(Value::Null);
-    let mut ref_stack = Vec::new();
-    inline_refs(value, doc, &mut ref_stack, 0)
-}
-
-/// `depth` counts `$ref` expansions on the current chain, not JSON nesting.
-fn inline_refs(
-    value: Value,
-    doc: &ApiDocumentation,
-    ref_stack: &mut Vec<String>,
-    depth: usize,
-) -> Value {
-    match value {
-        Value::Object(mut map) => {
-            let reference = match map.get("$ref") {
-                Some(Value::String(reference)) => Some(reference.clone()),
-                _ => None,
-            };
-
-            if let Some(reference) = reference {
-                if depth >= MAX_RESOLVE_DEPTH || ref_stack.contains(&reference) {
-                    // Cycle (or an implausibly long chain): keep the pointer
-                    // as a marker and stop here.
-                    return Value::Object(map);
-                }
-                let Some(target) = resolve_schema_reference(&reference, doc) else {
-                    return Value::Object(map);
-                };
-
-                // Start from the target and lay any sibling keys over it.
-                let mut merged = match serde_json::to_value(target) {
-                    Ok(Value::Object(target_map)) => target_map,
-                    _ => serde_json::Map::new(),
-                };
-                map.shift_remove("$ref");
-                for (key, sibling) in map {
-                    merged.insert(key, sibling);
-                }
-
-                ref_stack.push(reference);
-                let resolved = inline_refs(Value::Object(merged), doc, ref_stack, depth + 1);
-                ref_stack.pop();
-                return resolved;
-            }
-
-            let mut resolved = serde_json::Map::with_capacity(map.len());
-            for (key, child) in map {
-                resolved.insert(key, inline_refs(child, doc, ref_stack, depth));
-            }
-            Value::Object(resolved)
-        }
-        Value::Array(items) => Value::Array(
-            items
-                .into_iter()
-                .map(|item| inline_refs(item, doc, ref_stack, depth))
-                .collect(),
-        ),
-        other => other,
-    }
-}
-
 /// Keys that document a schema without changing the shape it accepts. They are
 /// dropped before comparison so a reworded description is not a "change".
 /// `deprecated` is tracked at the endpoint level instead.
@@ -436,10 +350,16 @@ pub(crate) fn extract_content_type(response: &Response) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{canonicalize_schema_value, clean_for_id, resolve_schema_value};
+    use super::{canonicalize_schema_value, clean_for_id};
     use crate::models::{ApiDocumentation, Schema};
     use indexmap::IndexMap;
     use serde_json::{Value, json};
+
+    /// One-off resolution of `schema` against `doc` (see
+    /// [`crate::resolve::DocResolver::resolve`] for the rules).
+    fn resolve_schema_value(schema: &Schema, doc: &ApiDocumentation) -> Value {
+        crate::resolve::DocResolver::new(&doc.schemas).resolve(schema)
+    }
 
     /// A documentation shell holding only the given component schemas.
     fn doc_with_schemas(schemas: &[(&str, Value)]) -> ApiDocumentation {

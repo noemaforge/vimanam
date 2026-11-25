@@ -150,7 +150,8 @@ fn run_diff<W: Write>(
     } else {
         diff::EndpointMatching::Moves
     };
-    let spec_diff = diff::diff_with(&old, &new, matching);
+    let resolver = crate::resolve::PairResolver::new(&old.schemas, &new.schemas);
+    let spec_diff = diff::diff_with_resolver(&old, &new, matching, &resolver);
     let deltas = if args.report {
         Some(diff::compute_deltas(&old, &new).context("Failed to compute deltas")?)
     } else {
@@ -165,6 +166,7 @@ fn run_diff<W: Write>(
             &old_sha,
             &new_sha,
             &spec_diff,
+            &resolver,
         )?)
     } else {
         None
@@ -289,8 +291,13 @@ fn file_extension(path: &Path) -> String {
 /// Pretty-prints the JSON diff with a trailing newline, flushing before
 /// returning so the exit-code check can never truncate the document.
 fn write_json_diff<W: Write, T: serde::Serialize>(writer: &mut W, document: &T) -> Result<()> {
-    serde_json::to_writer_pretty(&mut *writer, document).context("Failed to write diff")?;
-    writer.write_all(b"\n").context("Failed to write diff")?;
+    // Stdout is line-buffered, and pretty JSON is millions of short lines on a
+    // large spec: buffer here so every destination gets large writes.
+    let mut buffered = BufWriter::new(&mut *writer);
+    serde_json::to_writer_pretty(&mut buffered, document).context("Failed to write diff")?;
+    buffered.write_all(b"\n").context("Failed to write diff")?;
+    buffered.flush().context("Failed to write diff")?;
+    drop(buffered);
     writer.flush().context("Failed to write diff")
 }
 

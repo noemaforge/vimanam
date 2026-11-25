@@ -86,13 +86,15 @@ pub fn openapi_with(
     new_sha: &str,
     matching: crate::diff::EndpointMatching,
 ) -> anyhow::Result<JsonDiff> {
+    let resolver = crate::resolve::PairResolver::new(&old.schemas, &new.schemas);
     openapi_from(
         old,
         new,
         deltas,
         old_sha,
         new_sha,
-        &crate::diff::diff_with(old, new, matching),
+        &crate::diff::diff_with_resolver(old, new, matching, &resolver),
+        &resolver,
     )
 }
 
@@ -105,6 +107,7 @@ pub(crate) fn openapi_from(
     old_sha: &str,
     new_sha: &str,
     legacy: &crate::diff::SpecDiff,
+    resolver: &crate::resolve::PairResolver,
 ) -> anyhow::Result<JsonDiff> {
     // Deltas do not depend on the changes; convert them without re-diffing.
     let empty = crate::diff::SpecDiff {
@@ -115,10 +118,12 @@ pub(crate) fn openapi_from(
         changes: Vec::new(),
     };
     let legacy_json = crate::diff::json::to_json(&empty, deltas, old_sha, new_sha);
+    let (changes, old_surface, new_surface) =
+        super::openapi::diff_from_surfaces(old, new, legacy, resolver)?;
     Ok(to_json(
-        super::openapi::adapt(old),
-        super::openapi::adapt(new),
-        super::openapi::diff_from(old, new, legacy)?,
+        old_surface,
+        new_surface,
+        changes,
         old_sha,
         new_sha,
         legacy_json.deltas,

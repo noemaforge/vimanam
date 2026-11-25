@@ -2,7 +2,7 @@
 //! type facts are review because a type can occur in both input and output.
 use super::*;
 use crate::diff::{self, Location, ValueChange, ValueChangeKind};
-use crate::utils::resolve_schema_value;
+use crate::resolve::{DocResolver, PairResolver};
 use crate::{ApiDocumentation, Endpoint, Schema};
 use serde_json::json;
 use std::collections::{HashMap, HashSet};
@@ -418,16 +418,33 @@ pub fn diff_with(
     new: &ApiDocumentation,
     matching: diff::EndpointMatching,
 ) -> anyhow::Result<Vec<Change>> {
-    diff_from(old, new, &diff::diff_with(old, new, matching))
+    let resolver = PairResolver::new(&old.schemas, &new.schemas);
+    let legacy = diff::diff_with_resolver(old, new, matching, &resolver);
+    diff_from(old, new, &legacy, &resolver)
 }
 
 /// [`diff_with`] over an already computed endpoint diff of the same specs, so
 /// callers that also render it compute operation moves once.
+///
+/// `resolver` must be built over the same two specs' schemas; moved operations
+/// only re-key endpoints, so it serves the aligned old copy too.
 pub(crate) fn diff_from(
     old: &ApiDocumentation,
     new: &ApiDocumentation,
     legacy: &diff::SpecDiff,
+    resolver: &PairResolver,
 ) -> anyhow::Result<Vec<Change>> {
+    diff_from_surfaces(old, new, legacy, resolver).map(|(changes, _, _)| changes)
+}
+
+/// [`diff_from`], also returning the old and new surfaces ([`adapt`]) it
+/// built, so a caller that serializes them does not adapt each spec again.
+pub(crate) fn diff_from_surfaces(
+    old: &ApiDocumentation,
+    new: &ApiDocumentation,
+    legacy: &diff::SpecDiff,
+    resolver: &PairResolver,
+) -> anyhow::Result<(Vec<Change>, Contract, Contract)> {
     // Moved operations: (method, old path) -> new path.
     let moved: HashMap<(&str, &str), &str> = legacy
         .changes
@@ -456,17 +473,21 @@ pub(crate) fn diff_from(
         aligned = copy;
         &aligned
     };
-    let changes = compare_aligned(old, new, legacy)?;
+    let new_surface = adapt(new);
+    let aligned_surface = adapt(old);
+    let changes = compare_aligned(old, new, legacy, resolver, &aligned_surface, &new_surface)?;
     if moved.is_empty() {
-        return Ok(changes);
+        return Ok((changes, aligned_surface, new_surface));
     }
-    Ok(restore_removal_sides(
+    let original_surface = adapt(original_old);
+    let changes = restore_removal_sides(
         changes,
-        original_old,
-        old,
-        new,
+        &original_surface,
+        &aligned_surface,
+        &new_surface,
         &moved,
-    ))
+    );
+    Ok((changes, original_surface, new_surface))
 }
 
 /// Re-keys removal facts on moved operations from the aligned old copy (old
@@ -474,13 +495,11 @@ pub(crate) fn diff_from(
 /// location, so they resolve in the old surface exactly as in exact mode.
 fn restore_removal_sides(
     mut changes: Vec<Change>,
-    original_old: &ApiDocumentation,
-    aligned_old: &ApiDocumentation,
-    new: &ApiDocumentation,
+    original: &Contract,
+    aligned: &Contract,
+    new: &Contract,
     moved: &HashMap<(&str, &str), &str>,
 ) -> Vec<Change> {
-    let original = adapt(original_old);
-    let aligned = adapt(aligned_old);
     debug_assert_eq!(original.entities.len(), aligned.entities.len());
     let subjects: HashMap<&str, &str> = aligned
         .entities
@@ -489,7 +508,7 @@ fn restore_removal_sides(
         .filter(|(a, o)| a.id != o.id)
         .map(|(a, o)| (a.id.as_str(), o.id.as_str()))
         .collect();
-    let new_ids: HashSet<String> = adapt(new).entities.into_iter().map(|e| e.id).collect();
+    let new_ids: HashSet<&str> = new.entities.iter().map(|e| e.id.as_str()).collect();
     // (method, new path) -> old path
     let old_paths: HashMap<(&str, &str), &str> = moved
         .iter()
@@ -506,7 +525,7 @@ fn restore_removal_sides(
         let Some(&subject) = subjects.get(change.subject.as_str()) else {
             continue;
         };
-        if !removal && new_ids.contains(&change.subject) {
+        if !removal && new_ids.contains(change.subject.as_str()) {
             continue;
         }
         change.subject = subject.to_string();
@@ -530,6 +549,9 @@ fn compare_aligned(
     old: &ApiDocumentation,
     new: &ApiDocumentation,
     legacy: &diff::SpecDiff,
+    resolver: &PairResolver,
+    old_surface: &Contract,
+    new_surface: &Contract,
 ) -> anyhow::Result<Vec<Change>> {
     // Endpoint lookup for each legacy change: old spec first, then new.
     let mut by_key: HashMap<(&str, &str), &Endpoint> = HashMap::new();
@@ -666,8 +688,6 @@ fn compare_aligned(
     }
     // Named type changes remain independent of reachability. Review avoids
     // claiming a directional verdict for unused or mixed-use definitions.
-    let old_surface = adapt(old);
-    let new_surface = adapt(new);
     let types = |c: &Contract| Contract {
         entities: c
             .entities
@@ -678,8 +698,8 @@ fn compare_aligned(
         ..c.clone()
     };
     changes.extend(compare(
-        &types(&old_surface),
-        &types(&new_surface),
+        &types(old_surface),
+        &types(new_surface),
         &OpenApiAdapter,
     )?);
     // The mature endpoint differ intentionally omits some neutral facts (for
@@ -733,8 +753,8 @@ fn compare_aligned(
         })
         .collect();
     let supplemental = compare(
-        &operations(&old_surface),
-        &operations(&new_surface),
+        &operations(old_surface),
+        &operations(new_surface),
         &OpenApiAdapter,
     )?
     .into_iter()
@@ -745,11 +765,11 @@ fn compare_aligned(
             .and_then(Value::as_str)
             .unwrap_or("");
         (candidate.kind == ChangeKind::DeprecatedChanged
-            && has_operation_schema_root(&candidate.subject, &old_surface, &new_surface)
+            && has_operation_schema_root(&candidate.subject, old_surface, new_surface)
             && !later_request_body_subject(
                 &candidate.subject,
-                &old_surface,
-                &new_surface,
+                old_surface,
+                new_surface,
                 &first_body_ids,
             ))
             || (candidate.kind == ChangeKind::ConstraintChanged
@@ -774,7 +794,7 @@ fn compare_aligned(
     for candidate in supplemental {
         let mut candidate = candidate;
         if candidate.kind == ChangeKind::DeprecatedChanged {
-            promote_schema_fact_to_use_root(&mut candidate, &old_surface, &new_surface);
+            promote_schema_fact_to_use_root(&mut candidate, old_surface, new_surface);
         }
         if !changes.iter().any(|existing| {
             existing.subject == candidate.subject
@@ -808,15 +828,27 @@ fn compare_aligned(
             if next.parameter_in == "body" && first_body_name(after) != Some(next.name.as_str()) {
                 continue;
             }
+            // Only ref-bearing schemas can hide a deprecation change the
+            // legacy differ strips; provably identical ones have none.
+            if !(parameter.schema.as_ref().is_some_and(schema_contains_ref)
+                || next.schema.as_ref().is_some_and(schema_contains_ref))
+            {
+                continue;
+            }
+            if let (Some(left), Some(right)) = (&parameter.schema, &next.schema)
+                && resolver.schemas_equal(left, right)
+            {
+                continue;
+            }
             let left = parameter
                 .schema
                 .as_ref()
-                .map(|s| resolve_schema_value(s, old))
+                .map(|s| resolver.old.resolve(s))
                 .unwrap_or_else(|| extensions_value(&parameter.extensions));
             let right = next
                 .schema
                 .as_ref()
-                .map(|s| resolve_schema_value(s, new))
+                .map(|s| resolver.new.resolve(s))
                 .unwrap_or_else(|| extensions_value(&next.extensions));
             let subject = entity_id(
                 Format::Openapi,
@@ -827,19 +859,15 @@ fn compare_aligned(
                     escape(&parameter.name)
                 ),
             );
-            if parameter.schema.as_ref().is_some_and(schema_contains_ref)
-                || next.schema.as_ref().is_some_and(schema_contains_ref)
-            {
-                append_deprecation_facts(
-                    &mut changes,
-                    &subject,
-                    before,
-                    &left,
-                    &right,
-                    Some(parameter.parameter_in.clone()),
-                    None,
-                );
-            }
+            append_deprecation_facts(
+                &mut changes,
+                &subject,
+                before,
+                &left,
+                &right,
+                Some(parameter.parameter_in.clone()),
+                None,
+            );
         }
         for (status, response) in &before.responses {
             let Some(next) = after.responses.get(status) else {
@@ -851,31 +879,33 @@ fn compare_aligned(
             ) else {
                 continue;
             };
-            let has_ref = schema_contains_ref(left) || schema_contains_ref(right);
-            let left = resolve_schema_value(left, old);
-            let right = resolve_schema_value(right, new);
+            if !(schema_contains_ref(left) || schema_contains_ref(right))
+                || resolver.schemas_equal(left, right)
+            {
+                continue;
+            }
+            let left = resolver.old.resolve(left);
+            let right = resolver.new.resolve(right);
             let subject = entity_id(
                 Format::Openapi,
                 EntityKind::Result,
                 &format!("{root}/results/{}", escape(status)),
             );
-            if has_ref {
-                append_deprecation_facts(
-                    &mut changes,
-                    &subject,
-                    before,
-                    &left,
-                    &right,
-                    None,
-                    Some(status.clone()),
-                );
-            }
+            append_deprecation_facts(
+                &mut changes,
+                &subject,
+                before,
+                &left,
+                &right,
+                None,
+                Some(status.clone()),
+            );
         }
     }
     for e in &old.endpoints {
         if let Some(&next) = new_by_key.get(&(e.method.as_str(), e.path.as_str())) {
-            let before = pagination(e, old);
-            let after = pagination(next, new);
+            let before = pagination(e, &resolver.old);
+            let after = pagination(next, &resolver.new);
             if before != after && (before.is_some() || after.is_some()) {
                 let mut c = Change {
                     id: String::new(),
@@ -1223,6 +1253,15 @@ fn opaque_string(schema: &Value) -> bool {
             .is_some_and(|f| matches!(f, "date" | "date-time" | "time"))
 }
 
+/// JSON levels of a 2xx response schema that [`pagination`] reads: the root's
+/// `properties` (level 1) map property schemas (level 2), whose `type` and
+/// `properties` (level 3) it reads, and those child schemas (level 4), whose
+/// `type` and `format` it reads. Objects at level 5 and below are never
+/// inspected, so they are left unresolved: fully inlining a list response
+/// (`data: array of a cross-linked object`) can be enormous. Raise this if
+/// `pagination` ever reads deeper.
+const PAGINATION_LEVELS: usize = 5;
+
 /// Inferred OpenAPI pagination evidence for one operation, or `None`.
 ///
 /// Requires at least one exact [`PAGINATION_CONTROLS`] query parameter and a
@@ -1243,7 +1282,7 @@ fn opaque_string(schema: &Value) -> bool {
 /// other. If the other side has broader-only evidence, it replaces 2.0.0's
 /// `null` and the fact's ID changes (pinned by
 /// `evidence_2_0_0_on_one_side_with_broader_evidence_on_the_other_changes_the_id`).
-fn pagination(e: &Endpoint, api: &ApiDocumentation) -> Option<Value> {
+fn pagination(e: &Endpoint, resolver: &DocResolver) -> Option<Value> {
     let query = || e.parameters.iter().filter(|p| p.parameter_in == "query");
     let mut controls: Vec<Value> = query()
         .filter(|p| PAGINATION_CONTROLS.contains(&p.name.as_str()))
@@ -1260,7 +1299,8 @@ fn pagination(e: &Endpoint, api: &ApiDocumentation) -> Option<Value> {
         .iter()
         .filter(|(s, _)| s.starts_with('2'))
         .filter_map(|(s, r)| {
-            crate::markdown::response_schema(r).map(|schema| (s, resolve_schema_value(schema, api)))
+            crate::markdown::response_schema(r)
+                .map(|schema| (s, resolver.resolve_shallow(schema, PAGINATION_LEVELS)))
         })
         .collect();
     let mut legacy: Vec<Value> = resolved
