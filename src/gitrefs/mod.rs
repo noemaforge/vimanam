@@ -27,8 +27,10 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 /// A discovered, non-bare Git repository, including linked worktrees.
 ///
-/// Clones share one session: resolved commits, tree listings and rename
-/// edges are cached per object ID, and committed blobs are read through one
+/// Clones share one session: tree listings, rename edges and the commits
+/// that full object IDs name are cached per object ID (refs such as `HEAD`
+/// and abbreviated IDs are re-resolved on every call, so a long-lived
+/// repository sees new commits), and committed blobs are read through one
 /// long-lived `git cat-file --batch` child instead of a process per blob.
 /// The child is closed and reaped when the last clone is dropped.
 #[derive(Clone)]
@@ -45,9 +47,9 @@ impl std::fmt::Debug for Repository {
     }
 }
 
-/// Per-repository caches. Every key is either a caller's reference string or
-/// a commit object ID, and every value is immutable for that ID, so caching
-/// cannot change results (a moving branch is resolved once per session).
+/// Per-repository caches. Every key is a full object ID (or a pair of them)
+/// and every value is immutable for that ID, so caching cannot change
+/// results. Symbolic refs and abbreviated IDs are never cache keys.
 #[derive(Default)]
 struct Session {
     commits: HashMap<String, String>,
@@ -303,8 +305,14 @@ impl Repository {
     }
 
     fn resolve(&self, reference: &str) -> Result<String> {
-        if let Some(commit) = self.session().commits.get(reference) {
-            return Ok(commit.clone());
+        // Only a full object ID always names the same commit; refs move and
+        // an abbreviation can become ambiguous, so those are re-resolved.
+        let key = is_oid(reference).then(|| reference.to_ascii_lowercase());
+        if let Some(commit) = key
+            .as_ref()
+            .and_then(|k| self.session().commits.get(k).cloned())
+        {
+            return Ok(commit);
         }
         let revision = format!("{reference}^{{commit}}");
         let output = run(
@@ -323,9 +331,12 @@ impl Repository {
         }
         let commit = std::str::from_utf8(&output.stdout)?.trim().to_owned();
         let mut session = self.session();
-        session.commits.insert(reference.to_owned(), commit.clone());
+        if let Some(key) = key {
+            // A full tag object ID peels to a fixed commit.
+            session.commits.insert(key, commit.clone());
+        }
         // A full commit ID resolves to itself, so later lookups by the ID
-        // (such as a pinned follow anchor) need no process either.
+        // (such as a pinned follow anchor) need no process.
         session.commits.insert(commit.clone(), commit.clone());
         Ok(commit)
     }
@@ -873,13 +884,25 @@ impl BlobReader {
 
 impl Drop for BlobReader {
     fn drop(&mut self) {
-        // Closing stdin ends an idle child; closing stdout makes a child that
-        // is still writing an abandoned response fail with EPIPE. Kill as a
-        // backstop, then always reap so no zombie outlives the session.
+        // Closing stdin ends an idle child at EOF; closing stdout makes a
+        // child still writing an abandoned response fail with EPIPE. Give it
+        // a short bounded grace period to exit on its own, kill it only if
+        // it is still running (for example stuck in a lazy fetch), then
+        // always reap so no zombie outlives the session.
         drop(self.stdin.take());
         drop(self.stdout.take());
-        if !matches!(self.child.try_wait(), Ok(Some(_))) {
-            let _ = self.child.kill();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(200);
+        loop {
+            match self.child.try_wait() {
+                Ok(None) if std::time::Instant::now() < deadline => {
+                    std::thread::sleep(std::time::Duration::from_millis(1));
+                }
+                Ok(None) => {
+                    let _ = self.child.kill();
+                    break;
+                }
+                _ => break,
+            }
         }
         let _ = self.child.wait();
     }

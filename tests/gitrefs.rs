@@ -696,3 +696,36 @@ fn one_session_reads_exact_blob_bytes_despite_textconv_and_filters() {
         SPEC.as_bytes()
     );
 }
+
+#[test]
+fn a_long_lived_repository_re_resolves_moving_refs() {
+    let Some(repo) = Repo::new() else {
+        return;
+    };
+    repo.write("api.json", SPEC);
+    let first = repo.commit("one");
+    let api = repo.api();
+    let clone = api.clone();
+    assert_eq!(api.materialize("HEAD", "api.json").unwrap().commit, first);
+    let short = &first[..12];
+    assert_eq!(api.materialize(short, "api.json").unwrap().commit, first);
+    repo.write("api.json", &SPEC.replace("\"1\"", "\"2\""));
+    let second = repo.commit("two");
+    for session in [&api, &clone] {
+        let snapshot = session.materialize("HEAD", "api.json").unwrap();
+        assert_eq!(snapshot.commit, second);
+        assert!(String::from_utf8(snapshot.bytes).unwrap().contains("\"2\""));
+        // Full IDs are immutable and still resolve (from the cache) exactly.
+        assert_eq!(
+            session.materialize(&first, "api.json").unwrap().commit,
+            first
+        );
+        assert_eq!(
+            session
+                .materialize(&first.to_ascii_uppercase(), "api.json")
+                .unwrap()
+                .commit,
+            first
+        );
+    }
+}
