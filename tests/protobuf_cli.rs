@@ -1099,3 +1099,68 @@ fn mixed_descriptor_and_source_ignore_bundled_descriptor_drift() {
             .any(|c| c["native_kind"] == "FIELD_SAME_TYPE")
     );
 }
+/// A `.proto` spec path that is a symlink or a submodule (gitlink) at a ref
+/// is rejected with the literal-path error and exit 1, on either side, also
+/// when lookups come from the full per-commit listing used for `.proto`.
+#[cfg(unix)]
+#[test]
+fn symlink_and_submodule_proto_specs_are_not_regular_files() {
+    let t = historical_fixture();
+    std::os::unix::fs::symlink("api.proto", t.path().join("link.proto")).unwrap();
+    git(t.path(), &["add", "link.proto"]);
+    let head = String::from_utf8(git(t.path(), &["rev-parse", "HEAD"])).unwrap();
+    git(
+        t.path(),
+        &[
+            "update-index",
+            "--add",
+            "--cacheinfo",
+            &format!("160000,{},sub.proto", head.trim()),
+        ],
+    );
+    git(t.path(), &["commit", "-qm", "non-regular specs"]);
+    let commit = String::from_utf8(git(t.path(), &["rev-parse", "HEAD"])).unwrap();
+    let commit = commit.trim();
+    let out = t.path().join("out.md");
+    for spec in ["link.proto", "sub.proto"] {
+        let expected =
+            format!("Error: Git path is missing or is not a regular file at {commit}: {spec}\n");
+        // As the followed --spec at --to-ref.
+        binary()
+            .current_dir(t.path())
+            .args([
+                "diff",
+                "--from-ref",
+                "old",
+                "--to-ref",
+                "HEAD",
+                "--spec",
+                spec,
+            ])
+            .args(["-I", "deps", "-o"])
+            .arg(&out)
+            .assert()
+            .code(1)
+            .stdout("")
+            .stderr(expected.clone());
+        // As a literal --from-spec at --from-ref.
+        binary()
+            .current_dir(t.path())
+            .args(["diff", "--from-ref", "HEAD", "--to-ref", "old"])
+            .args([
+                "--from-spec",
+                spec,
+                "--to-spec",
+                "api.proto",
+                "-I",
+                "deps",
+                "-o",
+            ])
+            .arg(&out)
+            .assert()
+            .code(1)
+            .stdout("")
+            .stderr(expected);
+        assert!(!out.exists());
+    }
+}

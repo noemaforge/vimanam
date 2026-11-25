@@ -19,7 +19,9 @@ pub(super) struct Input {
     pub bytes: Vec<u8>,
     path: PathBuf,
     source: String,
-    snapshot: Option<(PathBuf, String)>,
+    /// The repository session (shared caches and blob reader) and commit of
+    /// a Git-ref input.
+    snapshot: Option<(Repository, String)>,
     /// Merged GraphQL SDL files when the input is a directory.
     sdl_sources: Option<Vec<(String, String)>>,
 }
@@ -64,13 +66,13 @@ impl Input {
         })
     }
 
-    fn committed(snapshot: MaterializedSpec, reference: &str, root: &Path) -> Self {
+    fn committed(snapshot: MaterializedSpec, reference: &str, repo: &Repository) -> Self {
         let source = format!(
             "OpenAPI spec at Git ref {reference:?}, path {:?}",
             snapshot.path
         );
         Self {
-            snapshot: Some((root.to_path_buf(), snapshot.commit.clone())),
+            snapshot: Some((repo.clone(), snapshot.commit.clone())),
             bytes: snapshot.bytes,
             path: snapshot.path,
             source,
@@ -114,7 +116,7 @@ impl Input {
         {
             return Document::decode(&self.bytes);
         }
-        let Some((root, commit)) = &self.snapshot else {
+        let Some((repo, commit)) = &self.snapshot else {
             return crate::contract::protobuf::compile_bytes(&self.path, &self.bytes, includes);
         };
         let mut roots = Vec::with_capacity(includes.len() + 2);
@@ -129,17 +131,13 @@ impl Input {
             );
             roots.push(normalize_relative_path(include)?);
         }
-        let repo = Repository::discover(root)?;
-        let listing = std::process::Command::new("git")
-            .current_dir(root)
-            .args(["ls-tree", "-rz", "--full-tree", commit])
-            .output()?;
-        anyhow::ensure!(
-            listing.status.success(),
-            "Failed to enumerate committed protobuf imports"
-        );
+        // The listing is cached on the shared session, so the import
+        // resolver below finds each file's blob without another `ls-tree`.
+        let listing = repo
+            .listing(commit)
+            .context("Failed to enumerate committed protobuf imports")?;
         let mut committed_protos = HashSet::new();
-        for record in listing.stdout.split(|b| *b == 0).filter(|r| !r.is_empty()) {
+        for record in listing.split(|b| *b == 0).filter(|r| !r.is_empty()) {
             let tab = record
                 .iter()
                 .position(|b| *b == b'\t')
@@ -219,7 +217,7 @@ impl Input {
 
         let mut resolver = ChainFileResolver::new();
         resolver.add(GitFileResolver {
-            repo,
+            repo: repo.clone(),
             commit: commit.clone(),
             roots,
             committed_protos,
@@ -242,6 +240,18 @@ pub(super) fn read(args: &DiffArgs) -> Result<(Input, Input)> {
         (Some(old), Some(new), None, None) => Ok((Input::file(old)?, Input::file(new)?)),
         (None, None, Some(from), Some(to)) => {
             let repo = Repository::discover(std::env::current_dir()?)?;
+            // `.proto` sources enumerate each commit's tree for imports, so
+            // let spec lookups share that one listing per commit.
+            if [&args.spec, &args.from_spec, &args.to_spec]
+                .into_iter()
+                .flatten()
+                .any(|path| {
+                    path.extension()
+                        .is_some_and(|e| e.eq_ignore_ascii_case("proto"))
+                })
+            {
+                repo.prefer_full_listings();
+            }
             let (old, new) = if let (Some(old_path), Some(new_path)) =
                 (&args.from_spec, &args.to_spec)
             {
@@ -264,8 +274,8 @@ pub(super) fn read(args: &DiffArgs) -> Result<(Input, Input)> {
                 (old, new)
             };
             Ok((
-                Input::committed(old, from, repo.root()),
-                Input::committed(new, to, repo.root()),
+                Input::committed(old, from, &repo),
+                Input::committed(new, to, &repo),
             ))
         }
         _ => bail!("Provide OLD NEW or both --from-ref and --to-ref"),
