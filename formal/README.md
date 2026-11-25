@@ -35,7 +35,8 @@ python3 -I scripts/formal/check-model-drift.py
 | `VimanamProofs/RefDiff.lean` | The `$ref`-aware schema diff reference model (#181): executable, no theorems. See "Reference semantics of `$ref` diffs". |
 | `VimanamProofs/Audit.lean` | `#print axioms` for every theorem. |
 | `OracleExport/` | `lake exe oracle`: writes `oracle/*.json` from the model definitions. `lake exe refdiff`: evaluates `RefDiff.lean` on spec pairs. |
-| `refdiff/cases/`, `refdiff/expected/` | Fixed spec pairs for the `$ref` model (#182's review-round repros) and the model's pinned grouped output on them. |
+| `refdiff/cases/`, `refdiff/expected/` | Fixed spec pairs for the `$ref` model (#182's review-round repros `r1`–`r3`, #185's `r4`) and the model's pinned grouped output on them. |
+| `refdiff/allowlist.json` | The known disagreements `refdiff-harness.py --ci` accepts. |
 | `oracle/` | The committed oracle vectors. |
 | `models.toml` | Which Rust each model reads, with a fingerprint of it. |
 
@@ -246,14 +247,17 @@ change that moved them.
 
 ## CI
 
-`.github/workflows/lean.yml` runs when `formal/` or `scripts/formal/`
-changes: it installs the pinned Lean release (checked by SHA-256), builds
+`.github/workflows/lean.yml` runs when `formal/`, `scripts/formal/`, `src/`
+or `Cargo.*` changes: it installs the pinned Lean release (checked by SHA-256), builds
 with `--wfail`, rejects `sorry` and `admit`, runs the axiom audit
 (`scripts/formal/check-axiom-audit.sh`: every theorem has a `#print axioms`
 line, every answer names only `propext`, `Quot.sound`, `Classical.choice`),
 and checks the oracle vectors and that `refdiff/expected/` is the
 reference model's current output on `refdiff/cases/`
-(`scripts/formal/check-refdiff.sh`). Actions are pinned to commit SHAs.
+(`scripts/formal/check-refdiff.sh`). It then builds the Rust (release) and
+runs `refdiff-harness.py --ci` on the fixed cases and seeds 1 to 60, so it
+also runs on changes to `src/` and `Cargo.*`. Actions are pinned to commit
+SHAs.
 
 ## Re-reading after a rule change
 
@@ -282,16 +286,37 @@ the same specification in prose.
   spellings are the same name everywhere below. Any other `$ref`, or one
   naming a component the document does not declare, is a plain object.
 * **Uses** are the schema positions of an endpoint present in both
-  documents (matched on `METHOD path`): each non-body parameter matched on
-  `(in, name)` (Swagger 2 parameters rebuilt from `type`, `format`, `items`,
-  `enum`), the request body (first media type), and each response status
-  present on both sides. Parameters and request bodies are the **request**
-  direction, responses the **response** direction.
-* Every schema is first **canonicalised** as `canonicalize_schema_value`
-  does: annotations (`description`, `title`, `example`, `examples`,
-  `deprecated`, `x-*`) are removed from schema objects, `type` arrays are
-  sets, and `required`/`enum` are compared as sets. Annotation siblings of a
-  `$ref` therefore vanish before anything below: they never mask.
+  documents (matched on `METHOD path`), as `diff/mod.rs` collects them:
+  * each non-body parameter, matched on `(name, in)` over path-level then
+    operation-level parameters (the operation's wins), then a parameter
+    that moved to another location under the same name, when the name is
+    unambiguous (a location change: the use is named by the new location).
+    Its schema is `schema` when both sides have one, else, per side,
+    `schema` or the inline `type`/`format`/`items`/`enum` keys (in either
+    OpenAPI version), else nothing;
+  * the request body, when both sides have one: the first `in: body`
+    parameter, or else the first `requestBody` media type. Its schema may be
+    absent (a media type without `schema`), which compares as `null`: a
+    schema added there is one Review change at the use;
+  * each response status present on both sides: the response's `schema`,
+    else the first media type that has one.
+
+  Parameters and request bodies are the **request** direction, responses
+  the **response** direction.
+* Every schema at a typed position is read as `models::Schema` reads it
+  (a component; a parameter, media-type or response `schema`; recursively
+  `properties` values, `items`, `allOf`/`oneOf`/`anyOf` members and an
+  object `additionalProperties`): an OpenAPI 3.1 `type` array becomes a
+  `"a | b"` union string, deduplicated in order, and a `"null"` member of a
+  union becomes `nullable: true` (`["string", "null"]` reads exactly as
+  `type: string, nullable: true`; a lone `["null"]` stays); a typed key
+  whose value is `null` is absent. Untyped keys (`not`, `default`,
+  `patternProperties`, ...) are kept as written.
+* Then it is **canonicalised** as `canonicalize_schema_value` does:
+  annotations (`description`, `title`, `example`, `examples`, `deprecated`,
+  `x-*`) are removed from schema objects, `type` arrays and union strings
+  are sets, and `required`/`enum` are compared as sets. Annotation siblings
+  of a `$ref` therefore vanish before anything below: they never mask.
 
 ### The comparison walk
 
@@ -306,7 +331,11 @@ comparison), with three rules at a schema position holding a `$ref`:
    (new). The `$ref` keys are not compared. The *mask* is the set of keys a
    sibling sets on either side. Each masked key is compared here, as the
    effective value on each side: the sibling if that side has one, else the
-   target's value at that key (siblings win, as resolution merges them).
+   value resolution gives the target at that key (siblings win, as
+   resolution merges them): the target's own key, else, while the target
+   is an alias `{"$ref": Z, ...}` of a declared component, `Z`'s, hop by hop,
+   stopping (no value) at a cycle, an undeclared target or after 64 hops, as
+   `DocResolver::resolved_key` does.
    Every other key is the pair `(X, Y)`'s business: the hop leads to the
    state `(X, Y, mask, neg)`, where `neg` says the hop is under a `not`.
 2. **One-sided expansion.** One side references a declared component and
@@ -323,6 +352,19 @@ comparison), with three rules at a schema position holding a `$ref`:
    nothing, two undeclared references, a value present on one side only) is
    compared as written. A subtree present on one side only is one
    addition or removal; its contents are not expanded.
+
+A "schema position" is one of the grammar `diff_values` walks (`Node` in
+`Severity.lean`): the root, `properties`/`patternProperties` values,
+`allOf`/`oneOf`/`anyOf` members, `items`, `additionalProperties` and `not`.
+A `$ref` anywhere else is a value, compared as written, even where JSON
+Schema 2020-12 has a subschema (`if`/`then`/`else`, `prefixItems`, `$defs`,
+`dependentSchemas`, ...) and under `default`. #182 follows references at
+every non-annotation position and rates what it finds there by the direction
+table, which can be Breaking (#186; before #182 such changes were Review,
+at their opaque pointer). The model does not follow them, so for such a
+reference it reports nothing, the `refdiff/cases/r4-ref-*` cases pin that,
+and the harness puts every disagreement of a pair with such a reference in
+`known-rust-bug-#186`.
 
 ### Owners, states and reach
 
@@ -379,29 +421,49 @@ python3 -I scripts/formal/refdiff-harness.py --rust target/release/vimanam --see
 
 The harness generates spec pairs (cycles, siblings over references,
 retargets, aliases, one-sided components, mixed spellings, references under
-`not`; both directions of each), adds `refdiff/cases/`, and compares:
+`not`, OpenAPI 3.1 `type` arrays; both directions of each), adds
+`refdiff/cases/`, and compares, as multisets:
 
 * the grouped view with `--rust`'s `diff --format json --contract 1` records
   (one per use and change, with `component`/`old_component`), record by
   record: `(use, owner, owner-relative pointer, change, verdict)`;
 * optionally, the per-path view with `--per-path`'s v1 records, from a
-  binary built before #182 (aa6b1ab), which diffed every path in full.
+  binary built before #182 (aa6b1ab), which diffed every path in full:
+  `(use, absolute pointer, change, verdict)`, leaving out records at or
+  beneath a cut (one the model's unfolding made, or one the old resolver
+  made on either side: the same `$ref` string already on the chain, or 64
+  hops), where the two deliberately differ.
 
 Objects and arrays in changes compare only as "an object"/"an array" (how
 far a side was expanded is not observable through the table) and `$ref`
 strings compare by component name. Each disagreement is classified
-(`verdict-under-not`, `retarget-fact-missing`, `attribution-*`,
-`extra-in-rust-*`, `missing-in-rust-*`), and one pair per class is shrunk by
-delta debugging into `DIR/repro/`. The report is `DIR/report.md`.
+(`verdict`, `verdict-under-not`, `retarget-fact-missing`, `attribution-*`,
+`under-not-flag-{extra,missing}-in-rust`, `extra-in-rust-*`,
+`missing-in-rust-*`, `rust-one-sided-name-cut`, `known-rust-bug-#186`), and
+one pair per class is shrunk by delta debugging into `DIR/repro/`. The report
+is `DIR/report.md`.
+
+`--ci` (the `lean` workflow runs it on the fixed cases and seeds 1 to 60
+against a release build) skips shrinking and fails on a Rust error or
+timeout and on any disagreement `refdiff/allowlist.json` does not cover. The
+allowlist holds the known limits: Q1, a Review record at a `$ref` key from a
+content-free alias loop (`C = {"$ref": C}`, possibly with siblings, facing an
+undeclared reference or inline schema: the model takes the fixpoint, the
+Rust compares the literal `$ref`), and `known-rust-bug-#186`.
 
 ### Not covered
 
-`$ref`s at non-schema positions (`default`, an `example` is stripped
-anyway), parameter, response and request-body `$ref`s, external references,
-the `"a | b"` type-union string, non-object component targets beyond
-"compare as written", endpoint moves (v1 output never pairs them), key
-order (`Lean.Json` sorts keys, so "first media type" is the first in sorted
-order), and every structural change (endpoints, parameters, status codes).
+`$ref`s outside the schema grammar (followed by #182, #186; see above),
+`$ref`s to `components/parameters`, `requestBodies` and `responses`,
+external references, non-object component targets beyond "compare as
+written", endpoint moves (v1 output never pairs them), and every structural
+change (endpoints, parameters, status codes). Key order: `lake exe refdiff`
+reads documents through `Lean.Json`, which sorts object keys, so "the first
+media type" (of a request body, or of a response without `schema`) is the
+first in sorted order, where the Rust takes the first in the document; a
+pair whose media types differ in that order can disagree for that reason
+alone (the generator writes one media type). Inputs the Rust rejects
+(`type` not a string or array of strings, ...) are not specified.
 
 ## Next candidates
 

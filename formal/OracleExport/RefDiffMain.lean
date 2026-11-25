@@ -4,8 +4,9 @@
     lake exe refdiff OLD.json NEW.json          # model output on stdout
     lake exe refdiff --batch LIST               # LIST: lines "OLD<TAB>NEW<TAB>OUT"
 
-Prints, per spec pair, the grouped view (`RefDiff.grouped`) and the per-path
-view (`RefDiff.perPathUse`) as JSON. `scripts/formal/refdiff-harness.py`
+Prints, per spec pair, the uses (with their deserialised, canonicalised
+schemas), both documents' components, the grouped view (`RefDiff.grouped`)
+and the per-path view (`RefDiff.perPathUse`, with its cut pointers) as JSON. `scripts/formal/refdiff-harness.py`
 normalises this and the Rust's `diff --format json --contract 1` output to the
 same records and lists disagreements. See formal/README.md, "Reference
 semantics of `$ref` diffs".
@@ -64,10 +65,14 @@ def evaluate (oldDoc newDoc : J) : J :=
   let us := uses oldDoc newDoc
   let perPath := us.map fun u => (u, perPathUse os ns budget u)
   .obj [
-    ("uses", .arr (us.map fun u => .obj [("id", .str u.id), ("dir", .str u.dir.name)])),
+    ("uses", .arr (us.map fun u => .obj [("id", .str u.id), ("dir", .str u.dir.name),
+      ("old", u.old), ("new", u.new)])),
+    ("components", .obj [("old", .obj os.comps), ("new", .obj ns.comps)]),
     ("grouped", .arr ((us.flatMap (groupedUse os ns)).map recJson)),
     ("per_path_truncated", .arr (perPath.filterMap fun (u, r) => if r.isNone then some (.str u.id) else none)),
-    ("per_path", .arr (perPath.flatMap fun (u, r) => (r.getD []).map fun (p, c) => pathJson u p c))]
+    ("per_path", .arr (perPath.flatMap fun (u, r) => ((r.map (·.1)).getD []).map fun (p, c) => pathJson u p c)),
+  ("per_path_cuts", .arr (perPath.flatMap fun (u, r) => ((r.map (·.2)).getD []).map fun p =>
+    .obj [("use", .str u.id), ("ptr", .str (ptrText p))]))]
 
 def load (path : String) : IO J := do
   match Json.parse (← IO.FS.readFile path) with

@@ -1,0 +1,3 @@
+[
+{"change": {"after": {"$ref": "#/components/schemas/A"}, "before": null, "op": "changed"}, "dir": "request", "neg": false, "owner": null, "ptr": "", "severity": "review", "use": "POST /a body"}
+]

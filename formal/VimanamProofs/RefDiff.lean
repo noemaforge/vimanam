@@ -62,12 +62,16 @@ owner (or its owner was so reached); verdicts there are Review, as
   `#/definitions/NAME` (decoded), in either kind of document, as in
   `resolve::reference_name`.
 * Endpoints match on `(METHOD, path)` only (moves are not paired, as in
-  v1 output). A use is a non-body parameter `(in, name)`, the request body
-  (first media type), or a response status present on both sides.
-* Not modelled: `$ref`s outside schema positions (e.g. under `default`),
-  parameter and response `$ref`s, the `type: "a | b"` union string form,
-  non-object component targets beyond "compare as written", and everything
-  outside schema comparison (structural endpoint changes).
+  v1 output). A use is a non-body parameter (by `(name, in)`, then a
+  location change), the request body, or a response status present on both
+  sides, with the schemas `diff/mod.rs` takes for them (`uses`). Schemas are
+  read as `models::Schema` deserialisation leaves them (`schemaNorm`).
+* References are followed only at positions of the `diff_values` grammar
+  (`Node`); elsewhere (`default`, `if`, `prefixItems`, `$defs`, ...) a
+  `$ref` is a value. #182 follows them there too (#186).
+* Not modelled: parameter, request-body and response `$ref`s, non-object
+  component targets beyond "compare as written", and everything outside
+  schema comparison (structural endpoint changes).
 -/
 import VimanamProofs.Severity
 
@@ -160,6 +164,78 @@ end J
 def sortDedup (xs : List String) : List String :=
   (xs.mergeSort (fun a b => decide (a ≤ b))).eraseDups
 
+/-- The separator of a `type` union string (`models::TYPE_UNION_SEPARATOR`). -/
+def unionSep : String := " | "
+
+/-! ## Deserialisation (`models::Schema`)
+
+The Rust reads every schema at a typed position (a component, a parameter,
+media type or response `schema`, and recursively `properties` values,
+`items`, `allOf`/`oneOf`/`anyOf` members and an object `additionalProperties`)
+into `models::Schema` and serialises it back before comparing. That pass
+changes two things the comparison sees: an OpenAPI 3.1 `type` array becomes a
+`"a | b"` string (members deduplicated in order) whose `"null"` member moves
+to `nullable: true`, and a typed key whose value is `null` disappears (it is
+an `Option` that serialises as absent). Every other key (`not`, `default`,
+`patternProperties`, ...) is kept as written, unnormalised. -/
+
+/-- The typed keys of `models::Schema`; a `null` value of one is dropped. -/
+def typedKeys : List String :=
+  ["title", "description", "type", "format", "$ref", "properties", "items", "required",
+   "allOf", "oneOf", "anyOf", "enum", "nullable", "additionalProperties"]
+
+/-- `deserialize_optional_type`: a string stays, an array of strings becomes
+its members (deduplicated in order) joined by `" | "`, nothing for `[]`. -/
+def normType : J → Option J
+  | .arr xs =>
+    let members := (xs.filterMap fun
+      | .str m => some m
+      | _ => none).eraseDups
+    if members.isEmpty then none else some (.str (unionSep.intercalate members))
+  | j => some j
+
+/-- `Schema::normalize_null_type`: a union with a `"null"` member keeps the
+other members and sets `nullable: true`; a lone `"null"` stays. -/
+def normNull (kvs : List (String × J)) : List (String × J) :=
+  match kvs.lookup "type" with
+  | some (.str t) =>
+    let members := t.splitOn unionSep
+    if members.length > 1 && members.contains "null" then
+      let rest := unionSep.intercalate (members.filter (· != "null"))
+      let kvs := kvs.map fun (k, v) => if k == "type" then (k, .str rest) else (k, v)
+      if (kvs.lookup "nullable").isSome then
+        kvs.map fun (k, v) => if k == "nullable" then (k, .bool true) else (k, v)
+      else kvs ++ [("nullable", .bool true)]
+    else kvs
+  | _ => kvs
+
+/-- A schema as `models::Schema` deserialisation leaves it. -/
+partial def schemaNorm : J → J
+  | .obj kvs =>
+    let kvs := kvs.filterMap fun (k, v) =>
+      if typedKeys.contains k && v.isNull then none
+      else if k == "type" then (normType v).map (k, ·)
+      else if k == "properties" then
+        some (k, match v with
+          | .obj m => .obj (m.map fun (n, x) => (n, schemaNorm x))
+          | v => v)
+      else if k == "items" then some (k, schemaNorm v)
+      else if k == "allOf" || k == "oneOf" || k == "anyOf" then
+        some (k, match v with
+          | .arr xs => .arr (xs.map schemaNorm)
+          | v => v)
+      else if k == "additionalProperties" then
+        some (k, if v.isObj then schemaNorm v else v)
+      else some (k, v)
+    .obj (normNull kvs)
+  | j => j
+
+#guard (schemaNorm (.obj [("type", .arr [.str "string", .str "null"])])).render
+  == "{\"type\":\"string\",\"nullable\":true}"
+#guard (schemaNorm (.obj [("type", .arr [.str "null"])])).render == "{\"type\":\"null\"}"
+#guard (schemaNorm (.obj [("not", .obj [("type", .arr [.str "string", .str "null"])])])).render
+  == "{\"not\":{\"type\":[\"string\",\"null\"]}}"
+
 /-! ## Canonicalisation (`utils::canonicalize_schema_value`) -/
 
 def annotationKeys : List String := ["description", "title", "example", "examples", "deprecated"]
@@ -167,11 +243,15 @@ def schemaMapKeys : List String := ["properties", "patternProperties", "definiti
 def schemaKeys : List String := ["items", "additionalProperties", "not"]
 def schemaListKeys : List String := ["allOf", "oneOf", "anyOf"]
 
-/-- A `type` array is a set: sorted by its JSON text, deduplicated. -/
+/-- A `type` array is a set: sorted by its JSON text, deduplicated; so is a
+`"a | b"` union string's member list (`utils::canonicalize_type_union`). -/
 def canonType : J → J
   | .arr xs =>
     let sorted := xs.mergeSort (fun a b => decide (a.render ≤ b.render))
     .arr (sorted.foldr (fun x acc => if acc.head?.any (· == x) then acc else x :: acc) [])
+  | .str s =>
+    if (s.splitOn unionSep).length > 1 then .str (unionSep.intercalate (sortDedup (s.splitOn unionSep)))
+    else .str s
   | j => j
 
 /-- Strips annotations (`description`, `title`, `example(s)`, `deprecated`,
@@ -224,6 +304,9 @@ structure Side where
 
 def Side.target (s : Side) (name : String) : J := (s.comps.lookup name).getD .null
 
+/-- `resolve::MAX_RESOLVE_DEPTH`. -/
+def maxResolveDepth : Nat := 64
+
 /-- `j` as a reference to a component this side declares: the name and the
 siblings (every key but `$ref`). An undeclared or external reference is
 `none`: it stays a literal object. -/
@@ -237,6 +320,28 @@ def Side.declRef? (s : Side) (j : J) : Option (String × List (String × J)) :=
       | none => none
     | _ => none
   | _ => none
+
+/-- The value resolution gives `key` at the top of component `name`
+(`DocResolver::resolved_key`): its own key, else, while the component is a
+`$ref` to another declared component, that component's, hop by hop; `none`
+at a cycle, an undeclared target or after `maxResolveDepth` hops, where
+resolution leaves the reference literal. -/
+partial def Side.resolvedKey (s : Side) (name key : String) : Option J :=
+  let rec loop (seen : List String) (cur : J) : Option J :=
+    match cur.field? key with
+    | some v => some v
+    | none =>
+      match cur.field? "$ref" with
+      | some (.str r) =>
+        match refName? r with
+        | some nxt =>
+          if (s.comps.lookup nxt).isNone || seen.contains nxt || seen.length > maxResolveDepth then none
+          else loop (nxt :: seen) (s.target nxt)
+        | none => none
+      | _ => none
+  match s.comps.lookup name with
+  | some t => loop [name] t
+  | none => none
 
 /-- An object without its `$ref` key. -/
 def dropRef : J → J
@@ -289,6 +394,8 @@ structure Hop where
 structure Out where
   facts : Array (Pointer × Ch) := #[]
   hops : Array Hop := #[]
+  /-- Where a one-sided expansion was cut (the rest repeats periodically). -/
+  cuts : Array Pointer := #[]
 
 abbrev W := StateM Out
 
@@ -322,11 +429,9 @@ partial def go (os ns : Side) (chain : List (Pointer × J × J)) (node : Node) (
   match ro, rn with
   | some (x, so), some (y, sn) =>
     let mask := so.map (·.1) ++ (sn.map (·.1)).filter (fun k => !(so.any (·.1 == k)))
-    let tO := os.target x
-    let tN := ns.target y
     for k in mask do
       goOpt os ns chain (node.child k) (p ++ [k])
-        (so.lookup k <|> tO.field? k) (sn.lookup k <|> tN.field? k)
+        (so.lookup k <|> os.resolvedKey x k) (sn.lookup k <|> ns.resolvedKey y k)
     modify fun out => { out with hops := out.hops.push ⟨p, x, y, sortDedup mask⟩ }
   | some (x, so), none =>
     if n.isObj then
@@ -353,7 +458,7 @@ partial def expand (os ns : Side) (chain : List (Pointer × J × J)) (node : Nod
     if q == p then
       plain os ns chain node p (if (os.declRef? o).isSome then dropRef o else o)
         (if (ns.declRef? n).isSome then dropRef n else n)
-    else pure ()
+    else modify fun out => { out with cuts := out.cuts.push p }
 
 /-- One key present on either side (`diff_nodes`' object case). -/
 partial def goOpt (os ns : Side) (chain : List (Pointer × J × J)) (node : Node) (p : Pointer)
@@ -473,12 +578,12 @@ def endpoints (doc : J) : List Endpoint :=
 
 def isOas2 (doc : J) : Bool := (doc.field? "swagger").isSome
 
-/-- The document's components, canonicalised. -/
+/-- The document's components, as deserialised, canonicalised. -/
 def side (doc : J) : Side :=
   let raw := if isOas2 doc then doc.field? "definitions"
     else (doc.field? "components").bind (·.field? "schemas")
   match raw with
-  | some (.obj kvs) => ⟨kvs.map fun (k, v) => (k, canon v)⟩
+  | some (.obj kvs) => ⟨kvs.map fun (k, v) => (k, canon (schemaNorm v))⟩
   | _ => ⟨[]⟩
 
 /-- Endpoint matching: exact `(METHOD, path)`. Move pairing (operationId,
@@ -487,71 +592,113 @@ records the harness compares never pair moves, so the model does not. -/
 def matchEndpoints (old new : List Endpoint) : List (Endpoint × Endpoint) :=
   old.filterMap fun o => (new.find? fun n => n.method == o.method && n.path == o.path).map (o, ·)
 
-/-- Operation parameters over path-level ones, by `(in, name)`. -/
-def params (e : Endpoint) : List J :=
-  let ops := match e.op.field? "parameters" with
-    | some (.arr xs) => xs
-    | _ => []
-  let key (p : J) := (p.field? "in", p.field? "name")
-  ops ++ e.pathParams.filter fun p => !(ops.any fun q => key q == key p)
-
-/-- A non-body parameter's schema: OpenAPI 3 `schema`, or the Swagger 2
-`type`/`format`/`items`/`enum` keys rebuilt into one. -/
-def paramSchema (oas2 : Bool) (p : J) : J :=
-  if oas2 then
-    .obj (["type", "format", "items", "enum"].filterMap fun k => (p.field? k).map (k, ·))
-  else (p.field? "schema").getD .null
-
-/-- The first media type's schema of a `content` map. -/
-def contentSchema (content : Option J) : J :=
-  match content with
-  | some (.obj ((_, media) :: _)) => (media.field? "schema").getD .null
-  | _ => .null
-
-def bodySchema (oas2 : Bool) (e : Endpoint) : J :=
-  if oas2 then
-    match (params e).find? (·.field? "in" == some (.str "body")) with
-    | some p => (p.field? "schema").getD .null
-    | none => .null
-  else contentSchema ((e.op.field? "requestBody").bind (·.field? "content"))
-
-def responseSchema (oas2 : Bool) (r : J) : J :=
-  if oas2 then (r.field? "schema").getD .null else contentSchema (r.field? "content")
-
+/-- A parameter's identity: `(name, in)`, each `""` when absent (serde
+defaults). -/
 def strOf : Option J → String
   | some (.str s) => s
   | _ => ""
 
-/-- Every schema use of every matched endpoint, canonicalised. -/
+def paramKey (p : J) : String × String := (strOf (p.field? "name"), strOf (p.field? "in"))
+
+/-- `parser::dedup_parameters` over path-level then operation-level
+parameters: one per `(name, in)`, in first-seen position, the last
+declaration winning. -/
+def params (e : Endpoint) : List J :=
+  let ops := match e.op.field? "parameters" with
+    | some (.arr xs) => xs
+    | _ => []
+  (e.pathParams ++ ops).foldl (fun acc p =>
+    if acc.any (paramKey · == paramKey p) then
+      acc.map fun q => if paramKey q == paramKey p then p else q
+    else acc ++ [p]) []
+
+/-- A typed `schema` field, as deserialised. -/
+def schemaField? (j : J) : Option J := (j.field? "schema").bind fun
+  | .null => none
+  | s => some (schemaNorm s)
+
+/-- `diff::parameter_schema_json`: the parameter's `schema`, else its inline
+`type`/`format`/`items`/`enum` keys (kept as written), else `null`; in either
+OpenAPI version. -/
+def paramSchema (p : J) : J :=
+  match schemaField? p with
+  | some s => s
+  | none =>
+    match ["type", "format", "items", "enum"].filterMap fun k => (p.field? k).map (k, ·) with
+    | [] => .null
+    | kvs => .obj kvs
+
+/-- `diff::diff_parameter_pair`: both `schema`s when both parameters have
+one, else each side's `parameter_schema_json`. -/
+def paramPair (po pn : J) : J × J :=
+  match schemaField? po, schemaField? pn with
+  | some a, some b => (a, b)
+  | _, _ => (paramSchema po, paramSchema pn)
+
+/-- `markdown::response_schema`: the response's own `schema`, else the first
+media type that has one. -/
+def responseSchema (r : J) : J :=
+  match schemaField? r with
+  | some s => s
+  | none =>
+    match r.field? "content" with
+    | some (.obj media) => (media.findSome? fun (_, m) => schemaField? m).getD .null
+    | _ => .null
+
+/-- The endpoint's body (`diff::diff_request_body`): the first `in: body`
+parameter, where the parser appends one per `requestBody` media type after
+the declared parameters. `none` when there is none; its schema may be
+`null` (a media type without one). -/
+def body? (e : Endpoint) : Option J :=
+  match (params e).find? (·.field? "in" == some (.str "body")) with
+  | some p => some ((schemaField? p).getD .null)
+  | none =>
+    match (e.op.field? "requestBody").bind (·.field? "content") with
+    | some (.obj ((_, m) :: _)) => some ((schemaField? m).getD .null)
+    | _ => none
+
+/-- `diff::diff_parameters`' pairing of non-body parameters: by `(name, in)`,
+then a parameter that left one location for another under the same name,
+when the name is unambiguous among the removed ones and has one unpaired
+candidate among the added ones (a location change; its schema is still
+compared, under the new location). -/
+def pairParams (old new : List J) : List (J × J) :=
+  let byKey := old.filterMap fun po => (new.find? (paramKey · == paramKey po)).map (po, ·)
+  let removed := old.filter fun po => !(new.any (paramKey · == paramKey po))
+  let added := new.filter fun pn => !(old.any (paramKey · == paramKey pn))
+  let (moved, _) := removed.foldl (fun (acc, paired) po =>
+    let name := (paramKey po).1
+    let sameName := (removed.filter fun q => (paramKey q).1 == name).length
+    let cands := (List.range added.length).filter fun i =>
+      (paramKey added[i]!).1 == name && !paired.contains i
+    match cands with
+    | [i] => if sameName == 1 then (acc ++ [(po, added[i]!)], paired ++ [i]) else (acc, paired)
+    | _ => (acc, paired)) (([] : List (J × J)), ([] : List Nat))
+  byKey ++ moved
+
+/-- Every schema use of every matched endpoint, as deserialised,
+canonicalised. -/
 def uses (oldDoc newDoc : J) : List Use :=
-  let (o2, n2) := (isOas2 oldDoc, isOas2 newDoc)
   (matchEndpoints (endpoints oldDoc) (endpoints newDoc)).flatMap fun (eo, en) =>
     let ep := s!"{en.method} {en.path}"
-    let nonBody (oas2 : Bool) (e : Endpoint) :=
-      let _ := oas2
-      (params e).filter fun p => p.field? "in" != some (.str "body")
-    let ps := (nonBody o2 eo).filterMap fun po =>
-      (nonBody n2 en).find? (fun pn => pn.field? "in" == po.field? "in" && pn.field? "name" == po.field? "name")
-        |>.map fun pn =>
-          ({ id := s!"{ep} param:{strOf (po.field? "in")}:{strOf (po.field? "name")}"
-             dir := .request
-             old := canon (paramSchema o2 po)
-             new := canon (paramSchema n2 pn) } : Use)
-    let (bo, bn) := (bodySchema o2 eo, bodySchema n2 en)
+    let nonBody (e : Endpoint) := (params e).filter fun p => p.field? "in" != some (.str "body")
+    let ps := (pairParams (nonBody eo) (nonBody en)).map fun (po, pn) =>
+      let (so, sn) := paramPair po pn
+      ({ id := s!"{ep} param:{(paramKey pn).2}:{(paramKey pn).1}"
+         dir := .request, old := canon so, new := canon sn } : Use)
     let body : List Use :=
-      if bo.isNull || bn.isNull then []
-      else [{ id := s!"{ep} body", dir := .request, old := canon bo, new := canon bn }]
+      match body? eo, body? en with
+      | some bo, some bn => [{ id := s!"{ep} body", dir := .request, old := canon bo, new := canon bn }]
+      | _, _ => []
     let resp : List Use :=
       match eo.op.field? "responses", en.op.field? "responses" with
       | some (.obj ro), some (.obj rn) =>
         ro.filterMap fun (status, r) =>
-          (rn.lookup status).bind fun r' =>
-            let (so, sn) := (responseSchema o2 r, responseSchema n2 r')
-            if so.isNull && sn.isNull then none
-            else some { id := s!"{ep} response:{status}", dir := .response,
-                        old := canon so, new := canon sn }
+          (rn.lookup status).map fun r' =>
+            { id := s!"{ep} response:{status}", dir := .response,
+              old := canon (responseSchema r), new := canon (responseSchema r') }
       | _, _ => []
-    ps.filter (fun u => !(u.old.isNull && u.new.isNull)) ++ body ++ resp
+    (ps ++ body ++ resp).filter fun u => !(u.old.isNull && u.new.isNull)
 
 /-! ## Grouped view -/
 
@@ -649,15 +796,25 @@ def grouped (oldDoc newDoc : J) : List Rec :=
 
 /-! ## Per-path view -/
 
+/-- A pair's content as the per-path view needs it: changes, hops, and where
+one-sided expansion was cut. -/
+abbrev PairOut := List (Pointer × Ch) × List Hop × List Pointer
+
 /-- Every pair's content, computed once per spec pair and looked up by name. -/
-abbrev Contents := List ((String × String) × (List (Pointer × Ch) × List Hop))
+abbrev Contents := List ((String × String) × PairOut)
 
 /-- The contents of every pair reachable from `states`. Unsuppressed: the
 per-path view applies `required` suppression once, over the whole tree. -/
 def contents (os ns : Side) (states : List St) : Contents :=
   (states.map fun s => (s.old, s.new)).eraseDups.map fun (x, y) =>
     let out := walk os ns (os.target x) (ns.target y)
-    ((x, y), (out.facts.toList, out.hops.toList))
+    ((x, y), (out.facts.toList, out.hops.toList, out.cuts.toList))
+
+/-- What the per-path unfolding of one use collected: changes at absolute
+pointers, and the absolute pointers where it was cut. -/
+structure PathAcc where
+  facts : Array (Pointer × Ch) := #[]
+  cuts : Array Pointer := #[]
 
 /-- Per-path changes at one use: the lockstep unfolding, absolute pointers,
 cut where a state repeats on its own path (beneath a repeat every change has
@@ -665,13 +822,15 @@ already been reported at a shallower position relative to the same pair).
 `fuel` bounds the states visited and the changes collected; `none` when it
 runs out (dense cycles have exponentially many paths, #152). -/
 partial def unfold (cs : Contents) (pre : Pointer) (s : St) (stack : List St)
-    (acc : Array (Pointer × Ch)) (fuel : Nat) : Option (Array (Pointer × Ch) × Nat) := do
-  if stack.contains s then return (acc, fuel)
-  let (facts, hops) := (cs.lookup (s.old, s.new)).getD ([], [])
+    (acc : PathAcc) (fuel : Nat) : Option (PathAcc × Nat) := do
+  if stack.contains s then return ({ acc with cuts := acc.cuts.push pre }, fuel)
+  let (facts, hops, cuts) := (cs.lookup (s.old, s.new)).getD ([], [], [])
   let mut acc := acc
   for (p, c) in facts do
-    if visible s.mask p then acc := acc.push (pre ++ p, c)
-  if fuel ≤ acc.size then none
+    if visible s.mask p then acc := { acc with facts := acc.facts.push (pre ++ p, c) }
+  for p in cuts do
+    if visible s.mask p then acc := { acc with cuts := acc.cuts.push (pre ++ p) }
+  if fuel ≤ acc.facts.size then none
   let mut fuel := fuel - 1
   for h in hops do
     if visible s.mask h.at_ then
@@ -681,17 +840,19 @@ partial def unfold (cs : Contents) (pre : Pointer) (s : St) (stack : List St)
   return (acc, fuel)
 
 /-- The per-path view of one use, with `required` suppression over the whole
-resolved tree as `value_changes` applies it; `none` past the budget. -/
-def perPathUse (os ns : Side) (budget : Nat) (u : Use) : Option (List (Pointer × Ch)) := do
+resolved tree as `value_changes` applies it, and the cut pointers; `none`
+past the budget. -/
+def perPathUse (os ns : Side) (budget : Nat) (u : Use) :
+    Option (List (Pointer × Ch) × List Pointer) := do
   let out := walk os ns u.old u.new
   let cs := contents os ns (reach os ns (out.hops.toList.map (next [] false)) [])
-  let mut acc := out.facts
+  let mut acc : PathAcc := { facts := out.facts, cuts := out.cuts }
   let mut fuel := budget
   for h in out.hops do
     let (acc', fuel') ← unfold cs h.at_ (next [] false h) [] acc fuel
     acc := acc'
     fuel := fuel'
-  return suppress acc.toList |>.eraseDups
+  return (suppress acc.facts.toList |>.eraseDups, acc.cuts.toList.eraseDups)
 
 /-! ## Sanity checks -/
 

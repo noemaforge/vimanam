@@ -46,13 +46,14 @@ import random
 import shutil
 import subprocess
 import sys
-from collections import defaultdict
+from collections import Counter, defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 FORMAL = ROOT / "formal"
 CASES = FORMAL / "refdiff" / "cases"
+ALLOWLIST = FORMAL / "refdiff" / "allowlist.json"
 
 # ── generator ───────────────────────────────────────────────────────────────
 
@@ -71,6 +72,10 @@ class Gen:
     def __init__(self, seed: int):
         self.r = random.Random(seed)
         self.oas2 = self.r.random() < 0.25
+        # OpenAPI 3.1 `type` arrays draw from their own stream, so adding
+        # them left every other seed's documents as they were.
+        self.r31 = random.Random(seed * 7919 + 1)
+        self.v31 = not self.oas2 and self.r31.random() < 0.15
 
     def ref(self, name: str, siblings: bool = True) -> dict:
         r = self.r
@@ -98,6 +103,8 @@ class Gen:
             s["enum"] = r.sample(["p", "q", "r", "s"], 2)
         if r.random() < 0.15:
             s["nullable"] = True
+        if self.v31 and self.r31.random() < 0.4:
+            s["type"] = [s["type"], "null"] if self.r31.random() < 0.7 else [s["type"]]
         return s
 
     def schema(self, depth: int) -> dict:
@@ -131,6 +138,9 @@ class Gen:
                 x = r.random()
                 if x < rate and isinstance(v.get("type"), str):
                     v["type"] = r.choice(["string", "integer", "boolean", "object"])
+                elif isinstance(v.get("type"), list) and self.r31.random() < rate:
+                    t = v["type"]
+                    v["type"] = [m for m in t if m != "null"] if "null" in t else t + ["null"]
                 elif x < rate * 1.5 and "enum" in v:
                     v["enum"] = v["enum"][:1] if len(v["enum"]) > 1 else v["enum"] + ["z"]
                 elif x < rate * 2 and "properties" in v and v["properties"]:
@@ -156,8 +166,8 @@ class Gen:
     def doc(self, comps, paths):
         if self.oas2:
             return {"swagger": "2.0", "info": {"title": "t", "version": "1"}, "paths": paths, "definitions": comps}
-        return {"openapi": "3.0.0", "info": {"title": "t", "version": "1"}, "paths": paths,
-                "components": {"schemas": comps}}
+        return {"openapi": "3.1.0" if self.v31 else "3.0.0", "info": {"title": "t", "version": "1"},
+                "paths": paths, "components": {"schemas": comps}}
 
     def op(self, i: int):
         r = self.r
@@ -259,31 +269,31 @@ def norm_change(op: str, before, after) -> str:
     return f"changed {norm_value(before)} -> {norm_value(after)}"
 
 
-def model_grouped(m: dict) -> set[tuple]:
-    """Records as tuples; `NEGATED` collects those reached under `not`."""
-    out = set()
+def model_grouped(m: dict) -> tuple[Counter, set[tuple]]:
+    """Records as a multiset of tuples, and those reached under `not`."""
+    out: Counter = Counter()
+    neg = set()
     for r in m["grouped"]:
         o = r["owner"]
         owner = "use" if o is None else f"{o['old']}->{o['new']}"
         c = r["change"]
         rec = (r["use"], owner, r["ptr"], norm_change(c["op"], c.get("before"), c.get("after")), r["severity"])
-        out.add(rec)
+        out[rec] += 1
         if r["neg"]:
-            NEGATED.add(rec)
-    return out
+            neg.add(rec)
+    return out, neg
 
 
-# Model records reached through a `not` (their verdict is Review for that reason).
-NEGATED: set[tuple] = set()
-# Rust records with `details.under_not` (#182 from fb7d637).
-RUST_NEGATED: set[tuple] = set()
+def under(ptr: str, cut: str) -> bool:
+    """Whether `ptr` is at or beneath `cut` (both JSON pointers)."""
+    return ptr == cut or ptr.startswith(cut + "/")
 
 
-def model_per_path(m: dict) -> set[tuple]:
-    out = set()
+def model_per_path(m: dict) -> Counter:
+    out: Counter = Counter()
     for r in m["per_path"]:
         c = r["change"]
-        out.add((r["use"], r["ptr"], norm_change(c["op"], c.get("before"), c.get("after")), r["severity"]))
+        out[(r["use"], r["ptr"], norm_change(c["op"], c.get("before"), c.get("after")), r["severity"])] += 1
     return out
 
 
@@ -300,8 +310,10 @@ def rust_use(rec: dict) -> str | None:
     return None
 
 
-def rust_records(rust: dict, grouped: bool) -> set[tuple]:
-    out = set()
+def rust_records(rust: dict, grouped: bool) -> tuple[Counter, set[tuple]]:
+    """Records as a multiset of tuples, and those Rust marks `under_not`."""
+    out: Counter = Counter()
+    neg = set()
     for rec in rust.get("changes", []):
         use = rust_use(rec)
         if use is None:
@@ -316,54 +328,67 @@ def rust_records(rust: dict, grouped: bool) -> set[tuple]:
             old_comp = d.get("old_component", comp)
             owner = "use" if comp is None else f"{old_comp}->{comp}"
             pointer = sc["pointer"]
-            # #182 (from 870e2ad) writes the retarget fact as a change of the
-            # component names at `/$ref`; the model's record for it is
-            # `retargeted X -> Y` at the pair root.
+            # #182 writes the retarget fact as a change of the component names
+            # at `/$ref`; the model's record for it is `retargeted X -> Y` at
+            # the pair root.
             if (comp is not None and old_comp != comp and pointer == "/$ref"
                     and sc["operation"] == "changed" and (before, after) == (old_comp, comp)):
                 pointer, change = "", f"retargeted {old_comp} -> {comp}"
-            out.add((use, owner, pointer, change, rec["severity"]))
+            t = (use, owner, pointer, change, rec["severity"])
+            out[t] += 1
             if d.get("under_not"):
-                RUST_NEGATED.add((use, owner, pointer, change, rec["severity"]))
+                neg.add(t)
         else:
-            out.add((use, sc["pointer"], change, rec["severity"]))
-    return out
+            out[(use, sc["pointer"], change, rec["severity"])] += 1
+    return out, neg
 
 
 # ── classification ──────────────────────────────────────────────────────────
 
 
-def classify_grouped(model: set[tuple], rust: set[tuple]) -> list[tuple[str, tuple | None, tuple | None]]:
-    """Pairs up model-only and Rust-only records and names each difference."""
-    only_m = sorted(model - rust)
-    only_r = sorted(rust - model)
+def suffix_of(longer: str, shorter: str) -> bool:
+    """`shorter` is a non-empty pointer suffix of `longer` (an empty pointer
+    would match everything)."""
+    return shorter != "" and longer.endswith(shorter)
+
+
+def classify_grouped(model: Counter, model_neg: set[tuple], rust: Counter,
+                     rust_neg: set[tuple]) -> list[tuple[str, tuple | None, tuple | None]]:
+    """Pairs up model-only and Rust-only records (as multisets) and names
+    each difference."""
+    only_m = sorted((model - rust).elements())
+    only_r = sorted((rust - model).elements())
     found = []
-    used_r: set[tuple] = set()
+    used_r: Counter = Counter()
+
+    def free(r):
+        return used_r[r] < (rust - model)[r]
+
     for m in only_m:
         use, owner, ptr, change, sev = m
         if change.startswith("retargeted"):
             found.append(("retarget-fact-missing", m, None))
             continue
         # Same record, different verdict.
-        same = [r for r in only_r if r not in used_r and r[:4] == m[:4]]
+        same = [r for r in only_r if free(r) and r[:4] == m[:4]]
         if same:
             r = same[0]
-            used_r.add(r)
-            kind = "verdict-under-not" if m in NEGATED else "verdict"
+            used_r[r] += 1
+            kind = "verdict-under-not" if m in model_neg else "verdict"
             found.append((kind, m, r))
             continue
         # Reached both through a `not` and without: Rust has one record, with
         # the plain verdict, where the model has a Review one as well.
-        if m in NEGATED and any(r[:4] == m[:4] for r in rust):
+        if m in model_neg and any(r[:4] == m[:4] for r in rust):
             found.append(("verdict-under-not-merged", m, next(r for r in rust if r[:4] == m[:4])))
             continue
         # Same change at the same use, reported by a different owner: one
         # pointer is the other with the owner's prefix.
-        moved = [r for r in only_r if r not in used_r and r[0] == use and r[3] == change
-                 and (r[2].endswith(ptr) or ptr.endswith(r[2]))]
+        moved = [r for r in only_r if free(r) and r[0] == use and r[3] == change
+                 and (suffix_of(r[2], ptr) or suffix_of(ptr, r[2]))]
         if moved:
             r = moved[0]
-            used_r.add(r)
+            used_r[r] += 1
             if owner == "use" or r[1] == "use":
                 kind = "attribution-use-vs-component"
             else:
@@ -372,47 +397,157 @@ def classify_grouped(model: set[tuple], rust: set[tuple]) -> list[tuple[str, tup
             continue
         found.append(("missing-in-rust" + ("-masked-reach" if owner != "use" else "-at-use"), m, None))
     # Records both sides report, where only one side says "reached under
-    # `not`". (A record reached both ways is negated on the model side and may
-    # coincide with a plain Review record; only flag Rust-only negation.)
+    # `not`".
     for r in sorted(model & rust):
-        if r in RUST_NEGATED and r not in NEGATED:
+        if r in rust_neg and r not in model_neg:
             found.append(("under-not-flag-extra-in-rust", r, r))
+        elif r in model_neg and r not in rust_neg:
+            found.append(("under-not-flag-missing-in-rust", r, r))
     for r in only_r:
-        if r in used_r:
+        if used_r[r] > 0:
+            used_r[r] -= 1
             continue
         found.append(("extra-in-rust" + ("-component" if r[1] != "use" else "-at-use"), None, r))
+    return name_cuts(found, rust)
+
+
+def name_cuts(found: list, rust: Counter) -> list:
+    """Renames the disagreements a component-name cut of one-sided expansion
+    explains. #182's `expand_once` stops when the component is already on its
+    side's expansion stack and compares the literal `{"$ref": X}` with the
+    other side's inline schema (an added/removed `$ref` record at `P/$ref`);
+    the model keeps expanding while the compared value pair is new. Every
+    unmatched record of the same use and owner at or beneath `P` is then
+    `rust-one-sided-name-cut`, except Review records at a `$ref` key, which
+    keep their class (Q1)."""
+    cuts = {(r[0], r[1], r[2][: -len("/$ref")]) for r in rust
+            if r[2].endswith("/$ref") and r[3].split(" ")[0] in ("added", "removed")}
+    out = []
+    for kind, m, r in found:
+        rec = m if m is not None else r
+        if (kind.startswith(("missing-in-rust", "extra-in-rust"))
+                and not (rec[2].endswith("/$ref") and rec[4] == "review")
+                and any(u == rec[0] and o == rec[1] and under(rec[2], p) for u, o, p in cuts)):
+            kind = "rust-one-sided-name-cut"
+        out.append((kind, m, r))
+    return out
+
+
+# ── known gaps ──────────────────────────────────────────────────────────────
+
+# `Node.child` (formal/VimanamProofs/Severity.lean): the schema grammar the
+# model follows `$ref`s in.
+def node_child(node: str, key: str) -> str:
+    if node == "schema":
+        if key in ("properties", "patternProperties"):
+            return "pmap"
+        if key in ("allOf", "oneOf", "anyOf"):
+            return "slist"
+        if key in ("items", "additionalProperties", "not"):
+            return "schema"
+        if key in ("required", "enum"):
+            return "set"
+        return "opaq"
+    if node in ("pmap", "slist"):
+        return "schema"
+    return "opaq"
+
+
+ANNOTATIONS = ("description", "title", "example", "examples", "deprecated")
+
+
+def ref_name(r) -> str | None:
+    if not isinstance(r, str):
+        return None
+    for pre in REF_PREFIXES:
+        if r.startswith(pre):
+            return r[len(pre):].replace("~1", "/").replace("~0", "~")
+    return None
+
+
+def refs_outside_grammar(doc: dict) -> bool:
+    """Whether a component reference sits where the model does not follow
+    references but #182 does (#186): anywhere outside the `diff_values`
+    schema grammar that is not an annotation, e.g. under `default`, `if`,
+    `prefixItems` or `$defs`."""
+    comps = (doc.get("definitions") if "swagger" in doc
+             else (doc.get("components") or {}).get("schemas")) or {}
+    found = False
+
+    def walk(v, node):
+        nonlocal found
+        if found:
+            return
+        if isinstance(v, dict):
+            if node != "schema" and ref_name(v.get("$ref")) in comps:
+                found = True
+                return
+            for k, c in v.items():
+                if node == "schema" and (k.startswith("x-") or k in ANNOTATIONS):
+                    continue
+                walk(c, node_child(node, k))
+        elif isinstance(v, list):
+            for i, c in enumerate(v):
+                walk(c, node_child(node, str(i)))
+
+    for c in comps.values():
+        walk(c, "schema")
+
+    def schemas(v):
+        if isinstance(v, dict):
+            for k, c in v.items():
+                if k == "schema":
+                    yield c
+                else:
+                    yield from schemas(c)
+        elif isinstance(v, list):
+            for c in v:
+                yield from schemas(c)
+
+    for sch in schemas(doc.get("paths") or {}):
+        walk(sch, "schema")
     return found
 
 
-def has_cycle(doc: dict) -> bool:
-    comps = doc.get("definitions") or doc.get("components", {}).get("schemas", {}) or {}
+# ── per-path cuts of the pre-#182 resolver ──────────────────────────────────
 
-    def refs(v, acc):
+
+def main_cuts(schema, comps: dict, budget: int = 200_000) -> set[str] | None:
+    """Where `DocResolver::resolve` as of aa6b1ab (full inlining) leaves a
+    reference literal on one side: the same reference *string* already on the
+    chain, or 64 hops. `None` past `budget` nodes."""
+    cuts: set[str] = set()
+    count = [0]
+
+    def expand(v, depth, stack, ptr):
+        count[0] += 1
+        if count[0] > budget:
+            raise OverflowError
         if isinstance(v, dict):
             r = v.get("$ref")
             if isinstance(r, str):
-                for pre in REF_PREFIXES:
-                    if r.startswith(pre):
-                        acc.add(r[len(pre):].replace("~1", "/").replace("~0", "~"))
-            for c in v.values():
-                refs(c, acc)
+                if depth >= 64 or r in stack:
+                    cuts.add(ptr)
+                    return
+                name = ref_name(r)
+                if name is None or name not in comps:
+                    return
+                t = comps[name]
+                merged = t if len(v) == 1 and isinstance(t, dict) else {
+                    **(t if isinstance(t, dict) else {}), **{k: x for k, x in v.items() if k != "$ref"}}
+                expand(merged, depth + 1, stack + [r], ptr)
+                return
+            for k, c in v.items():
+                expand(c, depth, stack, ptr + "/" + k.replace("~", "~0").replace("/", "~1"))
         elif isinstance(v, list):
-            for c in v:
-                refs(c, acc)
-        return acc
+            for i, c in enumerate(v):
+                expand(c, depth, stack, f"{ptr}/{i}")
 
-    graph = {n: refs(s, set()) for n, s in comps.items()}
-    state: dict[str, int] = {}
-
-    def dfs(n):
-        state[n] = 1
-        for m in graph.get(n, ()):
-            if m in graph and (state.get(m) == 1 or (m not in state and dfs(m))):
-                return True
-        state[n] = 2
-        return False
-
-    return any(n not in state and dfs(n) for n in graph)
+    try:
+        expand(schema, 0, [], "")
+    except (OverflowError, RecursionError):
+        return None
+    return cuts
 
 
 # ── shrinking ───────────────────────────────────────────────────────────────
@@ -494,6 +629,51 @@ def _try(f, *a):
 # ── main ────────────────────────────────────────────────────────────────────
 
 
+def load_allowlist() -> list[dict]:
+    return json.loads(ALLOWLIST.read_text())["rules"]
+
+
+def allowed(kind: str, mrec, rrec, rules: list[dict]) -> str | None:
+    """The allowlist rule a disagreement falls under, if any."""
+    rec = mrec if mrec is not None else rrec
+    for rule in rules:
+        if kind not in rule["classes"]:
+            continue
+        if "pointer" in rule and rec[2] != rule["pointer"]:
+            continue
+        if "pointer_suffix" in rule and not rec[2].endswith(rule["pointer_suffix"]):
+            continue
+        if "verdict" in rule and not all(x is None or x[4] == rule["verdict"] for x in (mrec, rrec)):
+            continue
+        return rule["name"]
+    return None
+
+
+def per_path_compare(m: dict, mn: dict) -> tuple[Counter, Counter]:
+    """Model and pre-#182 records of one pair, without truncated uses and
+    without records at or beneath a cut (the model's, or either side's in the
+    old resolver), where the two semantics deliberately differ."""
+    truncated = set(m["per_path_truncated"])
+    cuts: dict[str, set[str]] = defaultdict(set)
+    for c in m["per_path_cuts"]:
+        cuts[c["use"]].add(c["ptr"])
+    comps = m["components"]
+    for u in m["uses"]:
+        for side in ("old", "new"):
+            mc = main_cuts(u[side], comps[side])
+            if mc is None:
+                truncated.add(u["id"])
+            else:
+                cuts[u["id"]] |= mc
+
+    def keep(r):
+        return r[0] not in truncated and not any(under(r[1], c) for c in cuts[r[0]])
+
+    mp = Counter({r: k for r, k in model_per_path(m).items() if keep(r)})
+    rp = Counter({r: k for r, k in rust_records(mn, False)[0].items() if keep(r)})
+    return mp, rp
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--rust", "--pr", dest="pr", required=True,
@@ -505,7 +685,13 @@ def main() -> int:
     ap.add_argument("--out", required=True, help="output directory (report.md, repros)")
     ap.add_argument("--no-shrink", action="store_true")
     ap.add_argument("--jobs", type=int, default=os.cpu_count() or 4)
+    ap.add_argument("--ci", action="store_true",
+                    help="no shrinking; exit 1 on a Rust error or timeout, or on a grouped "
+                         "disagreement formal/refdiff/allowlist.json does not cover")
     args = ap.parse_args()
+    if args.ci:
+        args.no_shrink = True
+    rules = load_allowlist()
 
     out = Path(args.out).resolve()
     if out.exists():
@@ -537,23 +723,30 @@ def main() -> int:
     main_agree = 0
     errors = []
     for (name, o, n), m, pr, mn in zip(pairs, models, prs, mains):
+        gap = refs_outside_grammar(json.loads(o.read_text())) or refs_outside_grammar(json.loads(n.read_text()))
         if pr is None or "error" in pr:
-            errors.append((name, "pr", pr))
-            continue
-        for kind, mrec, rrec in classify_grouped(model_grouped(m), rust_records(pr, True)):
-            by_class[kind].append((name, o, n, mrec, rrec))
+            errors.append((name, "rust", pr))
+        else:
+            mg, mneg = model_grouped(m)
+            rg, rneg = rust_records(pr, True)
+            for kind, mrec, rrec in classify_grouped(mg, mneg, rg, rneg):
+                # The model does not follow references outside the schema
+                # grammar; #182 does, and rates what it finds there (#186).
+                by_class["known-rust-bug-#186" if gap else kind].append((name, o, n, mrec, rrec))
         if mn is not None:
             if "error" in mn:
-                errors.append((name, "main", mn))
+                errors.append((name, "per-path", mn))
                 continue
-            truncated = set(m["per_path_truncated"])
-            mp = {r for r in model_per_path(m) if r[0] not in truncated}
-            rp = {r for r in rust_records(mn, False) if r[0] not in truncated}
+            mp, rp = per_path_compare(m, mn)
             if mp == rp:
                 main_agree += 1
             else:
-                cyc = has_cycle(json.loads(o.read_text())) or has_cycle(json.loads(n.read_text()))
-                main_by_class["cyclic" if cyc else "acyclic"].append((name, o, n, sorted(mp - rp), sorted(rp - mp)))
+                cls = "refs outside the grammar (#186)" if gap else "differ"
+                main_by_class[cls].append((name, o, n, sorted((mp - rp).elements()),
+                                           sorted((rp - mp).elements())))
+
+    unallowed = [(kind, i) for kind, items in sorted(by_class.items()) for i in items
+                 if allowed(kind, i[3], i[4], rules) is None]
 
     # Shrink one representative per class.
     repro_dir = out / "repro"
@@ -576,9 +769,9 @@ def main() -> int:
                 return False
             mm = json.loads(subprocess.run([str(exe), str(po), str(pn)], capture_output=True,
                                            text=True, check=True).stdout)
-            return any(k == kind for k, _, _ in classify_grouped(model_grouped(mm), rust_records(pr, True)))
+            return any(k == kind for k, _, _ in classify_grouped(*model_grouped(mm), *rust_records(pr, True)))
 
-        if not args.no_shrink:
+        if not args.no_shrink and kind != "known-rust-bug-#186":
             old, new = shrink(old, new, still, tmp)
         base = repro_dir / kind
         base.with_suffix(".old.json").write_text(json.dumps(old, indent=1) + "\n")
@@ -586,23 +779,33 @@ def main() -> int:
         po, pn = base.with_suffix(".old.json"), base.with_suffix(".new.json")
         mm = json.loads(subprocess.run([str(exe), str(po), str(pn)], capture_output=True, text=True, check=True).stdout)
         pr = run_rust(args.pr, po, pn)
-        diffs = [d for d in classify_grouped(model_grouped(mm), rust_records(pr, True)) if d[0] == kind]
+        diffs = [] if pr is None or "error" in pr else [
+            d for d in classify_grouped(*model_grouped(mm), *rust_records(pr, True))
+            if d[0] == kind or kind == "known-rust-bug-#186"]
         shrunk[kind] = (name, po, pn, diffs)
 
-    write_report(out, args, pairs, by_class, main_by_class, errors, shrunk, main_agree)
+    write_report(out, args, pairs, by_class, main_by_class, errors, shrunk, main_agree, rules, unallowed)
     print(out / "report.md")
+    if args.ci:
+        for kind, (name, o, n, mrec, rrec) in unallowed[:20]:
+            print(f"not allowlisted: {kind} in {name}: model {fmt(mrec)}; rust {fmt(rrec)}", file=sys.stderr)
+        for n_, w, e in errors[:20]:
+            print(f"error: {n_} ({w}): {e}", file=sys.stderr)
+        if unallowed or errors:
+            print(f"{len(unallowed)} disagreement(s) outside the allowlist, {len(errors)} error(s)",
+                  file=sys.stderr)
+            return 1
+        print(f"{len(pairs)} pairs: every disagreement is allowlisted")
     return 0
 
 
 def fmt(rec):
     if rec is None:
         return "—"
-    if isinstance(rec, list):
-        rec = tuple(rec)
-    return "`" + " | ".join(str(x) for x in rec) + (" (under not)" if rec in NEGATED else "") + "`"
+    return "`" + " | ".join(str(x) for x in rec) + "`"
 
 
-def write_report(out, args, pairs, by_class, main_by_class, errors, shrunk, main_agree=0):
+def write_report(out, args, pairs, by_class, main_by_class, errors, shrunk, main_agree, rules, unallowed):
     lines = ["# `$ref` diff: Lean reference model vs Rust", ""]
     lines += [f"- pairs: {len(pairs)} ({sum(1 for p in pairs if not p[0].startswith('seed'))} fixed cases "
               f"from formal/refdiff/cases, {args.seeds} generated seeds × 2 directions)",
@@ -610,12 +813,13 @@ def write_report(out, args, pairs, by_class, main_by_class, errors, shrunk, main
     lines += ["## Grouped view vs `--rust` (v1 records)", "",
               "Record: `use | owner | pointer | change | severity` (owner `use` = the use site, "
               "`X->Y` = component pair).", "",
-              "| Class | Records | Pairs | Repro |", "| --- | ---: | ---: | --- |"]
+              "| Class | Records | Pairs | Allowlisted | Repro |", "| --- | ---: | ---: | ---: | --- |"]
     for kind, items in sorted(by_class.items()):
         rep = shrunk.get(kind)
-        lines.append(f"| `{kind}` | {len(items)} | {len({i[0] for i in items})} | "
+        ok = sum(1 for i in items if allowed(kind, i[3], i[4], rules) is not None)
+        lines.append(f"| `{kind}` | {len(items)} | {len({i[0] for i in items})} | {ok} | "
                      f"{rep[1].name if rep else ''} |")
-    lines.append("")
+    lines += ["", f"Outside the allowlist (`formal/refdiff/allowlist.json`): {len(unallowed)} records.", ""]
     for kind, items in sorted(by_class.items()):
         lines += [f"### `{kind}`", ""]
         name, po, pn, diffs = shrunk[kind]
@@ -628,12 +832,13 @@ def write_report(out, args, pairs, by_class, main_by_class, errors, shrunk, main
         lines.append("")
     if args.main:
         lines += ["## Per-path view vs `--per-path` (v1 records)", "",
-                  f"- agree: {main_agree} pairs (uses past the model's per-path budget excluded)",
-                  "- differ, by whether either document has a component reference cycle:", ""]
+                  f"- agree: {main_agree} pairs (uses past the model's per-path budget excluded, and "
+                  "records at or beneath a cut, the model's or the old resolver's on either side)",
+                  "- differ:", ""]
         for cls, items in sorted(main_by_class.items()):
             lines += [f"- {cls}: {len(items)} pairs differ"]
             for name, o, n, mo, ro in items[:5]:
-                lines += [f"  - `{name}` (`{o}`): model-only {len(mo)}, main-only {len(ro)}; e.g. "
+                lines += [f"  - `{name}` (`{o}`): model-only {len(mo)}, pre-#182-only {len(ro)}; e.g. "
                           f"{fmt(mo[0]) if mo else '—'} / {fmt(ro[0]) if ro else '—'}"]
         lines.append("")
     if errors:

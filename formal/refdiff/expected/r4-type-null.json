@@ -1,0 +1,3 @@
+[
+{"change": {"after": true, "op": "added"}, "dir": "request", "neg": false, "owner": {"new": "T", "old": "T"}, "ptr": "/nullable", "severity": "non_breaking", "use": "POST /a body"}
+]
