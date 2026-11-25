@@ -90,7 +90,7 @@ OpenAPI `$ref` targets are compared as edges, the way `oasdiff` does: each pair 
 
 A component sent in requests and returned in responses gets one row per direction, each classified by its own rule table, so `--fail-on-breaking` fails when either direction breaks. Changes inside an operation's own inline schemas stay on that operation. This keeps densely cross-linked specs fast: a change under Stripe's 97-node reference cycle is one row, not one per reference path (millions).
 
-Only schema positions the rule tables understand (the schema itself, `properties`, `items`, `additionalProperties`, `allOf`/`oneOf`/`anyOf` and `not`) count as uses of a component. A `$ref` under `default`, `const`, an `enum` member, `if`/`then`/`else`, `prefixItems` or `$defs` is expanded in place instead, so a change reached that way appears at its full pointer (for example `/default/type`) and is classified `review`.
+Only schema positions the rule tables understand (the schema itself, `properties`, `items`, `additionalProperties`, `allOf`/`oneOf`/`anyOf` and `not`) count as uses of a component. A `$ref` under `default`, `const`, an `enum` member, `if`/`then`/`else`, `prefixItems` or `$defs` is expanded in place instead, so a change reached that way appears at its full pointer (for example `/default/type`, or `/enum/<member>/type` for an `enum` member that is a reference) and is classified `review`.
 
 ## Include hygiene and token deltas with `--report`
 

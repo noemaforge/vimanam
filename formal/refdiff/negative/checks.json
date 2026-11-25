@@ -97,6 +97,14 @@
       "OP": "drop-any",
       "PTR": "/if/type",
       "why": "#186: the Review record at /if/type is required, as before #182."
+    },
+    {
+      "case": "q1e",
+      "OP": "inject",
+      "PTR": "/properties/zz/$ref",
+      "TO": "L",
+      "OWNER": "X",
+      "why": "The record sits on a real reference to the alias loop L (in X, the structural check passes) and names L, but no use reaches L or X: only the use-reach term rejects it."
     }
   ]
 }

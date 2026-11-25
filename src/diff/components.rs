@@ -73,11 +73,16 @@ impl<'r, 'a> Components<'r, 'a> {
     }
 
     fn local_changes(&self, old: &Value, new: &Value) -> (Vec<ValueChange>, Vec<RefEdge>) {
-        let mut edges = Vec::new();
-        let (mut old, mut new) = self.resolver.localize(old, new, &mut edges);
+        let (mut edges, mut members) = (Vec::new(), Vec::new());
+        let (mut old, mut new) =
+            self.resolver
+                .localize_with_members(old, new, &mut edges, &mut members);
         canonicalize_schema_value(&mut old);
         canonicalize_schema_value(&mut new);
-        (value_changes(&old, &new), self.relevant(edges))
+        let mut changes = value_changes(&old, &new);
+        // Changes inside `required`/`enum` members that hold references.
+        changes.extend(members);
+        (changes, self.relevant(edges))
     }
 
     /// Compares every component pair the recorded uses reach, once each, and

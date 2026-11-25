@@ -1,0 +1,4 @@
+[
+{"change": {"after": "integer", "before": "string", "op": "changed"}, "dir": "request", "neg": false, "owner": null, "ptr": "/const/type", "severity": "review", "use": "POST /a body"},
+{"change": {"after": "integer", "before": "string", "op": "changed"}, "dir": "response", "neg": false, "owner": null, "ptr": "/const/type", "severity": "review", "use": "POST /a response:200"}
+]

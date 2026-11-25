@@ -28,6 +28,7 @@ use std::rc::Rc;
 use indexmap::IndexMap;
 use serde_json::{Map, Value};
 
+use crate::diff::{ValueChange, diff_set_member, pointer_of};
 use crate::models::Schema;
 use crate::utils::decode_json_pointer_token;
 
@@ -387,8 +388,12 @@ enum Role {
     /// (`Node::PropertyMap`, `Node::SchemaList`); the container itself is
     /// never a reference.
     Container,
-    /// Outside the grammar (`Node::Opaque`, `Node::Set`): inlined.
+    /// Outside the grammar (`Node::Opaque`): inlined.
     Value,
+    /// A `required`/`enum` set (`Node::Set`): its members are values, kept
+    /// as written; a member written the same on both sides that holds a
+    /// reference is inlined per side and compared inside the member.
+    Set,
     /// An annotation of a schema object: left as written (canonicalisation
     /// drops it).
     Annotation,
@@ -400,10 +405,12 @@ impl Role {
             Role::Schema => match key {
                 "properties" | "patternProperties" | "allOf" | "oneOf" | "anyOf" => Role::Container,
                 "items" | "additionalProperties" | "not" => Role::Schema,
+                "required" | "enum" => Role::Set,
                 _ if key.starts_with("x-") || ANNOTATIONS.contains(&key) => Role::Annotation,
                 _ => Role::Value,
             },
             Role::Container => Role::Schema,
+            Role::Set => Role::Value,
             Role::Value | Role::Annotation => self,
         }
     }
@@ -439,6 +446,11 @@ struct LocalWalk<'w> {
     /// Whether the walk is at or beneath a schema `not` keyword.
     negated: bool,
     edges: &'w mut Vec<RefEdge>,
+    /// The decoded tokens from the walked schema to the current node.
+    path: Vec<String>,
+    /// Changes inside `required`/`enum` members that hold references (see
+    /// [`Role::Set`]), at pointers from the walked schema.
+    members: &'w mut Vec<ValueChange>,
 }
 
 impl DocResolver<'_> {
@@ -574,11 +586,18 @@ impl PairResolver<'_> {
     /// Everything else, including subtrees present on one side only and
     /// references under annotation keywords, is kept as written. Key order is
     /// preserved, and a value without component refs is returned unchanged.
-    pub(crate) fn localize(
+    ///
+    /// A `required`/`enum` member is a value: the sets are kept as written,
+    /// and for each member written the same on both sides that holds a
+    /// reference, the two sides' inlined forms are compared inside the member
+    /// and the changes appended to `members` (#186); comparing the returned
+    /// values reports nothing there.
+    pub(crate) fn localize_with_members(
         &self,
         old: &Value,
         new: &Value,
         edges: &mut Vec<RefEdge>,
+        members: &mut Vec<ValueChange>,
     ) -> (Value, Value) {
         let mut walk = LocalWalk {
             old_stack: Vec::new(),
@@ -587,14 +606,52 @@ impl PairResolver<'_> {
             top: None,
             negated: false,
             edges,
+            path: Vec::new(),
+            members,
         };
         self.local(old, new, Role::Schema, &mut walk)
+    }
+
+    /// [`Self::localize_with_members`], for callers that only need the
+    /// localized values.
+    pub(crate) fn localize(
+        &self,
+        old: &Value,
+        new: &Value,
+        edges: &mut Vec<RefEdge>,
+    ) -> (Value, Value) {
+        self.localize_with_members(old, new, edges, &mut Vec::new())
+    }
+
+    /// The members of two `required`/`enum` sets written the same on both
+    /// sides that inline differently, compared inside the member.
+    fn set_members(&self, before: &[Value], after: &[Value], walk: &mut LocalWalk) {
+        let pointer = pointer_of(&walk.path);
+        let mut seen: Vec<&Value> = Vec::new();
+        for member in before {
+            if !after.contains(member) || seen.contains(&member) {
+                continue;
+            }
+            seen.push(member);
+            if self.values_equal(member, member) {
+                continue;
+            }
+            let old = self.old.inline(member, &mut Vec::new());
+            let new = self.new.inline(member, &mut Vec::new());
+            diff_set_member(&pointer, member, &old, &new, walk.members);
+        }
     }
 
     fn local(&self, old: &Value, new: &Value, role: Role, walk: &mut LocalWalk) -> (Value, Value) {
         match role {
             Role::Annotation => return (old.clone(), new.clone()),
-            Role::Value => {
+            Role::Set if old.is_array() && new.is_array() => {
+                if let (Value::Array(before), Value::Array(after)) = (old, new) {
+                    self.set_members(before, after, walk);
+                }
+                return (old.clone(), new.clone());
+            }
+            Role::Value | Role::Set => {
                 // Equal values over unchanged components inline identically.
                 if self.values_equal(old, new) {
                     return (old.clone(), new.clone());
@@ -681,7 +738,9 @@ impl PairResolver<'_> {
                 let (mut left, mut right) = (Vec::new(), Vec::new());
                 walk.depth += 1;
                 for index in 0..common {
+                    walk.path.push(index.to_string());
                     let (a, b) = self.local(&before[index], &after[index], child, walk);
+                    walk.path.pop();
                     left.push(a);
                     right.push(b);
                 }
@@ -715,7 +774,9 @@ impl PairResolver<'_> {
                     let outer_negated = walk.negated;
                     walk.negated |= role == Role::Schema && key == "not";
                     walk.depth += 1;
+                    walk.path.push(key.clone());
                     let (a, b) = self.local(old_child, new_child, role.child(key), walk);
+                    walk.path.pop();
                     walk.depth -= 1;
                     walk.negated = outer_negated;
                     left.insert(key.clone(), a);
@@ -1077,6 +1138,16 @@ mod tests {
             "enum": [reference("C")],
             "const": reference("Node"),
         });
+        let mut members = Vec::new();
+        let mut raw_edges = Vec::new();
+        pair.localize_with_members(&value, &value, &mut raw_edges, &mut members);
+        assert_eq!(
+            members
+                .iter()
+                .map(|change| change.pointer.as_str())
+                .collect::<Vec<_>>(),
+            [r##"/enum/{"$ref":"#~1components~1schemas~1C"}/type"##]
+        );
         let (left, right, edges) = localized(&pair, value.clone(), value);
         // Only the `properties` use is an edge.
         assert_eq!(edges, [("A".to_string(), "A".to_string())]);
@@ -1086,7 +1157,8 @@ mod tests {
             assert_eq!(side["if"], json!({"type": "array", "items": {"type": ty}}));
             assert_eq!(side["prefixItems"], json!([{"type": ty}]));
             assert_eq!(side["$defs"]["d"]["not"], json!({"type": ty}));
-            assert_eq!(side["enum"], json!([{"type": ty}]));
+            // Set members stay as written; their change is reported inside.
+            assert_eq!(side["enum"], json!([reference("C")]));
             // `Node` is unchanged on both sides: equal, so left as written.
             assert_eq!(side["const"], reference("Node"));
         }

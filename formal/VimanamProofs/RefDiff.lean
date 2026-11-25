@@ -51,7 +51,10 @@ reference is not a schema use the table can rate (#186): both sides are
 inlined in full (`Side.inline`, components as deserialised, cut by name on
 the chain or after `maxResolveDepth`) and compared as plain JSON (`rawCmp`)
 at the current owner, where `locate` makes every change Review, as diffing
-did before #182.
+did before #182. A `required`/`enum` set keeps its members as written
+(`setCmp`): membership is decided on them, and a member written the same on
+both sides that holds a reference is inlined and compared inside the member,
+Review.
 
 A hop is a *state* `(X, Y, mask, neg)`. The pair's content is visible at a
 state except under the masked top-level keys (overlay masking: a key a
@@ -271,8 +274,11 @@ def canonType : J → J
   | j => j
 
 /-- Strips annotations (`description`, `title`, `example(s)`, `deprecated`,
-`x-*`) from schema objects, recursing through the schema grammar. `required`
-and `enum` stay unsorted: the model compares them as sets. Applied before
+`x-*`) from schema objects, recursing through the schema grammar, and sorts
+`required` and `enum` arrays by their JSON text (`SET_KEYS`). At a schema
+position the walk compares them as sets, where order does not matter; under
+`$defs`/`definitions`, which this recursion reaches and `diff_values` does
+not treat as schemas, they are compared by index, where it does. Applied before
 references are followed, which is equivalent to main's resolve-then-
 canonicalise because stripping is per key at fixed grammar positions and
 merging a reference keeps every key at its position. -/
@@ -290,6 +296,10 @@ partial def canon : J → J
             | .arr xs => .arr (xs.map canon)
             | v => v)
         else if k == "type" then (k, canonType v)
+        else if k == "required" || k == "enum" then
+          (k, match v with
+            | .arr xs => .arr (xs.mergeSort (fun a b => decide (a.render ≤ b.render)))
+            | v => v)
         else (k, v)
   | j => j
 
@@ -495,6 +505,20 @@ def canonOutside (p : Pointer) (j : J) : J :=
   | some k, .obj m => if k == "$defs" || k == "definitions" then .obj (m.map fun (n, s) => (n, canon s)) else j
   | _, _ => j
 
+/-- A `required`/`enum` set at `p` (`Node.set`). Its members are values: one
+is in the set as written, so membership is decided on the written members,
+added or removed whole as `diff_sets` reports them. A member written the same
+on both sides that holds a reference is inlined per side and compared inside
+the member (`Node.opaq`, at `p/<member>/...`), where `locate` makes every
+change Review: the referenced component changed, not the set (#186). -/
+def setCmp (os ns : Side) (p : Pointer) (xs ys : List J) : W Unit := do
+  for x in xs do
+    if !ys.contains x then emit (p ++ [setSegment x]) (.removed x)
+  for y in ys do
+    if !xs.contains y then emit (p ++ [setSegment y]) (.added y)
+  for x in (xs.filter ys.contains).eraseDups do
+    rawCmp .opaq (p ++ [setSegment x]) (os.inline [] x) (ns.inline [] x)
+
 mutual
 
 /-- Compares `o` and `n` at `p` (a `node` of the schema grammar), resolving
@@ -509,7 +533,9 @@ partial def go (os ns : Side) (chain : List (Pointer × J × J)) (node : Node) (
   -- is inlined as it was before #181 and compared as plain JSON, at this
   -- owner, where `locate` rates everything Review.
   if outsideGrammar node then
-    rawCmp node p (canonOutside p (os.inline [] o)) (canonOutside p (ns.inline [] n))
+    match node, o, n with
+    | .set _, .arr xs, .arr ys => setCmp os ns p xs ys
+    | _, _, _ => rawCmp node p (canonOutside p (os.inline [] o)) (canonOutside p (ns.inline [] n))
     return
   let ro := if node == .schema then os.declRef? o else none
   let rn := if node == .schema then ns.declRef? n else none
@@ -995,6 +1021,15 @@ private def oas3 (comps : List (String × J)) (resp : J) : J :=
     && check (obj1 "if" (ref "P")) ["if", "type"]
     && check (obj1 "prefixItems" (.arr [ref "P"])) ["prefixItems", "0", "type"]
     && check (obj1 "$defs" (obj1 "d" (obj1 "not" (ref "P")))) ["$defs", "d", "not", "type"]
+
+-- A set member holding a reference: membership by the written member, the
+-- component's change inside it, Review (not an enum member removed).
+#guard
+  let r := .obj [("type", .str "object"), ("enum", .arr [ref "P"])]
+  let g := grouped (oas3 [("P", obj1 "type" (.str "string"))] r)
+    (oas3 [("P", obj1 "type" (.str "integer"))] r)
+  g.length == 1 && g[0]!.ptr.length == 3 && g[0]!.ptr.getLast? == some "type"
+    && g[0]!.severity == .review
 
 -- An inlined self-reference stops at the component already on the chain.
 #guard

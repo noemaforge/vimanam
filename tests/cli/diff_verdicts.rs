@@ -265,3 +265,68 @@ fn a_self_referencing_component_under_default_terminates() {
         ]
     );
 }
+
+/// `P` going from `string` to `integer` under `schema`, used as the request
+/// body (`request`) or the response.
+fn outside_at(schema: Value, request: bool) -> (Vec<(String, String, Option<String>)>, i32) {
+    let side = |p: &str| {
+        let comps = json!({"P": {"type": p}});
+        if request {
+            spec(schema.clone(), object(), comps)
+        } else {
+            spec(object(), schema.clone(), comps)
+        }
+    };
+    diff_records(&side("string"), &side("integer"))
+}
+
+const MEMBER: &str = r##"/enum/{"$ref":"#~1components~1schemas~1P"}/type"##;
+
+#[test]
+fn an_enum_member_holding_a_component_is_reviewed_not_a_member_change() {
+    // An `enum` member is a value: the set still holds the same member, and
+    // the referenced component's change is reported inside it, Review, in
+    // either direction (it used to be a member removed plus one added,
+    // Breaking for a request).
+    for request in [true, false] {
+        let (records, code) = outside_at(json!({"type": "object", "enum": ["x", r("P")]}), request);
+        assert_eq!(code, 0, "{records:?}");
+        assert_eq!(records, [(MEMBER.to_string(), "review".to_string(), None)]);
+    }
+}
+
+#[test]
+fn an_enum_member_added_or_removed_keeps_its_set_verdict() {
+    let old = spec(
+        json!({"enum": ["x", r("P")]}),
+        object(),
+        json!({"P": {"type": "string"}}),
+    );
+    let new = spec(
+        json!({"enum": ["x"]}),
+        object(),
+        json!({"P": {"type": "string"}}),
+    );
+    let (records, code) = diff_records(&old, &new);
+    assert_eq!(code, 3, "{records:?}");
+    assert_eq!(
+        records,
+        [(
+            r##"/enum/{"$ref":"#~1components~1schemas~1P"}"##.to_string(),
+            "breaking".to_string(),
+            None
+        )]
+    );
+}
+
+#[test]
+fn a_component_under_const_is_inlined_and_reviewed() {
+    for request in [true, false] {
+        let (records, code) = outside_at(json!({"type": "object", "const": r("P")}), request);
+        assert_eq!(code, 0, "{records:?}");
+        assert_eq!(
+            records,
+            [("/const/type".to_string(), "review".to_string(), None)]
+        );
+    }
+}

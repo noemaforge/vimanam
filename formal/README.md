@@ -372,9 +372,9 @@ A "schema position" is one of the grammar `diff_values` walks (`Node` in
 members, `if`/`then`/`else`, `prefixItems`, tuple `items`, `$defs`,
 `dependentSchemas`, `propertyNames`, `contains`, unknown keywords, ...), a
 `$ref` is not a schema use the table can rate: some of these are values
-(`default`), and the rest are applicators whose effect is not "the value must
-match" in the direction the table assumes. So no hop is made there. Each
-side is **inlined** in full (`Side.inline`, `DocResolver::inline`): every
+(`default`, `const`, set members), and the rest are applicators whose effect
+is not "the value must match" in the direction the table assumes. So no hop
+is made there. Each side is **inlined** in full (`Side.inline`, `DocResolver::inline`): every
 reference to a declared component is replaced by the component as
 deserialised (not canonicalised) with its siblings merged over it,
 recursively, leaving the object as written where its component is already on
@@ -384,7 +384,21 @@ the current owner (`rawCmp`). Beneath `$defs`/`definitions`, which
 canonicalised (`canonOutside`). `locate` rates every such change Review.
 This is what diffing before #182 reported (Review at `/default/type`,
 `/if/type`, `/prefixItems/0/type`, `/$defs/d/not/type`), and the
-`refdiff/cases/r4-ref-*` cases pin it. A component reached this way and also
+`refdiff/cases/r4-ref-*` and `r6-ref-const` cases pin it.
+
+A `required`/`enum` set directly under a schema (`Node.set`) is the one place
+the table rates members, so it is handled apart (`setCmp`,
+`PairResolver::set_members`): membership is decided on the members as
+written (added or removed whole, rated by the set rules as before), and a
+member written the same on both sides that holds a reference is inlined per
+side and compared *inside* the member, at `/enum/<member>/...`, which `locate`
+rates Review. Before #182 the inlined members were compared as set members,
+so a component change behind an `enum` member was a member removed plus one
+added (Breaking for a request); that read the reference as part of the value
+and the value as changed. Whether such a member should instead be the
+literal object `{"$ref": ...}` (JSON Schema's reading, which would report
+nothing) is open; Review keeps the change visible without gating on it.
+`r6-ref-enum` pins it. A component reached this way and also
 through the grammar gets its own records there, with the table's verdict.
 `prefixItems` is a real JSON Schema 2020-12 subschema list, but the table has
 no rule for tuple positions, so it stays Review rather than borrowing the
@@ -492,9 +506,28 @@ inject (optionally under another owner) or re-rate records on the cases in
 every one through the allowlist (each case first passes with the unmodified
 binary). Each tightening of the Q1 rule (use reach of a loop named by a
 value, use reach of a pure-alias owner, the structural check) has a check
-that fails when that tightening alone is reverted. The `g*` cases put
+that fails when that tightening alone is reverted (`q1e`, `q1b` with
+`OWNER`, `q1d` respectively). Use reach follows references outside
+annotations of schema objects, as both sides do. The `g*` cases put
 components outside the grammar (#186): dropping or re-rating a record there,
 or a grammar record of a component also inlined there, must fail.
+
+Known limits of inlining (each matches the resolver before #182):
+
+* A chain of more than 64 references under `default` (or anywhere outside
+  the grammar) is cut at the limit on both sides alike, so a change past it
+  is not reported (exit 0, no record).
+* Canonicalisation does not reach applicators such as `if` or
+  `dependentSchemas`, so an annotation or ordering edit inside a component
+  inlined there is a Review record, not nothing.
+* A reference retargeted outside the grammar (`if: {$ref: P}` to
+  `if: {$ref: Q}`) gets no `/$ref` retarget fact; the inlined contents are
+  compared, so differently shaped targets give Review records and
+  identically shaped ones give none.
+* Under `$defs`/`definitions` the reached schemas are canonicalised
+  (annotations dropped, `required`/`enum` sorted, as `canonicalize_schema`
+  does) but compared by index, not as sets; `canon` sorts them too, so a
+  reordering is no change on either side (`r6-defs-*`).
 
 A `required`/`enum` member is addressed by its compact JSON text, so an
 inlined object member is written in each side's own key order (`Lean.Json`

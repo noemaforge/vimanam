@@ -509,10 +509,47 @@ def ref_name(r) -> str | None:
     return None
 
 
+# `Node.child` (formal/VimanamProofs/Severity.lean): the schema grammar.
+def node_child(node: str, key: str) -> str:
+    if node == "schema":
+        if key in ("properties", "patternProperties"):
+            return "pmap"
+        if key in ("allOf", "oneOf", "anyOf"):
+            return "slist"
+        if key in ("items", "additionalProperties", "not"):
+            return "schema"
+        if key in ("required", "enum"):
+            return "set"
+        return "opaq"
+    if node in ("pmap", "slist"):
+        return "schema"
+    return "opaq"
+
+
+ANNOTATIONS = ("description", "title", "example", "examples", "deprecated")
+
+
+def schema_refs(v, node: str = "schema"):
+    """Every component name `v` references, except under an annotation
+    (`x-*`, `example`, ...) of a schema object, which neither side follows
+    or inlines (canonicalisation drops it)."""
+    if isinstance(v, dict):
+        r = ref_name(v.get("$ref"))
+        if r is not None:
+            yield r
+        for k, c in v.items():
+            if k == "$ref" or (node == "schema" and (k.startswith("x-") or k in ANNOTATIONS)):
+                continue
+            yield from schema_refs(c, node_child(node, k))
+    elif isinstance(v, list):
+        for i, c in enumerate(v):
+            yield from schema_refs(c, node_child(node, str(i)))
+
+
 class Reaches:
     """Every component each use reaches on each side, through any reference
-    anywhere (the Q1 check's notion of "the use reaches it"), from the
-    model's export of the use schemas and components."""
+    outside annotations (the Q1 check's notion of "the use reaches it"),
+    from the model's export of the use schemas and components."""
 
     def __init__(self, m: dict):
         self.by_use: dict[str, dict[str, set[str]]] = {}
@@ -523,13 +560,13 @@ class Reaches:
     @staticmethod
     def _side(schema, comps: dict) -> set[str]:
         seen: set[str] = set()
-        stack = [r for r in component_refs(schema) if r in comps]
+        stack = [r for r in schema_refs(schema) if r in comps]
         while stack:
             n = stack.pop()
             if n in seen:
                 continue
             seen.add(n)
-            stack.extend(r for r in component_refs(comps[n]) if r in comps)
+            stack.extend(r for r in schema_refs(comps[n]) if r in comps)
         return seen
 
     def reaches(self, use: str, side: str) -> set[str]:
