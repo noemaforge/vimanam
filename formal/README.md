@@ -28,7 +28,8 @@ python3 -I scripts/formal/check-model-drift.py
 
 | Path | What it is |
 | --- | --- |
-| `VimanamProofs/Severity.lean` | The model: `severity`, the request and response schema tables, `became`, and the pointer grammar (`Node`, `locate`, `under_not`). The direction theorems. |
+| `VimanamProofs/Severity.lean` | The table encoding only: `severity`, the request and response schema tables, `became`, and the pointer grammar (`Node`, `locate`, `under_not`). Re-reading the Rust touches this file. |
+| `VimanamProofs/Direction.lean` | The specification (`effect`, `noop`) and the direction theorems over `Severity.lean`. Reads no Rust of its own. |
 | `VimanamProofs/EnumReport.lean` | What `diff_values` reports for an `enum` keyword, and the direction theorems for the verdicts it then gets. |
 | `VimanamProofs/History.lean` | The pre-#175 tables and reporting, and the findings they violate. Reads no current Rust. |
 | `VimanamProofs/Audit.lean` | `#print axioms` for every theorem. |
@@ -62,7 +63,7 @@ to pointers through `locate` and `under_not`; nothing uses `native_decide`.
 
 ## What is proved
 
-`Severity.lean` (`diff::severity`, `request_schema_severity`,
+`Direction.lean`, over the table in `Severity.lean` (`diff::severity`, `request_schema_severity`,
 `response_schema_severity`, `locate`, `under_not`):
 
 | Theorem | Rust behaviour |
@@ -143,8 +144,8 @@ Against the current Rust (open, not fixed in this change):
 
 ## Keeping the models in step with the Rust
 
-`models.toml` lists, for each model file except `Audit.lean` and
-`History.lean`, the Rust items it reads (`src/diff/mod.rs#severity`, ...) and
+`models.toml` lists, for each model file except `Audit.lean`,
+`Direction.lean` and `History.lean`, the Rust items it reads (`src/diff/mod.rs#severity`, ...) and
 `read_digest`, a SHA-256 over those items with comments, `#[cfg(test)]` code
 and whitespace normalised away.
 `scripts/formal/check-model-drift.py` recomputes it; the `model-drift`
@@ -190,6 +191,17 @@ with `--wfail`, rejects `sorry` and `admit`, runs the axiom audit
 (`scripts/formal/check-axiom-audit.sh`: every theorem has a `#print axioms`
 line, every answer names only `propext`, `Quot.sound`, `Classical.choice`)
 and checks the oracle vectors. Actions are pinned to commit SHAs.
+
+## After #182
+
+noemaforge/vimanam#182 (#181) adds `ChangeKind::ComponentSchemaChanged`,
+which `severity` dispatches by usage direction to the same two schema tables.
+That changes `ChangeKind` and `severity`, so the drift check flags
+`Severity.lean`. The re-read is: add the variant (with its direction) to
+`Change` and `severity` in `Severity.lean`, extend the oracle's replay and
+structural cases, regenerate the vectors, bump the digest, and add a
+theorem that a component change gets the request or response verdict of its
+direction. `Direction.lean` should not need to change.
 
 ## Next candidates
 

@@ -3,7 +3,7 @@
 
 Not a model of current Rust (so it has no entry in `formal/models.toml`): the
 rule tables and enum reporting as they were before #175, stated in the same
-terms as `Severity.lean`, and the guarantees of that file that they violate.
+terms as `Severity.lean`, and the guarantees of `Direction.lean` they violate.
 Each theorem here is a real bug, kept as a finding:
 
 * #169: `response_schema_severity` at `bd051f8^` rated a response `enum`

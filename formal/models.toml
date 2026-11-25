@@ -5,7 +5,8 @@
 # bumped. See formal/README.md, "Keeping the models in step with the Rust".
 #
 # One [[model]] per .lean file under formal/VimanamProofs/ other than
-# Audit.lean and History.lean (which read no current Rust):
+# Audit.lean, Direction.lean (the theorems over Severity.lean) and
+# History.lean, which read no Rust of their own:
 #
 #   lean          the model file, from the repository root.
 #   read_against  the commit the model was last read against (for people).

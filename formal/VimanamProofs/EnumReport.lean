@@ -25,7 +25,7 @@ One `enum` keyword at the schema root, with no other keyword changing. Nested
 positions follow from `locate` and are not restated. Duplicate members are
 outside the model (canonicalisation keeps them; the oracle generates none).
 -/
-import VimanamProofs.Severity
+import VimanamProofs.Direction
 
 namespace Vimanam.EnumReport
 

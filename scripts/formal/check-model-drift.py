@@ -40,8 +40,9 @@ SCHEME = "v1"
 ROOT = Path(__file__).resolve().parents[2]
 MANIFEST = ROOT / "formal" / "models.toml"
 MODELS_DIR = ROOT / "formal" / "VimanamProofs"
-# Model files that read no current Rust: the audit and the history layer.
-EXEMPT = {"Audit.lean", "History.lean"}
+# Model files that read no Rust of their own: the audit, the theorems over
+# Severity.lean, and the history layer.
+EXEMPT = {"Audit.lean", "Direction.lean", "History.lean"}
 DIGEST_RE = re.compile(r"^v(\d+):sha256:[0-9a-f]{64}$")
 ITEM_KINDS = r"(?:fn|enum|struct|trait|type|const|static|mod|union)"
 
