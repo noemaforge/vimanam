@@ -9,14 +9,23 @@
 //! # What is compared
 //!
 //! Endpoints are matched by `(METHOD, path)`, parameters by `(name, in)` and
-//! responses by status code. Request and response bodies are compared as
-//! **resolved** schemas: every `$ref` is inlined
-//! (`resolve_schema_value`) and the result canonicalised
-//! (`canonicalize_schema_value`) before a generic JSON differ
-//! (`diff_values`) reports field-level changes as JSON pointers. That is what
-//! makes a change behind a shared component visible: an operation whose object
-//! is byte-identical in both specs still reports "response schema changed" when
-//! the `Widget` it points at gained a required property.
+//! responses by status code. Parameter, request and response schemas are
+//! canonicalised (`canonicalize_schema_value`) and compared by a generic JSON
+//! differ (`diff_values`) that reports field-level changes as JSON pointers.
+//!
+//! `$ref` targets are compared as **edges** (#181, the `components` module):
+//! where both sides of a schema reference a component at the same position,
+//! that `(old component, new component)` pair is compared once for the whole
+//! diff instead of being inlined at every position that reaches it, and a
+//! change inside it is one [`ChangeKind::ComponentSchemaChanged`] per usage
+//! direction, listing every parameter, body and response that reaches the
+//! pair. So an operation whose object is byte-identical in both specs is still
+//! listed when the `Widget` it points at gained a required property, and a
+//! change under a densely cross-linked graph is reported once rather than once
+//! per reference path. A reference met by an inline object on the other side
+//! is expanded in place, so moving a schema between inline and referenced form
+//! is an ordinary change of that operation; a schema without references is
+//! compared exactly as before.
 //!
 //! Only a response's first media type is compared (the same one the renderer
 //! documents, see `response_schema`), and only the first request-body media
@@ -41,10 +50,12 @@
 //!
 //! Changes are emitted in old-spec order (old endpoints first, then endpoints
 //! only the new spec has, each in its spec's order; a moved operation sits at
-//! its old position) and the canonical schema
+//! its old position), then the shared-component changes in old-spec component
+//! order (then new-only components), and the canonical schema
 //! values have sorted keys, so the same pair of specs always produces
 //! byte-identical output.
 
+mod components;
 pub mod json;
 mod render;
 mod value;
@@ -63,8 +74,8 @@ use crate::markdown::{estimate_tokens, generate_markdown, response_schema};
 use crate::models::{ApiDocumentation, DocConfig, Endpoint, Parameter};
 use crate::report;
 pub use crate::report::EndpointRef;
-use crate::resolve::{DocResolver, PairResolver};
-use crate::utils::canonicalize_schema_value;
+use crate::resolve::{PairResolver, schema_json};
+use components::Components;
 
 use render::required_member_pointer;
 
@@ -196,6 +207,104 @@ pub enum ChangeKind {
         /// The field-level change in the resolved, canonicalized schema.
         change: ValueChange,
     },
+    /// A field-level change inside a shared component (a `$ref` target),
+    /// reported once per usage direction instead of once per operation or
+    /// reference path (#181). The change's `endpoint` is the first entry of
+    /// `uses`; identity is the component, the pointer and the direction.
+    ComponentSchemaChanged {
+        /// The old and new component compared (the same name unless a
+        /// reference was retargeted).
+        component: ComponentRef,
+        /// Whether `uses` send (request) or receive (response) the
+        /// component; it selects the severity rule table.
+        direction: Direction,
+        /// The field-level change; its pointer is relative to the component.
+        change: ValueChange,
+        /// Every parameter, request body or response of this direction that
+        /// reaches the component, directly or through other components, in
+        /// report order.
+        uses: Vec<SchemaUse>,
+    },
+}
+
+/// The pair of components a shared-component change was found in: each
+/// `(old, new)` pair of `$ref` targets is compared once.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct ComponentRef {
+    /// Component name in the old spec (`#/components/schemas/<old>` or
+    /// `#/definitions/<old>`, decoded).
+    pub old: String,
+    /// Component name in the new spec.
+    pub new: String,
+}
+
+impl ComponentRef {
+    /// Whether a reference was retargeted to a differently named component.
+    pub fn renamed(&self) -> bool {
+        self.old != self.new
+    }
+}
+
+/// Whether a schema use is sent by the client or returned to it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Direction {
+    /// Parameters and request bodies: the request rule table.
+    Request,
+    /// Responses: the response rule table.
+    Response,
+}
+
+impl Direction {
+    /// Stable lowercase name used in JSON details.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Direction::Request => "request",
+            Direction::Response => "response",
+        }
+    }
+}
+
+/// One operation schema that reaches a shared component.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct SchemaUse {
+    /// The operation, attributed like its other changes (the new endpoint of
+    /// a moved operation).
+    pub endpoint: EndpointRef,
+    /// Which schema of the operation.
+    pub location: UseLocation,
+}
+
+/// Where in an operation a schema sits.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum UseLocation {
+    /// A non-body parameter.
+    Parameter {
+        /// The declared name.
+        name: String,
+        /// Parameter location such as `path`, `query` or `header`.
+        location: String,
+    },
+    /// The (first) request body, under its synthetic body-parameter name.
+    RequestBody {
+        /// The body parameter's name.
+        name: String,
+    },
+    /// The first media type schema of one response.
+    Response {
+        /// Response status code exactly as declared, including `default`.
+        status: String,
+    },
+}
+
+impl UseLocation {
+    /// Request for parameters and bodies, response for responses.
+    pub fn direction(&self) -> Direction {
+        match self {
+            UseLocation::Parameter { .. } | UseLocation::RequestBody { .. } => Direction::Request,
+            UseLocation::Response { .. } => Direction::Response,
+        }
+    }
 }
 
 /// How [`diff_with`] pairs operations across the two specs.
@@ -270,7 +379,7 @@ impl SpecDiff {
     }
 
     /// Endpoints present in both specs (including moved ones) with at least
-    /// one change.
+    /// one change, counting every use of a changed shared component.
     pub fn endpoints_changed(&self) -> usize {
         self.changes
             .iter()
@@ -280,7 +389,12 @@ impl SpecDiff {
                     ChangeKind::EndpointAdded | ChangeKind::EndpointRemoved { .. }
                 )
             })
-            .map(|change| &change.endpoint)
+            .flat_map(|change| match &change.kind {
+                ChangeKind::ComponentSchemaChanged { uses, .. } => {
+                    uses.iter().map(|use_| &use_.endpoint).collect()
+                }
+                _ => vec![&change.endpoint],
+            })
             .collect::<IndexSet<_>>()
             .len()
     }
@@ -362,6 +476,24 @@ impl SpecDiff {
 ///
 /// When a property is removed, the companion "removed from `required`" row for
 /// the same property is not reported at all (see `value_changes`).
+///
+/// Shared components (`$ref` targets, #181) are compared once per `(old, new)`
+/// component pair, and a change inside one is reported once per **usage
+/// direction** that reaches it ([`ChangeKind::ComponentSchemaChanged`]), with
+/// the reaching uses listed:
+///
+/// | Component reached from | Records | Severity |
+/// |---|---|---|
+/// | parameters or request bodies only | one, `request` | the request table |
+/// | responses only | one, `response` | the response table |
+/// | both | two, `request` then `response` | each its own table |
+///
+/// So a narrowed `enum` on a component shared by a request and a response is
+/// a breaking request record plus a non-breaking response record, and
+/// `--fail-on-breaking` fires whenever any usage is breaking. The `not` and
+/// whole-`enum` rows apply to component pointers exactly as above. A
+/// component declared on one side only is compared against the literal
+/// `{"$ref": ...}` the other side leaves unresolved, as before.
 pub fn severity(change: &Change) -> Severity {
     match &change.kind {
         ChangeKind::EndpointAdded => Severity::NonBreaking,
@@ -393,6 +525,12 @@ pub fn severity(change: &Change) -> Severity {
         ChangeKind::OperationIdChanged { .. } => Severity::Breaking,
         ChangeKind::DeprecatedChanged { .. } => Severity::NonBreaking,
         ChangeKind::ResponseSchemaChanged { change, .. } => response_schema_severity(change),
+        ChangeKind::ComponentSchemaChanged {
+            direction, change, ..
+        } => match direction {
+            Direction::Request => request_schema_severity(change),
+            Direction::Response => response_schema_severity(change),
+        },
     }
 }
 
@@ -502,6 +640,7 @@ pub(crate) fn diff_with_resolver(
     resolver: &PairResolver,
 ) -> SpecDiff {
     let mut changes = Vec::new();
+    let mut components = Components::new(resolver);
 
     // Lookup tables only; iteration always follows the endpoint vectors so the
     // report order never depends on hashing.
@@ -524,7 +663,7 @@ pub(crate) fn diff_with_resolver(
     for (index, old_endpoint) in old.endpoints.iter().enumerate() {
         let key = (old_endpoint.method.as_str(), old_endpoint.path.as_str());
         if let Some(new_endpoint) = new_by_key.get(&key) {
-            diff_endpoint(old_endpoint, new_endpoint, resolver, &mut changes);
+            diff_endpoint(old_endpoint, new_endpoint, &mut components, &mut changes);
         } else if let Some(pair) = moved_from[index] {
             let new_endpoint = &new.endpoints[pair.new];
             changes.push(Change {
@@ -536,7 +675,7 @@ pub(crate) fn diff_with_resolver(
                     new_operation_id: new_endpoint.operation_id.clone(),
                 },
             });
-            diff_endpoint(old_endpoint, new_endpoint, resolver, &mut changes);
+            diff_endpoint(old_endpoint, new_endpoint, &mut components, &mut changes);
         } else {
             changes.push(Change {
                 endpoint: EndpointRef::from(old_endpoint),
@@ -561,6 +700,7 @@ pub(crate) fn diff_with_resolver(
             });
         }
     }
+    changes.extend(components.finish());
 
     SpecDiff {
         old_title: old.title.clone(),
@@ -681,7 +821,7 @@ fn version_normalized_path(path: &str) -> Option<String> {
 fn diff_endpoint(
     old_endpoint: &Endpoint,
     new_endpoint: &Endpoint,
-    resolver: &PairResolver,
+    components: &mut Components,
     changes: &mut Vec<Change>,
 ) {
     // Attributed to the new endpoint: identical to the old one for an exact
@@ -707,9 +847,9 @@ fn diff_endpoint(
         });
     }
 
-    diff_parameters(&endpoint, old_endpoint, new_endpoint, resolver, changes);
-    diff_request_body(&endpoint, old_endpoint, new_endpoint, resolver, changes);
-    diff_responses(&endpoint, old_endpoint, new_endpoint, resolver, changes);
+    diff_parameters(&endpoint, old_endpoint, new_endpoint, components, changes);
+    diff_request_body(&endpoint, old_endpoint, new_endpoint, components, changes);
+    diff_responses(&endpoint, old_endpoint, new_endpoint, components, changes);
 }
 
 fn is_body(parameter: &Parameter) -> bool {
@@ -724,7 +864,7 @@ fn diff_parameters(
     endpoint: &EndpointRef,
     old_endpoint: &Endpoint,
     new_endpoint: &Endpoint,
-    resolver: &PairResolver,
+    components: &mut Components,
     changes: &mut Vec<Change>,
 ) {
     let old_params: Vec<&Parameter> = old_endpoint
@@ -742,7 +882,7 @@ fn diff_parameters(
     for old_param in &old_params {
         match find_parameter(&new_params, old_param) {
             Some(new_param) => {
-                diff_parameter_pair(endpoint, old_param, new_param, resolver, changes)
+                diff_parameter_pair(endpoint, old_param, new_param, components, changes)
             }
             None => removed.push(old_param),
         }
@@ -780,7 +920,7 @@ fn diff_parameters(
                     new_location: new_param.parameter_in.clone(),
                 },
             });
-            diff_parameter_pair(endpoint, old_param, new_param, resolver, changes);
+            diff_parameter_pair(endpoint, old_param, new_param, components, changes);
         } else {
             changes.push(Change {
                 endpoint: endpoint.clone(),
@@ -820,7 +960,7 @@ fn diff_parameter_pair(
     endpoint: &EndpointRef,
     old_param: &Parameter,
     new_param: &Parameter,
-    resolver: &PairResolver,
+    components: &mut Components,
     changes: &mut Vec<Change>,
 ) {
     let old_required = old_param.required.unwrap_or(false);
@@ -838,21 +978,25 @@ fn diff_parameter_pair(
 
     let (old_schema, new_schema) = match (&old_param.schema, &new_param.schema) {
         (Some(old_schema), Some(new_schema)) => {
-            let Some((mut old_schema, mut new_schema)) =
-                resolver.resolve_pair(old_schema, new_schema)
-            else {
+            let (old_schema, new_schema) = (schema_json(old_schema), schema_json(new_schema));
+            if components.resolver().values_equal(&old_schema, &new_schema) {
                 return;
-            };
-            canonicalize_schema_value(&mut old_schema);
-            canonicalize_schema_value(&mut new_schema);
+            }
             (old_schema, new_schema)
         }
         _ => (
-            parameter_schema_value(old_param, &resolver.old),
-            parameter_schema_value(new_param, &resolver.new),
+            parameter_schema_json(old_param),
+            parameter_schema_json(new_param),
         ),
     };
-    for change in value_changes(&old_schema, &new_schema) {
+    let use_ = SchemaUse {
+        endpoint: endpoint.clone(),
+        location: UseLocation::Parameter {
+            name: new_param.name.clone(),
+            location: new_param.parameter_in.clone(),
+        },
+    };
+    for change in components.compare(use_, &old_schema, &new_schema) {
         changes.push(Change {
             endpoint: endpoint.clone(),
             kind: ChangeKind::ParameterSchemaChanged {
@@ -864,12 +1008,13 @@ fn diff_parameter_pair(
     }
 }
 
-/// The canonical type of a parameter: its resolved `schema` (OpenAPI 3), or
-/// for a Swagger 2 non-body parameter the inline `type`/`format`/`items`/`enum`
-/// keywords, which the model keeps in `extensions`. `Null` when it has neither.
-fn parameter_schema_value(parameter: &Parameter, resolver: &DocResolver) -> Value {
-    let mut value = match &parameter.schema {
-        Some(schema) => resolver.resolve(schema),
+/// The serialized type of a parameter: its `schema` (OpenAPI 3), or for a
+/// Swagger 2 non-body parameter the inline `type`/`format`/`items`/`enum`
+/// keywords, which the model keeps in `extensions`. `Null` when it has
+/// neither. References are compared as edges by [`Components::compare`].
+fn parameter_schema_json(parameter: &Parameter) -> Value {
+    match &parameter.schema {
+        Some(schema) => schema_json(schema),
         None => {
             let mut inline = serde_json::Map::new();
             for key in ["type", "format", "items", "enum"] {
@@ -883,46 +1028,26 @@ fn parameter_schema_value(parameter: &Parameter, resolver: &DocResolver) -> Valu
                 Value::Object(inline)
             }
         }
-    };
-    canonicalize_schema_value(&mut value);
-    value
-}
-
-/// The canonical resolved form of an optional schema; `Null` when absent.
-fn optional_schema_value(schema: Option<&crate::models::Schema>, resolver: &DocResolver) -> Value {
-    match schema {
-        Some(schema) => {
-            let mut value = resolver.resolve(schema);
-            canonicalize_schema_value(&mut value);
-            value
-        }
-        None => Value::Null,
     }
 }
 
-/// The changes between two optional schemas, each resolved against its own
-/// document; empty without resolving anything when they provably resolve to
+/// The local changes between two optional schemas of one use (`Null` when
+/// absent); empty without comparing anything when they provably resolve to
 /// the same value.
 fn schema_changes(
+    use_: SchemaUse,
     old: Option<&crate::models::Schema>,
     new: Option<&crate::models::Schema>,
-    resolver: &PairResolver,
+    components: &mut Components,
 ) -> Vec<ValueChange> {
-    let (old, new) = match (old, new) {
-        (Some(old), Some(new)) => {
-            let Some((mut old, mut new)) = resolver.resolve_pair(old, new) else {
-                return Vec::new();
-            };
-            canonicalize_schema_value(&mut old);
-            canonicalize_schema_value(&mut new);
-            (old, new)
-        }
-        (old, new) => (
-            optional_schema_value(old, &resolver.old),
-            optional_schema_value(new, &resolver.new),
-        ),
-    };
-    value_changes(&old, &new)
+    let (old, new) = (
+        old.map_or(Value::Null, schema_json),
+        new.map_or(Value::Null, schema_json),
+    );
+    if !old.is_null() && !new.is_null() && components.resolver().values_equal(&old, &new) {
+        return Vec::new();
+    }
+    components.compare(use_, &old, &new)
 }
 
 /// All differences between two canonical schemas, minus the redundant
@@ -958,7 +1083,7 @@ fn diff_request_body(
     endpoint: &EndpointRef,
     old_endpoint: &Endpoint,
     new_endpoint: &Endpoint,
-    resolver: &PairResolver,
+    components: &mut Components,
     changes: &mut Vec<Change>,
 ) {
     let old_body = old_endpoint.parameters.iter().find(|p| is_body(p));
@@ -995,9 +1120,18 @@ fn diff_request_body(
                 });
             }
 
-            for change in
-                schema_changes(old_body.schema.as_ref(), new_body.schema.as_ref(), resolver)
-            {
+            let use_ = SchemaUse {
+                endpoint: endpoint.clone(),
+                location: UseLocation::RequestBody {
+                    name: new_body.name.clone(),
+                },
+            };
+            for change in schema_changes(
+                use_,
+                old_body.schema.as_ref(),
+                new_body.schema.as_ref(),
+                components,
+            ) {
                 changes.push(Change {
                     endpoint: endpoint.clone(),
                     kind: ChangeKind::RequestSchemaChanged { change },
@@ -1013,7 +1147,7 @@ fn diff_responses(
     endpoint: &EndpointRef,
     old_endpoint: &Endpoint,
     new_endpoint: &Endpoint,
-    resolver: &PairResolver,
+    components: &mut Components,
     changes: &mut Vec<Change>,
 ) {
     for (status, old_response) in &old_endpoint.responses {
@@ -1029,7 +1163,13 @@ fn diff_responses(
 
         let old_schema = response_schema(old_response);
         let new_schema = response_schema(new_response);
-        for change in schema_changes(old_schema, new_schema, resolver) {
+        let use_ = SchemaUse {
+            endpoint: endpoint.clone(),
+            location: UseLocation::Response {
+                status: status.clone(),
+            },
+        };
+        for change in schema_changes(use_, old_schema, new_schema, components) {
             changes.push(Change {
                 endpoint: endpoint.clone(),
                 kind: ChangeKind::ResponseSchemaChanged {
@@ -1143,6 +1283,25 @@ pub(crate) mod test_support {
         }))
     }
 
+    /// The severity of `change` inside a shared component reached in
+    /// `direction`.
+    pub(crate) fn component(direction: Direction, change: ValueChange) -> Severity {
+        severity(&self::change(ChangeKind::ComponentSchemaChanged {
+            component: ComponentRef {
+                old: "Widget".into(),
+                new: "Widget".into(),
+            },
+            direction,
+            change,
+            uses: vec![SchemaUse {
+                endpoint: endpoint(),
+                location: UseLocation::Response {
+                    status: "200".into(),
+                },
+            }],
+        }))
+    }
+
     pub(crate) fn parameter(change: ValueChange) -> Severity {
         severity(&self::change(ChangeKind::ParameterSchemaChanged {
             name: "limit".into(),
@@ -1156,7 +1315,7 @@ pub(crate) mod test_support {
 mod tests {
     use super::*;
     use crate::diff::test_support::{
-        added, change, changed, parameter, removed, request, response,
+        added, change, changed, component, parameter, removed, request, response,
     };
     use serde_json::json;
 
@@ -1686,5 +1845,255 @@ mod tests {
         );
         assert_eq!(response(added("/allOf/1", json!({}))), Severity::Review);
         assert_eq!(response(added("/minimum", json!(1))), Severity::Review);
+    }
+
+    // ── severity: shared component rows (#181) ───────────────────────────
+
+    #[test]
+    fn severity_component_rows_follow_the_usage_direction() {
+        use Direction::{Request, Response};
+        let rows = [
+            // (change, request verdict, response verdict)
+            (
+                removed("/properties/s/enum/a", json!("a")),
+                Severity::Breaking,
+                Severity::NonBreaking,
+            ),
+            (
+                added("/properties/s/enum/z", json!("z")),
+                Severity::NonBreaking,
+                Severity::Review,
+            ),
+            // Whole `enum` keyword, by direction.
+            (
+                removed("/properties/s/enum", json!(["a"])),
+                Severity::NonBreaking,
+                Severity::Review,
+            ),
+            (
+                added("/properties/s/enum", json!(["a"])),
+                Severity::Breaking,
+                Severity::NonBreaking,
+            ),
+            // `not` reverses direction: review either way.
+            (
+                removed("/properties/s/not/enum/a", json!("a")),
+                Severity::Review,
+                Severity::Review,
+            ),
+            (
+                added("/properties/a/nullable", json!(true)),
+                Severity::NonBreaking,
+                Severity::Breaking,
+            ),
+            (
+                added("/required/x", json!("x")),
+                Severity::Breaking,
+                Severity::NonBreaking,
+            ),
+            (
+                removed("/properties/x", json!({})),
+                Severity::Breaking,
+                Severity::Breaking,
+            ),
+            (
+                changed("/format", json!("int32"), json!("int64")),
+                Severity::Review,
+                Severity::Review,
+            ),
+            // A schema that went away entirely.
+            (
+                changed("", json!({"type": "object"}), Value::Null),
+                Severity::Review,
+                Severity::Breaking,
+            ),
+        ];
+        for (value, on_request, on_response) in rows {
+            assert_eq!(component(Request, value.clone()), on_request, "{value:?}");
+            assert_eq!(component(Response, value.clone()), on_response, "{value:?}");
+            // Exactly the tables an operation's own schema uses.
+            assert_eq!(component(Request, value.clone()), request(value.clone()));
+            assert_eq!(component(Response, value.clone()), response(value));
+        }
+    }
+
+    fn component_doc(schemas: Value, paths: Value) -> ApiDocumentation {
+        let spec = json!({
+            "openapi": "3.0.3",
+            "info": {"title": "T", "version": "1"},
+            "paths": paths,
+            "components": {"schemas": schemas}
+        });
+        crate::parse_openapi_bytes(&serde_json::to_vec(&spec).unwrap(), "json", None).unwrap()
+    }
+
+    fn body(schema: Value) -> Value {
+        json!({"content": {"application/json": {"schema": schema}}})
+    }
+
+    fn ok(schema: Value) -> Value {
+        json!({"200": {"description": "ok", "content": {"application/json": {"schema": schema}}}})
+    }
+
+    #[test]
+    fn a_component_shared_by_request_and_response_reports_each_direction_once() {
+        let r = |name: &str| json!({"$ref": format!("#/components/schemas/{name}")});
+        let paths = json!({
+            "/a": {"post": {"requestBody": body(r("Wrap")), "responses": ok(r("Status"))}},
+            "/b": {"get": {"responses": ok(json!({"type": "array", "items": r("Wrap")}))}},
+            "/c": {"get": {"parameters": [{"name": "s", "in": "query", "schema": r("Status")}],
+                           "responses": ok(json!({"type": "string"}))}}
+        });
+        let schemas = |values: Value| {
+            json!({
+                "Wrap": {"type": "object", "properties": {"status": r("Status"), "self": r("Wrap")}},
+                "Status": {"type": "string", "enum": values}
+            })
+        };
+        let old = component_doc(schemas(json!(["a", "b"])), paths.clone());
+        let new = component_doc(schemas(json!(["a"])), paths);
+        let result = diff(&old, &new);
+        let rows: Vec<(Direction, Severity, usize)> = result
+            .changes
+            .iter()
+            .map(|change| match &change.kind {
+                ChangeKind::ComponentSchemaChanged {
+                    component,
+                    direction,
+                    change: value,
+                    uses,
+                } => {
+                    assert_eq!(component.old, "Status");
+                    assert!(!component.renamed());
+                    assert_eq!(value.pointer, "/enum/b");
+                    assert_eq!(change.endpoint, uses[0].endpoint);
+                    (*direction, severity(change), uses.len())
+                }
+                other => panic!("unexpected {other:?}"),
+            })
+            .collect();
+        // Request uses: POST /a body (via Wrap) and GET /c's parameter;
+        // response uses: POST /a 200 and GET /b 200 (via Wrap, a cycle).
+        assert_eq!(
+            rows,
+            vec![
+                (Direction::Request, Severity::Breaking, 2),
+                (Direction::Response, Severity::NonBreaking, 2),
+            ]
+        );
+        assert!(result.has_breaking());
+        assert_eq!(result.endpoints_changed(), 3);
+    }
+
+    #[test]
+    fn a_retargeted_reference_compares_the_two_components() {
+        let r = |name: &str| json!({"$ref": format!("#/components/schemas/{name}")});
+        let schemas = json!({
+            "Pet": {"type": "object", "properties": {"name": {"type": "string"}}},
+            "Dog": {"type": "object", "required": ["name"], "properties": {"name": {"type": "string"}}}
+        });
+        let old = component_doc(
+            schemas.clone(),
+            json!({"/p": {"get": {"responses": ok(r("Pet"))}}}),
+        );
+        let new = component_doc(schemas, json!({"/p": {"get": {"responses": ok(r("Dog"))}}}));
+        let result = diff(&old, &new);
+        assert_eq!(result.changes.len(), 1, "{result:#?}");
+        let ChangeKind::ComponentSchemaChanged {
+            component, change, ..
+        } = &result.changes[0].kind
+        else {
+            panic!("{result:#?}");
+        };
+        assert_eq!(
+            (component.old.as_str(), component.new.as_str()),
+            ("Pet", "Dog")
+        );
+        assert_eq!(change.pointer, "/required/name");
+
+        // Two names for the same shape: nothing to report, as before.
+        let same = json!({
+            "Pet": {"type": "object"},
+            "Dog": {"type": "object", "description": "a dog"}
+        });
+        let old = component_doc(
+            same.clone(),
+            json!({"/p": {"get": {"responses": ok(r("Pet"))}}}),
+        );
+        let new = component_doc(same, json!({"/p": {"get": {"responses": ok(r("Dog"))}}}));
+        assert!(diff(&old, &new).changes.is_empty());
+    }
+
+    #[test]
+    fn inline_and_inline_to_ref_changes_stay_at_the_use_site() {
+        let paths = |schema: Value| json!({"/p": {"get": {"responses": ok(schema)}}});
+        let schemas = json!({"Pet": {"type": "object", "properties": {"name": {"type": "string"}, "age": {"type": "integer"}}}});
+        let old = component_doc(
+            schemas.clone(),
+            paths(json!({"type": "object", "properties": {"name": {"type": "string"}}})),
+        );
+        let new = component_doc(schemas, paths(json!({"$ref": "#/components/schemas/Pet"})));
+        let result = diff(&old, &new);
+        assert_eq!(
+            result.changes,
+            vec![Change {
+                endpoint: EndpointRef {
+                    method: "GET".into(),
+                    path: "/p".into()
+                },
+                kind: ChangeKind::ResponseSchemaChanged {
+                    status: "200".into(),
+                    change: added("/properties/age", json!({"type": "integer"})),
+                },
+            }]
+        );
+    }
+
+    #[test]
+    fn a_component_declared_on_one_side_compares_against_the_literal_ref() {
+        // Before 2.3 resolution left an undeclared target as the literal
+        // `{"$ref": ...}`; the component pair keeps exactly that comparison.
+        let r = json!({"$ref": "#/components/schemas/Pet"});
+        let old = component_doc(
+            json!({}),
+            json!({"/p": {"get": {"responses": ok(r.clone())}}}),
+        );
+        let new = component_doc(
+            json!({"Pet": {"type": "object"}}),
+            json!({"/p": {"get": {"responses": ok(r)}}}),
+        );
+        let result = diff(&old, &new);
+        let rows: Vec<(&str, Severity)> = result
+            .changes
+            .iter()
+            .map(|change| match &change.kind {
+                ChangeKind::ComponentSchemaChanged { change: value, .. } => {
+                    (value.pointer.as_str(), severity(change))
+                }
+                other => panic!("unexpected {other:?}"),
+            })
+            .collect();
+        assert_eq!(
+            rows,
+            vec![("/$ref", Severity::Review), ("/type", Severity::Breaking)]
+        );
+    }
+
+    #[test]
+    fn a_sibling_that_pins_a_keyword_masks_that_change_at_its_use() {
+        let r = |name: &str| json!({"$ref": format!("#/components/schemas/{name}")});
+        let paths = json!({"/p": {"get": {"responses": ok(
+            json!({"$ref": "#/components/schemas/Leaf", "type": "string"})
+        )}}, "/q": {"get": {"responses": ok(r("Leaf"))}}});
+        let old = component_doc(json!({"Leaf": {"type": "string"}}), paths.clone());
+        let new = component_doc(json!({"Leaf": {"type": "integer"}}), paths);
+        let result = diff(&old, &new);
+        assert_eq!(result.changes.len(), 1, "{result:#?}");
+        let ChangeKind::ComponentSchemaChanged { uses, .. } = &result.changes[0].kind else {
+            panic!("{result:#?}");
+        };
+        // Only the unpinned use reaches the change.
+        assert_eq!(uses.len(), 1);
+        assert_eq!(uses[0].endpoint.path, "/q");
     }
 }

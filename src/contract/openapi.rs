@@ -565,10 +565,30 @@ fn compare_aligned(
         .iter()
         .map(|e| ((e.method.as_str(), e.path.as_str()), e))
         .collect();
-    let json = diff::json::to_json(legacy, None, "", "");
     let mut changes = vec![];
-    for (change, record) in legacy.changes.iter().zip(json.changes) {
+    for change in &legacy.changes {
         use diff::ChangeKind as K;
+        if let K::ComponentSchemaChanged {
+            component,
+            direction,
+            change: value,
+            uses,
+        } = &change.kind
+        {
+            // Deprecation under keywords the legacy canonicalizer does not
+            // walk is reported by the independent type facts.
+            if !is_schema_deprecation_pointer(&value.pointer) {
+                changes.push(component_fact(
+                    component,
+                    *direction,
+                    value,
+                    uses,
+                    diff::severity(change),
+                ));
+            }
+            continue;
+        }
+        let (record_kind, record_details) = diff::json::json_kind_and_details(&change.kind);
         let e = *by_key
             .get(&(
                 change.endpoint.method.as_str(),
@@ -581,7 +601,7 @@ fn compare_aligned(
         let mut status = None;
         let mut pointer = String::new();
         let mut resolved = false;
-        let mut details = serde_json::to_value(record.details).unwrap();
+        let mut details = serde_json::to_value(record_details).unwrap();
         let kind = match &change.kind {
             K::EndpointAdded => ChangeKind::OperationAdded,
             K::EndpointMoved { from, .. } => {
@@ -654,6 +674,7 @@ fn compare_aligned(
                 }
                 schema_kind(change, true)
             }
+            K::ComponentSchemaChanged { .. } => unreachable!("handled above"),
             K::ResponseSchemaChanged { status: s, change } => {
                 if is_schema_deprecation_pointer(&change.pointer) {
                     continue;
@@ -676,12 +697,13 @@ fn compare_aligned(
             severity: verdict(diff::severity(change)),
             impacts: vec!["source".into()],
             native: native(Some(e), &pointer, parameter_in, status, resolved),
-            native_kind: serde_json::to_value(record.kind)
+            native_kind: serde_json::to_value(record_kind)
                 .unwrap()
                 .as_str()
                 .unwrap()
                 .into(),
             details,
+            uses: Vec::new(),
         };
         c.refresh_id();
         changes.push(c);
@@ -804,9 +826,12 @@ fn compare_aligned(
             changes.push(candidate);
         }
     }
-    // Refs are edges in the public surface, so also inspect their resolved
-    // operation uses for deprecation changes that the legacy schema differ
-    // strips. The subject and native coordinate remain use-site specific.
+    // The legacy schema differ strips `deprecated`, so also compare each
+    // ref-bearing operation use for deprecation changes. References stay
+    // edges (#181): a deprecation inside a shared component is the type's own
+    // fact, reported once; this pass finds those beside a `$ref` or where a
+    // use switched between inline and referenced form. The subject and
+    // native coordinate remain use-site specific.
     for before in &old.endpoints {
         let Some(&after) = new_by_key.get(&(before.method.as_str(), before.path.as_str())) else {
             continue;
@@ -844,12 +869,11 @@ fn compare_aligned(
             {
                 continue;
             }
-            let left = left_json
-                .map(|value| resolver.old.resolve_value(&value))
-                .unwrap_or_else(|| extensions_value(&parameter.extensions));
-            let right = right_json
-                .map(|value| resolver.new.resolve_value(&value))
-                .unwrap_or_else(|| extensions_value(&next.extensions));
+            let (left, right) = resolver.localize(
+                &left_json.unwrap_or_else(|| extensions_value(&parameter.extensions)),
+                &right_json.unwrap_or_else(|| extensions_value(&next.extensions)),
+                &mut Vec::new(),
+            );
             let subject = entity_id(
                 Format::Openapi,
                 EntityKind::Argument,
@@ -885,8 +909,7 @@ fn compare_aligned(
             {
                 continue;
             }
-            let left = resolver.old.resolve_value(&left);
-            let right = resolver.new.resolve_value(&right);
+            let (left, right) = resolver.localize(&left, &right, &mut Vec::new());
             let subject = entity_id(
                 Format::Openapi,
                 EntityKind::Result,
@@ -928,6 +951,7 @@ fn compare_aligned(
                         );
                         json!({"before":before,"after":after,"confidence":confidence,"evidence_rule":rule})
                     },
+                    uses: Vec::new(),
                 };
                 c.refresh_id();
                 changes.push(c);
@@ -935,6 +959,91 @@ fn compare_aligned(
         }
     }
     Ok(changes)
+}
+
+/// The neutral fact for one shared-component change (#181): subject the named
+/// type (the old one for a removal, so it resolves in the old surface, else
+/// the new one), the legacy directional verdict, and the reaching uses as
+/// context. Its ID hashes the component, direction and schema change, never
+/// the uses, so it does not depend on which operations reach the component.
+fn component_fact(
+    component: &diff::ComponentRef,
+    direction: diff::Direction,
+    change: &ValueChange,
+    uses: &[diff::SchemaUse],
+    severity: diff::Severity,
+) -> Change {
+    let kind = if change.pointer == "/type" {
+        ChangeKind::TypeKindChanged
+    } else {
+        schema_kind(change, false)
+    };
+    let name = if matches!(
+        kind,
+        ChangeKind::FieldRemoved | ChangeKind::EnumValueRemoved
+    ) {
+        &component.old
+    } else {
+        &component.new
+    };
+    let coordinate = format!("/types/{}", escape(name));
+    let mut entries = serde_json::Map::new();
+    for (key, value) in diff::json::component_entries(component) {
+        entries.insert(key.into(), value);
+    }
+    entries.insert("direction".into(), json!(direction.as_str()));
+    entries.insert(
+        "schema_change".into(),
+        json!(diff::json::json_schema_change(change)),
+    );
+    let mut ids: Vec<String> = Vec::with_capacity(uses.len());
+    let mut seen = HashSet::with_capacity(uses.len());
+    for use_ in uses {
+        let root = format!(
+            "/paths/{}/{}",
+            escape(&use_.endpoint.path),
+            use_.endpoint.method.to_lowercase()
+        );
+        let id = match &use_.location {
+            diff::UseLocation::Parameter { name, location } => entity_id(
+                Format::Openapi,
+                EntityKind::Argument,
+                &format!("{root}/arguments/{}/{}", escape(location), escape(name)),
+            ),
+            diff::UseLocation::RequestBody { name } => entity_id(
+                Format::Openapi,
+                EntityKind::Argument,
+                &format!("{root}/arguments/body/{}", escape(name)),
+            ),
+            diff::UseLocation::Response { status } => entity_id(
+                Format::Openapi,
+                EntityKind::Result,
+                &format!("{root}/results/{}", escape(status)),
+            ),
+        };
+        if seen.insert(id.clone()) {
+            ids.push(id);
+        }
+    }
+    let mut fact = Change {
+        id: String::new(),
+        subject: entity_id(Format::Openapi, EntityKind::Type, &coordinate),
+        kind,
+        severity: verdict(severity),
+        impacts: vec!["source".into()],
+        native: native(
+            None,
+            &format!("{coordinate}{}", change.pointer),
+            None,
+            None,
+            false,
+        ),
+        native_kind: "component_schema_changed".into(),
+        details: Value::Object(entries),
+        uses: ids,
+    };
+    fact.refresh_id();
+    fact
 }
 
 fn promote_schema_fact_to_use_root(change: &mut Change, old: &Contract, new: &Contract) {
@@ -1024,6 +1133,7 @@ fn append_deprecation_facts(
             native,
             native_kind: "schema_deprecation".into(),
             details,
+            uses: Vec::new(),
         };
         change.refresh_id();
         if !changes.iter().any(|existing| {

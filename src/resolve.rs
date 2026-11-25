@@ -1,26 +1,25 @@
-//! Cached `$ref` resolution for `diff` (#152).
+//! `$ref` handling for `diff` (#152, #181).
 //!
-//! `diff` compares request, parameter and response schemas as fully resolved
-//! JSON: every component `$ref` is inlined (see [`DocResolver::resolve`] for the
-//! exact rules). Doing that naively re-serialized the target `Schema` on every
-//! hop and resolved every schema of every matched operation, including
-//! unchanged ones; on a densely cross-linked graph such as Stripe's a single
-//! resolved schema can have millions of nodes. This module keeps the resolved
-//! output byte-for-byte identical while avoiding the work it does not need:
+//! `diff` compares schemas with references as edges:
+//! [`PairResolver::localize`] rewrites an old/new pair so that positions where
+//! both sides reference a component become edges (compared once per pair by
+//! `diff::components`) and a reference met by an inline object is expanded in
+//! place, one hop at a time. Fully inlining every reference (the semantics
+//! before #181, still available to tests as [`DocResolver::resolve`]) reported
+//! a change under a cross-linked cycle once per reference path, which on
+//! Stripe meant millions of rows.
 //!
 //! - each component `Schema` is converted to a `Value` once per document;
 //! - [`PairResolver::values_equal`] proves, without resolving anything, that
 //!   two schemas resolve to identical values, so unchanged operations skip
-//!   resolution and comparison entirely ([`PairResolver::resolve_pair`]
-//!   serializes each root once for both the proof and the resolution);
+//!   comparison entirely, and [`PairResolver::is_stable`] does the same for a
+//!   component paired with itself;
 //! - [`DocResolver::resolve_shallow`] resolves only the top few JSON levels for
 //!   readers (pagination inference) that never look deeper.
 //!
 //! Expansions are deliberately not memoized: the result is an owned tree, so a
 //! cache hit still clones the whole subtree, and on OpenAI's spec that made the
-//! diff slower and ~40% larger in memory. When a schema did change, the size
-//! of its resolved form is the real bound: a change under a cross-linked cycle
-//! is reported once per reference path, which on Stripe means millions of rows.
+//! diff slower and ~40% larger in memory.
 
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
@@ -89,7 +88,7 @@ fn collect_refs<'v>(value: &'v Value, out: &mut Vec<&'v str>) {
 /// component to a `Value` at most once. Single-threaded (interior mutability
 /// via `RefCell`).
 pub(crate) struct DocResolver<'a> {
-    schemas: &'a IndexMap<String, Schema>,
+    pub(crate) schemas: &'a IndexMap<String, Schema>,
     /// Component name -> serialized `Schema` (`None`: not a component).
     components: RefCell<HashMap<String, Option<Rc<Value>>>>,
 }
@@ -147,11 +146,13 @@ impl<'a> DocResolver<'a> {
     /// - Expansion stops after [`MAX_RESOLVE_DEPTH`] `$ref` hops on one chain;
     ///   anything beyond is kept as written. Descending plain objects and
     ///   arrays does not consume the budget.
+    #[cfg(test)]
     pub(crate) fn resolve(&self, schema: &Schema) -> Value {
         self.resolve_value(&schema_json(schema))
     }
 
     /// [`Self::resolve`] over an already serialized schema.
+    #[cfg(test)]
     pub(crate) fn resolve_value(&self, value: &Value) -> Value {
         let mut walk = Walk {
             stack: Vec::new(),
@@ -323,6 +324,7 @@ impl<'a> PairResolver<'a> {
     /// `old` resolved against the old document and `new` against the new
     /// one, or `None` when [`Self::values_equal`] proves they resolve
     /// identically. Each root is serialized once for both steps.
+    #[cfg(test)]
     pub(crate) fn resolve_pair(&self, old: &Schema, new: &Schema) -> Option<(Value, Value)> {
         let (before, after) = (schema_json(old), schema_json(new));
         if self.values_equal(&before, &after) {
@@ -332,6 +334,277 @@ impl<'a> PairResolver<'a> {
             self.old.resolve_value(&before),
             self.new.resolve_value(&after),
         ))
+    }
+}
+
+// ── refs as edges (#181) ────────────────────────────────────────────────────
+
+/// A `$ref` on the old side and one on the new side at the same position:
+/// `diff` compares each pair of target names once, instead of inlining both
+/// targets at every position that reaches them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct RefEdge {
+    /// Old and new component names: the pair's identity.
+    pub(crate) names: (String, String),
+    /// The old and new `$ref` strings as written, standing in for a target
+    /// that one document does not declare.
+    pub(crate) refs: (String, String),
+}
+
+/// Keys whose values canonicalisation drops from a schema object; refs under
+/// them are left as written.
+const ANNOTATIONS: [&str; 5] = ["description", "title", "example", "examples", "deprecated"];
+
+/// The schema-grammar role of a node while [`PairResolver::localize`] walks it.
+/// It only decides where refs are left alone (annotations); every other
+/// position treats a `$ref` object as a reference, as [`DocResolver::resolve`]
+/// does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Role {
+    Schema,
+    /// `properties`-like maps and `allOf`-like lists: children are schemas.
+    Container,
+    Other,
+    Annotation,
+}
+
+impl Role {
+    fn child(self, key: &str) -> Role {
+        match self {
+            Role::Schema => match key {
+                "properties" | "patternProperties" | "definitions" | "$defs" | "allOf"
+                | "oneOf" | "anyOf" => Role::Container,
+                "items" | "additionalProperties" | "not" => Role::Schema,
+                _ if key.starts_with("x-") || ANNOTATIONS.contains(&key) => Role::Annotation,
+                _ => Role::Other,
+            },
+            Role::Container => Role::Schema,
+            Role::Other | Role::Annotation => self,
+        }
+    }
+}
+
+/// The component a `{"$ref": ...}` object names, when the reference has one of
+/// the two component forms.
+fn component_ref(map: &Map<String, Value>) -> Option<String> {
+    match map.get("$ref") {
+        Some(Value::String(reference)) => reference_name(reference),
+        _ => None,
+    }
+}
+
+/// Whether a `$ref` object carries sibling keys that change the merged schema
+/// (anything but annotations): [`DocResolver::resolve`] lays them over the
+/// target, so the effective schema is specific to this use.
+fn has_semantic_siblings(map: &Map<String, Value>) -> bool {
+    map.keys()
+        .any(|key| key != "$ref" && !key.starts_with("x-") && !ANNOTATIONS.contains(&key.as_str()))
+}
+
+/// The mutable state of one [`PairResolver::localize`] walk.
+struct LocalWalk<'w> {
+    /// References expanded on the current chain, per side.
+    old_stack: Vec<String>,
+    new_stack: Vec<String>,
+    edges: &'w mut Vec<RefEdge>,
+}
+
+impl DocResolver<'_> {
+    /// The serialized component `name`, or, when this document does not
+    /// declare it, the literal `{"$ref": reference}`, which is what resolution
+    /// leaves in place of an unresolvable reference.
+    pub(crate) fn component_value(&self, name: &str, reference: &str) -> Value {
+        self.component(name)
+            .map(|value| value.as_ref().clone())
+            .unwrap_or_else(|| serde_json::json!({ "$ref": reference }))
+    }
+
+    /// Whether this document declares component `name`.
+    fn declares(&self, name: &str) -> bool {
+        self.schemas.contains_key(name)
+    }
+
+    /// The `$ref` object `map` with its target laid under it, exactly as
+    /// [`Self::resolve`] expands one hop (siblings win), or `None` when it is
+    /// unresolvable, already on `stack`, or past [`MAX_RESOLVE_DEPTH`]. On
+    /// `Some`, the reference is pushed onto `stack` for the caller to pop.
+    fn expand_once(&self, map: &Map<String, Value>, stack: &mut Vec<String>) -> Option<Value> {
+        let Some(Value::String(reference)) = map.get("$ref") else {
+            return None;
+        };
+        if stack.len() >= MAX_RESOLVE_DEPTH || stack.iter().any(|on| on == reference) {
+            return None;
+        }
+        let target = self.target(reference)?;
+        stack.push(reference.clone());
+        Some(match target.as_ref() {
+            target @ Value::Object(_) if map.len() == 1 => target.clone(),
+            target => {
+                let mut merged = match target {
+                    Value::Object(target_map) => target_map.clone(),
+                    _ => Map::new(),
+                };
+                for (key, sibling) in map {
+                    if key != "$ref" {
+                        merged.insert(key.clone(), sibling.clone());
+                    }
+                }
+                Value::Object(merged)
+            }
+        })
+    }
+}
+
+impl PairResolver<'_> {
+    /// Whether component `name` provably resolves identically in both
+    /// documents (it is declared, unchanged, and reaches only such
+    /// components). A `(name, name)` edge to it can produce no change.
+    pub(crate) fn is_stable(&self, name: &str) -> bool {
+        !self.unstable.contains(name)
+    }
+
+    /// Rewrites two serialized schemas (`old` from the old document, `new`
+    /// from the new one) for a comparison that treats references as edges.
+    ///
+    /// Walking both in parallel, wherever both sides hold a component `$ref`
+    /// (and at least one target exists), the pair of target names is appended
+    /// to `edges` and the `$ref` keys are dropped from both sides, so the
+    /// local comparison sees only annotation siblings; the caller compares
+    /// the targets once per pair. Where only one side holds a component
+    /// `$ref` and the other is a plain object, or a `$ref` has siblings other
+    /// than annotations (which override its target), that reference is
+    /// expanded in place (as [`DocResolver::resolve`] would) and the walk
+    /// continues into it, so a schema moving between inline and referenced
+    /// form, or narrowed by a sibling, is still compared field by field. Everything else, including subtrees present
+    /// on one side only and references under annotation keywords, is kept as
+    /// written. Key order is preserved, and a value without component refs is
+    /// returned unchanged.
+    pub(crate) fn localize(
+        &self,
+        old: &Value,
+        new: &Value,
+        edges: &mut Vec<RefEdge>,
+    ) -> (Value, Value) {
+        let mut walk = LocalWalk {
+            old_stack: Vec::new(),
+            new_stack: Vec::new(),
+            edges,
+        };
+        self.local(old, new, Role::Schema, &mut walk)
+    }
+
+    fn local(&self, old: &Value, new: &Value, role: Role, walk: &mut LocalWalk) -> (Value, Value) {
+        if role == Role::Annotation {
+            return (old.clone(), new.clone());
+        }
+        match (old, new) {
+            (Value::Object(before), Value::Object(after)) => {
+                // A reference whose siblings override its target is expanded
+                // in place, exactly as resolution merges it.
+                if component_ref(before).is_some()
+                    && has_semantic_siblings(before)
+                    && let Some(expanded) = self.old.expand_once(before, &mut walk.old_stack)
+                {
+                    let out = self.local(&expanded, new, role, walk);
+                    walk.old_stack.pop();
+                    return out;
+                }
+                if component_ref(after).is_some()
+                    && has_semantic_siblings(after)
+                    && let Some(expanded) = self.new.expand_once(after, &mut walk.new_stack)
+                {
+                    let out = self.local(old, &expanded, role, walk);
+                    walk.new_stack.pop();
+                    return out;
+                }
+                let (old_ref, new_ref) = (component_ref(before), component_ref(after));
+                match (old_ref, new_ref) {
+                    (Some(a), Some(b)) if self.old.declares(&a) || self.new.declares(&b) => {
+                        let reference = |map: &Map<String, Value>| {
+                            map.get("$ref")
+                                .and_then(Value::as_str)
+                                .unwrap_or_default()
+                                .to_string()
+                        };
+                        walk.edges.push(RefEdge {
+                            names: (a, b),
+                            refs: (reference(before), reference(after)),
+                        });
+                        let strip = |map: &Map<String, Value>| -> Map<String, Value> {
+                            map.iter()
+                                .filter(|(key, _)| *key != "$ref")
+                                .map(|(key, value)| (key.clone(), value.clone()))
+                                .collect()
+                        };
+                        self.local_maps(&strip(before), &strip(after), role, walk)
+                    }
+                    (Some(_), None) => match self.old.expand_once(before, &mut walk.old_stack) {
+                        Some(expanded) => {
+                            let out = self.local(&expanded, new, role, walk);
+                            walk.old_stack.pop();
+                            out
+                        }
+                        None => self.local_maps(before, after, role, walk),
+                    },
+                    (None, Some(_)) => match self.new.expand_once(after, &mut walk.new_stack) {
+                        Some(expanded) => {
+                            let out = self.local(old, &expanded, role, walk);
+                            walk.new_stack.pop();
+                            out
+                        }
+                        None => self.local_maps(before, after, role, walk),
+                    },
+                    _ => self.local_maps(before, after, role, walk),
+                }
+            }
+            (Value::Array(before), Value::Array(after)) => {
+                let common = before.len().min(after.len());
+                let child = role.child("");
+                let (mut left, mut right) = (Vec::new(), Vec::new());
+                for index in 0..common {
+                    let (a, b) = self.local(&before[index], &after[index], child, walk);
+                    left.push(a);
+                    right.push(b);
+                }
+                left.extend(before[common..].iter().cloned());
+                right.extend(after[common..].iter().cloned());
+                (Value::Array(left), Value::Array(right))
+            }
+            _ => (old.clone(), new.clone()),
+        }
+    }
+
+    fn local_maps(
+        &self,
+        before: &Map<String, Value>,
+        after: &Map<String, Value>,
+        role: Role,
+        walk: &mut LocalWalk,
+    ) -> (Value, Value) {
+        let mut left = Map::new();
+        let mut shared: HashMap<&str, Value> = HashMap::new();
+        for (key, old_child) in before {
+            match after.get(key) {
+                Some(new_child) => {
+                    let (a, b) = self.local(old_child, new_child, role.child(key), walk);
+                    left.insert(key.clone(), a);
+                    shared.insert(key.as_str(), b);
+                }
+                None => {
+                    left.insert(key.clone(), old_child.clone());
+                }
+            }
+        }
+        let right = after
+            .iter()
+            .map(|(key, new_child)| {
+                let value = shared
+                    .remove(key.as_str())
+                    .unwrap_or_else(|| new_child.clone());
+                (key.clone(), value)
+            })
+            .collect();
+        (Value::Object(left), Value::Object(right))
     }
 }
 
@@ -512,6 +785,136 @@ mod tests {
         let merged = resolver.resolve(&schema(with_sibling));
         assert_eq!(merged["type"], "string");
         assert_eq!(merged["nullable"], true);
+    }
+
+    // ── localize (#181) ──────────────────────────────────────────────────
+
+    fn localized(
+        pair: &PairResolver,
+        old: Value,
+        new: Value,
+    ) -> (Value, Value, Vec<(String, String)>) {
+        let mut edges = Vec::new();
+        let (old, new) = pair.localize(&old, &new, &mut edges);
+        (old, new, edges.into_iter().map(|edge| edge.names).collect())
+    }
+
+    #[test]
+    fn localize_leaves_ref_free_values_untouched() {
+        let (old, new) = (graph("string"), graph("integer"));
+        let pair = PairResolver::new(&old, &new);
+        let before = json!({"type": "object", "properties": {"z": {"type": "string"}, "a": {"enum": [2, 1]}}});
+        let after = json!({"properties": {"a": {"enum": [1]}, "y": {}}, "type": "array"});
+        let (left, right, edges) = localized(&pair, before.clone(), after.clone());
+        assert!(edges.is_empty());
+        // Byte for byte, key order included.
+        assert_eq!(left.to_string(), before.to_string());
+        assert_eq!(right.to_string(), after.to_string());
+    }
+
+    #[test]
+    fn localize_turns_ref_pairs_into_edges_and_keeps_siblings() {
+        let (old, new) = (graph("string"), graph("integer"));
+        let pair = PairResolver::new(&old, &new);
+        let mut sibling = reference("B");
+        sibling["description"] = json!("annotations do not override the target");
+        let (left, right, edges) = localized(
+            &pair,
+            json!({"properties": {"a": reference("A"), "b": sibling, "o": reference("Other")}}),
+            json!({"properties": {"a": reference("A"), "b": reference("B"), "o": reference("Node")}}),
+        );
+        assert_eq!(
+            edges,
+            vec![
+                ("A".to_string(), "A".to_string()),
+                ("B".to_string(), "B".to_string()),
+                ("Other".to_string(), "Node".to_string()),
+            ]
+        );
+        assert_eq!(
+            left,
+            json!({"properties": {"a": {}, "b": {"description": "annotations do not override the target"}, "o": {}}})
+        );
+        assert_eq!(right, json!({"properties": {"a": {}, "b": {}, "o": {}}}));
+        // A changed component is never expanded at the use site.
+        assert!(!pair.is_stable("A") && !pair.is_stable("C") && pair.is_stable("Other"));
+    }
+
+    #[test]
+    fn localize_expands_one_sided_refs_against_inline_schemas() {
+        let (old, new) = (graph("string"), graph("string"));
+        let pair = PairResolver::new(&old, &new);
+        // Old references A; new inlines A's shape with a changed `b`: A is
+        // expanded in place, and its own `b` reference meets the inline
+        // object, so B is expanded too, down to the C edge.
+        let (left, right, edges) = localized(
+            &pair,
+            reference("A"),
+            json!({"type": "object", "properties": {"b": {"type": "array", "items": reference("C"), "minItems": 1}}}),
+        );
+        assert_eq!(edges, vec![("C".to_string(), "C".to_string())]);
+        assert_eq!(
+            left,
+            json!({"type": "object", "properties": {"b": {"type": "array", "items": {}}}})
+        );
+        assert_eq!(
+            right,
+            json!({"type": "object", "properties": {"b": {"type": "array", "items": {}, "minItems": 1}}})
+        );
+        // A reference with nothing to compare against stays as written.
+        let (left, right, edges) = localized(&pair, reference("A"), json!(true));
+        assert!(edges.is_empty());
+        assert_eq!((left, right), (reference("A"), json!(true)));
+    }
+
+    #[test]
+    fn localize_expands_refs_whose_siblings_override_the_target() {
+        let (old, new) = (graph("string"), graph("integer"));
+        let pair = PairResolver::new(&old, &new);
+        // `C` changed type, but this use pins `type` itself: the merged schema
+        // is unchanged here, so there is no edge and nothing to report.
+        let mut pinned = reference("C");
+        pinned["type"] = json!("string");
+        let (left, right, edges) = localized(&pair, pinned.clone(), pinned);
+        assert!(edges.is_empty());
+        assert_eq!((left.clone(), right), (json!({"type": "string"}), left));
+        // A sibling on one side only meets the other side's plain reference,
+        // which is then expanded too.
+        let mut nullable = reference("A");
+        nullable["nullable"] = json!(true);
+        let (left, right, edges) = localized(&pair, reference("A"), nullable);
+        assert_eq!(edges, vec![("B".to_string(), "B".to_string())]);
+        assert_eq!(left, json!({"type": "object", "properties": {"b": {}}}));
+        assert_eq!(
+            right,
+            json!({"type": "object", "properties": {"b": {}}, "nullable": true})
+        );
+    }
+
+    #[test]
+    fn localize_stops_on_cycles_and_keeps_dangling_refs_literal() {
+        let docs = schemas(&[("Loop", reference("Loop"))]);
+        let pair = PairResolver::new(&docs, &docs);
+        // Expanding Loop yields Loop again: kept literal once on the stack.
+        let (left, right, edges) = localized(&pair, reference("Loop"), json!({"type": "object"}));
+        assert!(edges.is_empty());
+        assert_eq!(left, reference("Loop"));
+        assert_eq!(right, json!({"type": "object"}));
+        // Neither target exists: compared as written, so a retarget shows.
+        let (left, right, edges) = localized(&pair, reference("Gone"), reference("Missing"));
+        assert!(edges.is_empty());
+        assert_eq!((left, right), (reference("Gone"), reference("Missing")));
+    }
+
+    #[test]
+    fn localize_leaves_refs_under_annotations_alone() {
+        let (old, new) = (graph("string"), graph("integer"));
+        let pair = PairResolver::new(&old, &new);
+        let value =
+            json!({"type": "object", "example": reference("A"), "x-sample": reference("A")});
+        let (left, right, edges) = localized(&pair, value.clone(), value.clone());
+        assert!(edges.is_empty());
+        assert_eq!((left, right), (value.clone(), value));
     }
 
     #[test]

@@ -13,7 +13,7 @@ use serde_json::json;
 // --- diff subcommand (#45) ---
 
 const DIFF_SUMMARY: &str =
-    "**Summary:** 1 endpoint added, 1 removed, 4 changed; 4 breaking, 8 non-breaking, 1 to review";
+    "**Summary:** 1 endpoint added, 1 removed, 4 changed; 4 breaking, 4 non-breaking, 1 to review";
 
 #[test]
 fn diff_reports_added_removed_changed() {
@@ -38,19 +38,17 @@ fn diff_reports_added_removed_changed() {
 ";
     assert!(stdout.contains(breaking), "{stdout}");
 
+    // The shared `Widget` change is reported once (#181), not once per
+    // response that reaches it; the uses are listed under the tables.
     let non_breaking = "\
-## Non-breaking changes (8)
+## Non-breaking changes (4)
 
 | Change | Endpoint | Detail |
 |--------|----------|--------|
-| Response schema changed | `GET /widgets` | 200 `/properties/pricing` added |
-| Response schema changed | `GET /widgets` | 200 `/properties/pricing` added to `required` |
-| Response schema changed | `POST /widgets` | 201 `/properties/pricing` added |
-| Response schema changed | `POST /widgets` | 201 `/properties/pricing` added to `required` |
-| Response schema changed | `GET /widgets/{id}` | 200 `/properties/pricing` added |
-| Response schema changed | `GET /widgets/{id}` | 200 `/properties/pricing` added to `required` |
 | Marked deprecated | `DELETE /widgets/{id}` | - |
 | Endpoint added | `GET /widgets/{id}/history` | - |
+| Component schema changed | component `Widget` | response `/properties/pricing` added (3 operations) |
+| Component schema changed | component `Widget` | response `/properties/pricing` added to `required` (3 operations) |
 ";
     assert!(stdout.contains(non_breaking), "{stdout}");
 
@@ -59,7 +57,8 @@ fn diff_reports_added_removed_changed() {
 }
 
 // nrynss's requirement on #45: a change behind a shared `$ref` must surface on
-// every endpoint whose operation object did not change at all.
+// every endpoint whose operation object did not change at all. Since #181 it
+// is reported once, at the component, with every such endpoint listed.
 #[test]
 fn diff_detects_schema_drift_behind_shared_ref() {
     let old = load_json(DIFF_OLD);
@@ -78,14 +77,29 @@ fn diff_detects_schema_drift_behind_shared_ref() {
     let (stdout, _) = diff_run(&[DIFF_OLD, DIFF_NEW]);
     assert!(
         stdout.contains(
-            "| Response schema changed | `GET /widgets` | 200 `/properties/pricing` added |"
+            "| Component schema changed | component `Widget` | response `/properties/pricing` added (3 operations) |"
         ),
         "{stdout}"
     );
     assert!(
         stdout.contains(
-            "| Response schema changed | `GET /widgets` | 200 `/properties/pricing` added to `required` |"
+            "| Component schema changed | component `Widget` | response `/properties/pricing` added to `required` (3 operations) |"
         ),
+        "{stdout}"
+    );
+    let affected = "\
+## Affected operations
+
+### `Widget`
+
+- `GET /widgets` response 200
+- `POST /widgets` response 201
+- `GET /widgets/{id}` response 200
+";
+    assert!(stdout.contains(affected), "{stdout}");
+    assert_eq!(
+        stdout.matches("`/properties/pricing` added").count(),
+        2,
         "{stdout}"
     );
 }
@@ -98,7 +112,7 @@ fn diff_classifies_format_change_as_review() {
 
 | Change | Endpoint | Detail |
 |--------|----------|--------|
-| Request schema changed | `POST /widgets` | `/properties/weight/format` changed `float` → `double` |
+| Component schema changed | component `WidgetInput` | request `/properties/weight/format` changed `float` → `double` (1 operation) |
 ";
     assert!(stdout.contains(review), "{stdout}");
 }
@@ -348,14 +362,22 @@ fn diff_works_for_oas2() {
         ),
         "{stdout}"
     );
-    // The body parameter and the 200 response both reference #/definitions/Pet.
+    // The body parameter and the 200 response both reference #/definitions/Pet:
+    // the change is reported once per usage direction (#181).
     assert!(
-        stdout.contains("| Request schema changed | `POST /pets` | `/properties/name` added |"),
+        stdout.contains(
+            "| Component schema changed | component `Pet` | request `/properties/name` added (1 operation) |"
+        ),
         "{stdout}"
     );
     assert!(
-        stdout
-            .contains("| Response schema changed | `POST /pets` | 200 `/properties/name` added |"),
+        stdout.contains(
+            "| Component schema changed | component `Pet` | response `/properties/name` added (1 operation) |"
+        ),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("### `Pet`\n\n- `POST /pets` request body\n- `POST /pets` response 200\n"),
         "{stdout}"
     );
 }
@@ -427,7 +449,7 @@ fn diff_type_array_null_on_request_is_non_breaking_and_reverse_breaking() {
     assert_eq!(code, 0, "{stdout}");
     assert!(
         stdout.contains(
-            "| Request schema changed | `POST /items` | `/properties/note/nullable` added (`true`) |"
+            "| Component schema changed | component `ItemInput` | request `/properties/note/nullable` added (`true`) (1 operation) |"
         ),
         "{stdout}"
     );
@@ -438,7 +460,7 @@ fn diff_type_array_null_on_request_is_non_breaking_and_reverse_breaking() {
     assert_eq!(code, 3, "{stdout}");
     assert!(
         stdout.contains(
-            "| Request schema changed | `POST /items` | `/properties/note/nullable` removed"
+            "| Component schema changed | component `ItemInput` | request `/properties/note/nullable` removed"
         ),
         "{stdout}"
     );
@@ -452,7 +474,7 @@ fn diff_type_array_null_on_response_is_breaking_and_reverse_non_breaking() {
     assert_eq!(code, 0, "{stdout}");
     assert!(
         stdout.contains(
-            "| Response schema changed | `POST /items` | 200 `/properties/label/nullable` removed"
+            "| Component schema changed | component `Item` | response `/properties/label/nullable` removed"
         ),
         "{stdout}"
     );
@@ -463,7 +485,7 @@ fn diff_type_array_null_on_response_is_breaking_and_reverse_non_breaking() {
     assert!(stdout.contains("## Breaking changes (1)"), "{stdout}");
     assert!(
         stdout.contains(
-            "| Response schema changed | `POST /items` | 200 `/properties/label/nullable` added (`true`) |"
+            "| Component schema changed | component `Item` | response `/properties/label/nullable` added (`true`) (1 operation) |"
         ),
         "{stdout}"
     );
@@ -506,7 +528,9 @@ fn diff_response_enum_narrowing_is_not_breaking() {
     assert_eq!(code, 0, "{stdout}");
     assert!(!stdout.contains("## Breaking changes"), "{stdout}");
     assert!(
-        stdout.contains("| Response schema changed | `POST /items` | 200 `/properties/state/enum"),
+        stdout.contains(
+            "| Component schema changed | component `Item` | response `/properties/state/enum"
+        ),
         "{stdout}"
     );
 
@@ -542,7 +566,7 @@ fn diff_whole_enum_keyword_follows_direction() {
     );
     assert!(
         stdout.contains(
-            "| Response schema changed | `POST /items` | 200 `/properties/state/enum` removed |"
+            "| Component schema changed | component `Item` | response `/properties/state/enum` removed (1 operation) |"
         ),
         "{stdout}"
     );
@@ -572,7 +596,7 @@ fn diff_whole_enum_keyword_follows_direction() {
     );
     assert!(
         stdout.contains(
-            "| Request schema changed | `POST /items` | `/properties/status/enum` added |"
+            "| Component schema changed | component `ItemInput` | request `/properties/status/enum` added (1 operation) |"
         ),
         "{stdout}"
     );
@@ -602,7 +626,7 @@ fn diff_changes_under_not_are_review() {
     );
     assert!(
         stdout.contains(
-            "| Request schema changed | `POST /items` | `/properties/note/not/enum` removed |"
+            "| Component schema changed | component `ItemInput` | request `/properties/note/not/enum` removed (1 operation) |"
         ),
         "{stdout}"
     );

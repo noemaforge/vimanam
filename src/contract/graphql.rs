@@ -1952,6 +1952,7 @@ impl Facts<'_> {
             native: location(coordinate),
             native_kind: native_kind.into(),
             details,
+            uses: Vec::new(),
         };
         change.refresh_id();
         self.changes.push(change);

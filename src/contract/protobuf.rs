@@ -835,6 +835,7 @@ fn fact(
         native: e.native.clone(),
         native_kind: native_kind.into(),
         details,
+        uses: Vec::new(),
     };
     c.refresh_id();
     c

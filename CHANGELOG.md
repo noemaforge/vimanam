@@ -7,6 +7,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Behavior changes
+
+- **`diff` compares `$ref` targets as edges** (#181). Each `(old component,
+  new component)` pair is compared once, and a change inside a shared
+  component is reported once per usage direction (request: parameters and
+  request bodies; response: responses), with every operation schema that
+  reaches it listed, instead of once per operation and reference path.
+  Changes in an operation's own inline schemas keep their coordinates,
+  pointers and IDs, and specs without schema `$ref`s produce byte-identical
+  output. Every consecutive Stripe `spec3.json` release pair of the last 16
+  commits now diffs in under 2 s in every output mode (all timed out before),
+  and OpenAI `a01e367..373f26a` still reports the same 4 breaking findings.
+  - **Verdicts.** Each direction keeps its own rule table, so a component
+    shared by a request and a response yields two records, and
+    `--fail-on-breaking` exits 3 when either is breaking. `not` subtrees stay
+    Review and a whole `enum` keyword is still classified by direction.
+  - **Markdown.** A component change is one `Component schema changed` row
+    (for example `` component `Widget` `` / `response /properties/pricing
+    added (3 operations)`), and a new `## Affected operations` section lists
+    each changed component's uses once.
+  - **Contract v2 (`vc2_` IDs move for ref-reached changes).** A
+    ref-reached change is one fact per direction with `native_kind`
+    `component_schema_changed`: subject the named type (`/types/NAME`; the old
+    type for a removal), `details` `component` (plus `old_component` for a
+    retargeted reference), `direction` and `schema_change` with a pointer
+    relative to the component, native pointer `/types/NAME/...` with
+    `resolved: false`, and a new `uses` array of the reaching argument/result
+    entity IDs. `uses` is context and not hashed, so the ID depends only on
+    the component, direction and schema change, never on which operation
+    reaches it first. These facts replace the per-use
+    `request_schema_changed`/`response_schema_changed`/
+    `parameter_schema_changed` facts whose IDs hashed an argument or result
+    subject and a resolved pointer; suppression lists keyed on those IDs
+    need the new IDs. A deprecation inside a shared component is now only the
+    named type's own (unchanged) fact, not also one per use.
+    `summary.operations_changed` counts the operations in `uses`.
+  - **Contract v1 (`--contract 1`).** v1 adopts the component comparison but
+    keeps its one-record-per-affected-endpoint shape: one record per use (the
+    use's usual kind), with `component` (and `old_component`) in `details`
+    and a component-relative `pointer`. Records that a change reached
+    through several reference paths of one use collapse into one, so `vc1_`
+    IDs of ref-reached records change. v1 severity counts now count records,
+    so they can exceed the Markdown summary's.
+  - **Library.** `diff::ChangeKind::ComponentSchemaChanged` (with
+    `ComponentRef`, `Direction`, `SchemaUse`, `UseLocation`) is new;
+    `SpecDiff::endpoints_changed` counts every use of a changed component; the
+    neutral `contract::Change` has a new `uses` field (empty and omitted from
+    JSON for every other fact), so code building `Change` literals must set
+    it.
+  - A value that exists on one side only (an added property, say) keeps
+    nested `$ref`s as written instead of inlining them.
+
 ### Changed
 
 - Git-ref `diff` reads committed blobs through one long-lived

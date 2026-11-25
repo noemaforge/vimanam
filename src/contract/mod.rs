@@ -210,11 +210,18 @@ pub struct Change {
     pub native_kind: String,
     /// Lossless adapter-specific change details; absence is explicit.
     pub details: Value,
+    /// Context, not identity: entity IDs of the uses (OpenAPI arguments and
+    /// results) that reach a changed shared type, for a fact reported once at
+    /// the type rather than once per use. Excluded from the ID, so a new
+    /// operation using the type does not change the fact's ID. Omitted when
+    /// empty.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub uses: Vec<String>,
 }
 
 impl Change {
-    /// Recompute the stable ID. Severity, impacts and native display details
-    /// are excluded; subject, neutral kind and fact details are hashed.
+    /// Recompute the stable ID. Severity, impacts, native display details and
+    /// `uses` are excluded; subject, neutral kind and fact details are hashed.
     pub fn refresh_id(&mut self) {
         self.id = change_id(self);
     }
@@ -403,6 +410,7 @@ fn push(
         native,
         native_kind: "surface_changed".into(),
         details,
+        uses: Vec::new(),
     };
     change.refresh_id();
     changes.push(change);

@@ -5,14 +5,17 @@ use std::io::Write;
 use anyhow::Result;
 use serde_json::Value;
 
+use indexmap::{IndexMap, IndexSet};
+
 use super::{
-    Change, ChangeKind, Deltas, Location, MoveRule, Severity, SpecDiff, ValueChange,
-    ValueChangeKind, locate, severity,
+    Change, ChangeKind, ComponentRef, Deltas, Location, MoveRule, SchemaUse, Severity, SpecDiff,
+    UseLocation, ValueChange, ValueChangeKind, locate, severity,
 };
 
 /// Writes the diff as Markdown: a title, a one-line summary, one table per
-/// severity that has entries (breaking, non-breaking, needs review), and the
-/// `## Deltas` section when `deltas` is given.
+/// severity that has entries (breaking, non-breaking, needs review), an
+/// `## Affected operations` section listing each changed shared component's
+/// uses once, and the `## Deltas` section when `deltas` is given.
 pub fn write_diff<W: Write>(
     writer: &mut W,
     diff: &SpecDiff,
@@ -71,15 +74,22 @@ pub fn write_diff<W: Write>(
             writeln!(writer, "| Change | Endpoint | Detail |")?;
             writeln!(writer, "|--------|----------|--------|")?;
             for change in rows {
+                let subject = match &change.kind {
+                    ChangeKind::ComponentSchemaChanged { component, .. } => {
+                        format!("component {}", component_name(component))
+                    }
+                    _ => format!("`{}`", change.endpoint),
+                };
                 writeln!(
                     writer,
-                    "| {} | `{}` | {} |",
+                    "| {} | {} | {} |",
                     change_label(&change.kind),
-                    escape_cell(&change.endpoint.to_string()),
+                    escape_cell(&subject),
                     escape_cell(&change_detail(&change.kind)),
                 )?;
             }
         }
+        write_affected_operations(writer, diff)?;
     }
 
     if let Some(deltas) = deltas {
@@ -106,6 +116,57 @@ pub fn write_diff<W: Write>(
     }
 
     Ok(())
+}
+
+/// `` `Widget` ``, or `` `Pet` → `Dog` `` for a retargeted reference.
+fn component_name(component: &ComponentRef) -> String {
+    if component.renamed() {
+        format!("`{}` → `{}`", component.old, component.new)
+    } else {
+        format!("`{}`", component.new)
+    }
+}
+
+/// Lists, once per changed shared component (in report order), every
+/// operation schema that reaches it. Omitted when no component changed.
+fn write_affected_operations<W: Write>(writer: &mut W, diff: &SpecDiff) -> Result<()> {
+    let mut components: IndexMap<&ComponentRef, IndexSet<&SchemaUse>> = IndexMap::new();
+    for change in &diff.changes {
+        if let ChangeKind::ComponentSchemaChanged {
+            component, uses, ..
+        } = &change.kind
+        {
+            components.entry(component).or_default().extend(uses);
+        }
+    }
+    if components.is_empty() {
+        return Ok(());
+    }
+    writeln!(writer)?;
+    writeln!(writer, "## Affected operations")?;
+    for (component, uses) in components {
+        writeln!(writer)?;
+        writeln!(writer, "### {}", component_name(component))?;
+        writeln!(writer)?;
+        for use_ in uses {
+            writeln!(
+                writer,
+                "- `{}` {}",
+                use_.endpoint,
+                use_label(&use_.location)
+            )?;
+        }
+    }
+    Ok(())
+}
+
+/// `response 200`, `request body`, `parameter `limit` (query)`.
+fn use_label(location: &UseLocation) -> String {
+    match location {
+        UseLocation::Parameter { name, location } => format!("parameter `{name}` ({location})"),
+        UseLocation::RequestBody { .. } => "request body".to_string(),
+        UseLocation::Response { status } => format!("response {status}"),
+    }
 }
 
 /// `+3`, `-1` or `0`.
@@ -156,6 +217,7 @@ fn change_label(kind: &ChangeKind) -> &'static str {
         ChangeKind::DeprecatedChanged { now: false } => "Deprecation removed",
         ChangeKind::RequestSchemaChanged { .. } => "Request schema changed",
         ChangeKind::ResponseSchemaChanged { .. } => "Response schema changed",
+        ChangeKind::ComponentSchemaChanged { .. } => "Component schema changed",
     }
 }
 
@@ -210,6 +272,24 @@ fn change_detail(kind: &ChangeKind) -> String {
         ChangeKind::RequestSchemaChanged { change } => describe_value_change(change),
         ChangeKind::ResponseSchemaChanged { status, change } => {
             format!("{status} {}", describe_value_change(change))
+        }
+        ChangeKind::ComponentSchemaChanged {
+            direction,
+            change,
+            uses,
+            ..
+        } => {
+            let operations = uses
+                .iter()
+                .map(|use_| &use_.endpoint)
+                .collect::<IndexSet<_>>()
+                .len();
+            format!(
+                "{} {} ({})",
+                direction.as_str(),
+                describe_value_change(change),
+                pluralize(operations, "operation")
+            )
         }
     }
 }

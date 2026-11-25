@@ -171,8 +171,14 @@ fn type_array_changes(edit: impl FnOnce(&mut Value)) -> (Vec<ChangeRow>, Option<
     (changes, output.status.code())
 }
 
-fn operation_change<'a>(changes: &'a [ChangeRow], native_kind: &str) -> Vec<&'a ChangeRow> {
-    changes.iter().filter(|c| c.1 == native_kind).collect()
+/// The directional facts about shared component `schema` (#181): reported
+/// once at the type, with the reaching uses as context.
+fn component_change<'a>(changes: &'a [ChangeRow], schema: &str) -> Vec<&'a ChangeRow> {
+    let prefix = format!("/types/{schema}/");
+    changes
+        .iter()
+        .filter(|c| c.1 == "component_schema_changed" && c.2.starts_with(&prefix))
+        .collect()
 }
 
 #[test]
@@ -194,10 +200,10 @@ fn v2_type_array_null_follows_nullable_direction() {
         spec["components"]["schemas"]["Item"]["properties"]["label"]["type"] =
             serde_json::json!("string");
     });
-    let response = operation_change(&changes, "response_schema_changed");
+    let response = component_change(&changes, "Item");
     assert_eq!(response.len(), 1, "{changes:?}");
     assert_eq!(response[0].0, "nullability_changed");
-    assert_eq!(response[0].2, "/properties/label/nullable");
+    assert_eq!(response[0].2, "/types/Item/properties/label/nullable");
     assert_eq!(response[0].3, "non_breaking");
     assert_eq!(code, Some(0));
 
@@ -206,7 +212,7 @@ fn v2_type_array_null_follows_nullable_direction() {
         spec["components"]["schemas"]["ItemInput"]["properties"]["note"]["type"] =
             serde_json::json!(["string", "null"]);
     });
-    let request = operation_change(&changes, "request_schema_changed");
+    let request = component_change(&changes, "ItemInput");
     assert_eq!(request.len(), 1, "{changes:?}");
     assert_eq!(request[0].0, "nullability_changed");
     assert_eq!(request[0].3, "non_breaking");
@@ -219,7 +225,7 @@ fn v2_response_enum_value_removed_is_not_breaking() {
         spec["components"]["schemas"]["Item"]["properties"]["state"]["enum"] =
             serde_json::json!(["active"]);
     });
-    let response = operation_change(&changes, "response_schema_changed");
+    let response = component_change(&changes, "Item");
     assert_eq!(response.len(), 1, "{changes:?}");
     assert_eq!(response[0].0, "enum_value_removed");
     assert_eq!(response[0].3, "non_breaking");
@@ -229,7 +235,7 @@ fn v2_response_enum_value_removed_is_not_breaking() {
         spec["components"]["schemas"]["ItemInput"]["properties"]["status"]["enum"] =
             serde_json::json!(["active"]);
     });
-    let request = operation_change(&changes, "request_schema_changed");
+    let request = component_change(&changes, "ItemInput");
     assert_eq!(request.len(), 1, "{changes:?}");
     assert_eq!(request[0].0, "enum_value_removed");
     assert_eq!(request[0].3, "breaking");
@@ -248,16 +254,16 @@ fn v2_whole_enum_keyword_follows_direction() {
     };
 
     let (changes, code) = type_array_changes(drop("Item", "state"));
-    let response = operation_change(&changes, "response_schema_changed");
+    let response = component_change(&changes, "Item");
     assert_eq!(response.len(), 1, "{changes:?}");
-    assert_eq!(response[0].2, "/properties/state/enum");
+    assert_eq!(response[0].2, "/types/Item/properties/state/enum");
     assert_eq!(response[0].3, "review");
     assert_eq!(code, Some(0));
 
     let (changes, code) = type_array_changes(drop("ItemInput", "status"));
-    let request = operation_change(&changes, "request_schema_changed");
+    let request = component_change(&changes, "ItemInput");
     assert_eq!(request.len(), 1, "{changes:?}");
-    assert_eq!(request[0].2, "/properties/status/enum");
+    assert_eq!(request[0].2, "/types/ItemInput/properties/status/enum");
     assert_eq!(request[0].3, "non_breaking");
     assert_eq!(code, Some(0));
 }
@@ -292,7 +298,8 @@ fn dropped_request_enum_json_shape_in_v1_and_v2() {
             .filter(|c| {
                 c["details"]["schema_change"]["pointer"] == "/properties/status/enum"
                     && (c["kind"] == "request_schema_changed"
-                        || c["native_kind"] == "request_schema_changed")
+                        || (c["native_kind"] == "component_schema_changed"
+                            && c["details"]["direction"] == "request"))
             })
             .collect();
         assert_eq!(matches.len(), 1, "{document}");
@@ -302,13 +309,19 @@ fn dropped_request_enum_json_shape_in_v1_and_v2() {
     let v2 = request_change(&run("2"));
     assert_eq!(v2["kind"], "constraint_changed");
     assert_eq!(v2["severity"], "non_breaking");
-    assert_eq!(v2["native"]["pointer"], "/properties/status/enum");
+    assert_eq!(
+        v2["native"]["pointer"],
+        "/types/ItemInput/properties/status/enum"
+    );
+    assert_eq!(v2["details"]["component"], "ItemInput");
+    assert_eq!(v2["uses"].as_array().map(Vec::len), Some(1));
     assert_eq!(v2["details"]["schema_change"]["target"], "other");
     assert_eq!(v2["details"]["schema_change"]["operation"], "removed");
     assert_eq!(v2["details"]["schema_change"]["member"], Value::Null);
 
     let v1 = request_change(&run("1"));
     assert_eq!(v1["kind"], "request_schema_changed");
+    assert_eq!(v1["details"]["component"], "ItemInput");
     assert_eq!(v1["severity"], "non_breaking");
     assert_eq!(v1["details"]["schema_change"]["target"], "other");
     assert_eq!(v1["details"]["schema_change"]["operation"], "removed");

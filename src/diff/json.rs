@@ -17,9 +17,19 @@
 //! file paths and `file_sha256` are deliberately left out: a future change to
 //! the severity rule table must not change any ID. The `vc1_` prefix and the
 //! `"v": 1` field both version the construction; any future change to it bumps
-//! both. A change behind a shared `$ref` yields one record per affected
-//! endpoint, each with its own ID, because the endpoint is part of the hash
-//! input.
+//! both.
+//!
+//! # Shared components
+//!
+//! A change inside a `$ref` target is found once per component (#181) but
+//! still yields one record per affected operation schema (parameter, request
+//! body or response), each with its own ID because the endpoint is part of
+//! the hash input: the usual `parameter_schema_changed`,
+//! `request_schema_changed` or `response_schema_changed` kind, with
+//! `component` (and `old_component` when a reference was retargeted) in
+//! `details`, and a `pointer` relative to that component. Before 2.3.0 there
+//! was one record per reference *path*, with the pointer into the fully
+//! inlined schema.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -27,9 +37,10 @@ use sha2::{Digest, Sha256};
 use std::fmt::Write as _;
 
 use crate::diff::{
-    Change, ChangeKind, Deltas, Location, Severity, SpecDiff, ValueChange, ValueChangeKind, locate,
-    severity,
+    Change, ChangeKind, ComponentRef, Deltas, Location, Severity, SpecDiff, UseLocation,
+    ValueChange, ValueChangeKind, locate, severity,
 };
+use crate::report::EndpointRef;
 use crate::utils::decode_json_pointer_token;
 
 // ── output types ────────────────────────────────────────────────────────────
@@ -77,7 +88,9 @@ pub struct JsonSide {
     pub file_sha256: String,
 }
 
-/// Counts matching the human-readable diff summary.
+/// Counts matching the human-readable diff summary. The severity counts
+/// count records, so a shared-component change counts once per affected
+/// operation schema (the Markdown summary counts it once per direction).
 #[derive(Debug, Serialize, Deserialize)]
 pub struct JsonSummary {
     /// Number of operations added.
@@ -155,7 +168,7 @@ pub enum JsonChangeKind {
 }
 
 /// Impact classification used by the JSON contract.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum JsonSeverity {
     /// Existing API clients can break.
@@ -289,6 +302,13 @@ fn deserialize_present_value<'de, D: serde::Deserializer<'de>>(
 /// lowercase-hex SHA-256 of the original input file bytes; `deltas` is passed
 /// only under `--report`.
 pub fn to_json(diff: &SpecDiff, deltas: Option<&Deltas>, old_sha: &str, new_sha: &str) -> JsonDiff {
+    let changes: Vec<JsonChange> = diff.changes.iter().flat_map(json_records).collect();
+    let count = |level: JsonSeverity| {
+        changes
+            .iter()
+            .filter(|change| change.severity == level)
+            .count()
+    };
     JsonDiff {
         schema_version: 1,
         generator: JsonGenerator {
@@ -309,11 +329,11 @@ pub fn to_json(diff: &SpecDiff, deltas: Option<&Deltas>, old_sha: &str, new_sha:
             endpoints_added: diff.endpoints_added(),
             endpoints_removed: diff.endpoints_removed(),
             endpoints_changed: diff.endpoints_changed(),
-            breaking: diff.count(Severity::Breaking),
-            non_breaking: diff.count(Severity::NonBreaking),
-            review: diff.count(Severity::Review),
+            breaking: count(JsonSeverity::Breaking),
+            non_breaking: count(JsonSeverity::NonBreaking),
+            review: count(JsonSeverity::Review),
         },
-        changes: diff.changes.iter().map(json_change).collect(),
+        changes,
         deltas: deltas.map(|deltas| JsonDeltas {
             hygiene: deltas
                 .hygiene
@@ -356,37 +376,108 @@ pub fn change_id(change: &JsonChange) -> String {
     format!("vc1_{}", sha256_hex(canonical_json(&value).as_bytes()))
 }
 
+/// The records of one change: one, or for a shared-component change one per
+/// affected use (see the module docs).
+fn json_records(change: &Change) -> Vec<JsonChange> {
+    let level = severity(change);
+    match &change.kind {
+        ChangeKind::ComponentSchemaChanged {
+            component,
+            change: value,
+            uses,
+            ..
+        } => uses
+            .iter()
+            .map(|use_| {
+                record(
+                    &use_.endpoint,
+                    component_kind_and_details(component, value, &use_.location),
+                    level,
+                )
+            })
+            .collect(),
+        kind => vec![record(&change.endpoint, json_kind_and_details(kind), level)],
+    }
+}
+
+#[cfg(test)]
 fn json_change(change: &Change) -> JsonChange {
-    let (kind, details) = json_kind_and_details(&change.kind);
+    record(
+        &change.endpoint,
+        json_kind_and_details(&change.kind),
+        severity(change),
+    )
+}
+
+fn record(
+    endpoint: &EndpointRef,
+    (kind, details): (JsonChangeKind, JsonDetails),
+    level: Severity,
+) -> JsonChange {
     let mut record = JsonChange {
         id: String::new(),
         endpoint: JsonEndpoint {
-            method: change.endpoint.method.clone(),
-            path: change.endpoint.path.clone(),
+            method: endpoint.method.clone(),
+            path: endpoint.path.clone(),
         },
         kind,
-        severity: severity(change).into(),
+        severity: level.into(),
         details,
     };
     record.id = change_id(&record);
     record
 }
 
+/// Builds the insertion-ordered details map for a record.
+fn details(entries: Vec<(&'static str, Value)>) -> JsonDetails {
+    JsonDetails(
+        entries
+            .into_iter()
+            .map(|(key, value)| (key.to_string(), value))
+            .collect(),
+    )
+}
+
+/// The `(kind, details)` of a shared-component change's record for one use:
+/// the kind that use's own schema changes have, plus `component` (and
+/// `old_component` for a retargeted reference) before `schema_change`.
+pub(crate) fn component_kind_and_details(
+    component: &ComponentRef,
+    change: &ValueChange,
+    location: &UseLocation,
+) -> (JsonChangeKind, JsonDetails) {
+    use serde_json::json;
+    let (kind, mut entries) = match location {
+        UseLocation::Parameter { name, location } => (
+            JsonChangeKind::ParameterSchemaChanged,
+            vec![("name", json!(name)), ("location", json!(location))],
+        ),
+        UseLocation::RequestBody { .. } => (JsonChangeKind::RequestSchemaChanged, Vec::new()),
+        UseLocation::Response { status } => (
+            JsonChangeKind::ResponseSchemaChanged,
+            vec![("status", json!(status))],
+        ),
+    };
+    entries.extend(component_entries(component));
+    entries.push(("schema_change", json!(json_schema_change(change))));
+    (kind, details(entries))
+}
+
+/// `component`, plus `old_component` when the reference was retargeted.
+pub(crate) fn component_entries(component: &ComponentRef) -> Vec<(&'static str, Value)> {
+    let mut entries = vec![("component", Value::String(component.new.clone()))];
+    if component.renamed() {
+        entries.push(("old_component", Value::String(component.old.clone())));
+    }
+    entries
+}
+
 /// Maps a [`ChangeKind`] to its contract `(kind, details)` pair. One arm per
 /// variant, so adding a variant fails to compile here instead of silently
-/// missing from the JSON contract.
-fn json_kind_and_details(kind: &ChangeKind) -> (JsonChangeKind, JsonDetails) {
+/// missing from the JSON contract. A shared-component change maps to the
+/// record of its first use (the change's own `endpoint`).
+pub(crate) fn json_kind_and_details(kind: &ChangeKind) -> (JsonChangeKind, JsonDetails) {
     use serde_json::json;
-
-    /// Builds the insertion-ordered details map for a record.
-    fn details(entries: Vec<(&'static str, Value)>) -> JsonDetails {
-        JsonDetails(
-            entries
-                .into_iter()
-                .map(|(key, value)| (key.to_string(), value))
-                .collect(),
-        )
-    }
 
     match kind {
         ChangeKind::EndpointAdded => (JsonChangeKind::EndpointAdded, details(Vec::new())),
@@ -492,6 +583,12 @@ fn json_kind_and_details(kind: &ChangeKind) -> (JsonChangeKind, JsonDetails) {
                 ("schema_change", json!(json_schema_change(change))),
             ]),
         ),
+        ChangeKind::ComponentSchemaChanged {
+            component,
+            change,
+            uses,
+            ..
+        } => component_kind_and_details(component, change, &uses[0].location),
     }
 }
 
@@ -507,7 +604,7 @@ impl From<Severity> for JsonSeverity {
 
 // ── schema_change ───────────────────────────────────────────────────────────
 
-fn json_schema_change(change: &ValueChange) -> JsonSchemaChange {
+pub(crate) fn json_schema_change(change: &ValueChange) -> JsonSchemaChange {
     let at_root = change.pointer.is_empty();
     let (target, member) = target_and_member(&change.pointer);
 
@@ -1158,19 +1255,38 @@ mod tests {
         assert_eq!(document.summary.endpoints_added, diff.endpoints_added());
         assert_eq!(document.summary.endpoints_removed, diff.endpoints_removed());
         assert_eq!(document.summary.endpoints_changed, diff.endpoints_changed());
-        assert_eq!(document.summary.breaking, diff.count(Severity::Breaking));
+        // Severity counts count records: a shared-component change has one
+        // record per affected use (#181).
+        let records = |level: JsonSeverity| {
+            document
+                .changes
+                .iter()
+                .filter(|c| c.severity == level)
+                .count()
+        };
+        assert_eq!(document.summary.breaking, records(JsonSeverity::Breaking));
         assert_eq!(
             document.summary.non_breaking,
-            diff.count(Severity::NonBreaking)
+            records(JsonSeverity::NonBreaking)
         );
-        assert_eq!(document.summary.review, diff.count(Severity::Review));
-        assert_eq!(document.changes.len(), diff.changes.len());
+        assert_eq!(document.summary.review, records(JsonSeverity::Review));
+        assert_eq!(document.summary.breaking, diff.count(Severity::Breaking));
+        assert_eq!(
+            (
+                document.summary.non_breaking,
+                diff.count(Severity::NonBreaking)
+            ),
+            (8, 4)
+        );
+        // `Widget` gained `pricing` (+ required) behind three responses.
+        assert_eq!(document.changes.len(), diff.changes.len() + 4);
         // Order follows SpecDiff::changes, and IDs are unique in the document.
         let mut ids: Vec<&str> = document.changes.iter().map(|c| c.id.as_str()).collect();
         let expected_order: Vec<String> = diff
             .changes
             .iter()
-            .map(|change| json_change(change).id)
+            .flat_map(json_records)
+            .map(|record| record.id)
             .collect();
         let actual_order: Vec<String> = document.changes.iter().map(|c| c.id.clone()).collect();
         assert_eq!(actual_order, expected_order);

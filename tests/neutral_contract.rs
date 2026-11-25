@@ -212,15 +212,37 @@ fn escaped_named_refs_compositions_and_mixed_usage_keep_coherent_ids() {
     let mut new = value.clone();
     new["components"]["schemas"]["A/B~C"]["properties"]["~field/"]["type"] = json!("integer");
     let facts = openapi_diff(&old, &parse(&new));
+    // The shared type is reached from a request (the `filter` parameter) and a
+    // response (through `Widget`): one directional fact per usage direction at
+    // the type, with the reaching uses as context (#181).
+    let directional: Vec<_> = facts
+        .iter()
+        .filter(|c| c.native_kind == "component_schema_changed")
+        .collect();
+    assert_eq!(directional.len(), 2, "{directional:#?}");
+    for fact in &directional {
+        assert_eq!(fact.subject, ty.id);
+        assert_eq!(fact.kind, ChangeKind::FieldTypeChanged);
+        assert_eq!(fact.severity, Severity::Breaking);
+        assert_eq!(fact.details["component"], "A/B~C");
+        assert_eq!(
+            fact.details["schema_change"]["pointer"],
+            "/properties/~0field~1/type"
+        );
+        assert_eq!(fact.uses.len(), 1, "{fact:#?}");
+        assert!(
+            matches!(&fact.native, NativeLocation::Openapi { method: None, pointer, resolved: false, .. }
+            if pointer == "/types/A~1B~0C/properties/~0field~1/type")
+        );
+    }
+    assert_eq!(directional[0].details["direction"], "request");
+    assert_eq!(directional[1].details["direction"], "response");
+    assert_ne!(directional[0].uses, directional[1].uses);
+    // The independent named-type facts stay review.
     assert!(
         facts
             .iter()
-            .any(|c| c.kind == ChangeKind::ArgumentTypeChanged && c.severity == Severity::Breaking)
-    );
-    assert!(
-        facts
-            .iter()
-            .filter(|c| c.subject == ty.id)
+            .filter(|c| c.subject == ty.id && c.native_kind == "surface_changed")
             .all(|c| c.severity == Severity::Review)
     );
     let ids: std::collections::BTreeSet<_> = facts.iter().map(|c| &c.id).collect();
@@ -358,21 +380,22 @@ fn inline_deprecation_and_swagger_query_defaults_and_constraints_are_v2_facts() 
         .iter()
         .filter(|c| c.kind == ChangeKind::DeprecatedChanged)
         .collect();
+    // References are edges (#181): a deprecation inside a shared component is
+    // the named type's own fact, reported once rather than once per use.
     assert_eq!(
         ref_deprecations.len(),
-        2,
-        "one independent named-type fact and one operation use fact"
+        1,
+        "one independent named-type fact: {ref_deprecations:#?}"
     );
-    assert!(ref_deprecations.iter().any(|c| matches!(
-        &c.native,
-        NativeLocation::Openapi {
-            method: Some(_),
-            status: Some(_),
-            resolved: true,
-            ..
-        }
-    )));
     assert!(ref_deprecations.iter().any(|c| matches!(&c.native, NativeLocation::Openapi { method:None, pointer, .. } if pointer.starts_with("/types/Shared"))));
+    // A deprecation beside the `$ref` at the use site is still the use's.
+    let mut sibling = ref_old.clone();
+    sibling["paths"]["/widgets"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]
+        ["deprecated"] = json!(true);
+    let sibling_changes = openapi_diff(&parse(&ref_old), &parse(&sibling));
+    assert!(sibling_changes.iter().any(|c| c.kind == ChangeKind::DeprecatedChanged
+        && matches!(&c.native, NativeLocation::Openapi { method: Some(_), status: Some(_), pointer, .. } if pointer == "/deprecated")),
+        "{sibling_changes:#?}");
 
     let swagger = |default: i64, maximum: i64| {
         json!({
@@ -679,23 +702,19 @@ fn later_request_media_type_deprecation_is_omitted() {
                     )
             })
     );
+    // A deprecated first-media-type component is the named type's fact
+    // (#181), reported once like any other change inside a shared component.
     let mut ref_first = ref_old.clone();
     ref_first["components"]["schemas"]["FirstBody"]["deprecated"] = json!(true);
-    assert!(
-        openapi_diff(&parse(&ref_old), &parse(&ref_first))
-            .iter()
-            .any(|change| {
-                change.kind == ChangeKind::DeprecatedChanged
-                    && matches!(
-                        &change.native,
-                        NativeLocation::Openapi {
-                            method: Some(_),
-                            parameter_in: Some(location),
-                            ..
-                        } if location == "body"
-                    )
-            })
-    );
+    let facts: Vec<_> = openapi_diff(&parse(&ref_old), &parse(&ref_first))
+        .into_iter()
+        .filter(|change| change.kind == ChangeKind::DeprecatedChanged)
+        .collect();
+    assert_eq!(facts.len(), 1, "{facts:#?}");
+    assert!(matches!(
+        &facts[0].native,
+        NativeLocation::Openapi { method: None, pointer, .. } if pointer.starts_with("/types/FirstBody")
+    ));
 }
 
 #[test]

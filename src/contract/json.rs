@@ -22,7 +22,8 @@ pub struct Summary {
     pub operations_added: usize,
     /// Removed operations.
     pub operations_removed: usize,
-    /// Surviving changed operations (including argument/result facts).
+    /// Surviving changed operations (including argument/result facts and the
+    /// uses of changed shared types).
     pub operations_changed: usize,
     /// Breaking facts.
     pub breaking: usize,
@@ -161,26 +162,33 @@ pub fn to_json(
                 .map(|c| c.subject.as_str()),
         )
         .collect();
+    // The surviving operation containing `id`, if any.
+    fn operation_of<'e>(
+        entities: &std::collections::HashMap<&'e str, &'e super::Entity>,
+        surviving: &BTreeSet<&str>,
+        mut id: &'e str,
+    ) -> Option<&'e str> {
+        let mut visited = BTreeSet::new();
+        while visited.insert(id) {
+            let entity = entities.get(id)?;
+            if entity.kind == super::EntityKind::Operation {
+                return surviving.contains(id).then_some(id);
+            }
+            id = entity.parent.as_deref()?;
+        }
+        None
+    }
+    // A fact about a shared type changes every operation that uses it.
     let operations_changed = changes
         .iter()
-        .filter_map(|change| {
-            if matches!(
+        .filter(|change| {
+            !matches!(
                 change.kind,
                 super::ChangeKind::OperationAdded | super::ChangeKind::OperationRemoved
-            ) {
-                return None;
-            }
-            let mut id = change.subject.as_str();
-            let mut visited = BTreeSet::new();
-            while visited.insert(id) {
-                let entity = entities.get(id)?;
-                if entity.kind == super::EntityKind::Operation {
-                    return surviving.contains(id).then_some(id);
-                }
-                id = entity.parent.as_deref()?;
-            }
-            None
+            )
         })
+        .flat_map(|change| std::iter::once(&change.subject).chain(&change.uses))
+        .filter_map(|id| operation_of(&entities, &surviving, id))
         .collect::<BTreeSet<_>>()
         .len();
     let summary = Summary {
