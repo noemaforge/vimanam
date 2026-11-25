@@ -34,8 +34,9 @@ use anyhow::Result;
 use indexmap::IndexSet;
 
 use crate::markdown::{
-    SchemaUse, definition_section_tokens, detail_level_name, estimate_tokens,
-    inline_expansion_tokens, render, service_is_visible, short_schema_reference, visible_endpoints,
+    ResolvedConfig, SchemaUse, definition_section_tokens, detail_level_name, estimate_tokens,
+    inline_expansion_tokens, render_resolved, resolve_schema_depth, service_is_visible,
+    short_schema_reference, visible_endpoints,
 };
 use crate::models::{
     AdditionalProperties, ApiDocumentation, DocConfig, Endpoint, OperationRef, OperationSelector,
@@ -93,6 +94,11 @@ pub(crate) struct CostReport {
     pub detail_name: String,
     /// Whether the analyzed configuration renders schemas inline.
     pub inline_schemas: bool,
+    /// `--schema-depth` chosen automatically for a large selected slice
+    /// (#160); TOTAL, every slice and every schema row use it.
+    pub auto_schema_depth: Option<usize>,
+    /// The matching stderr notice.
+    pub notice: Option<String>,
     /// Tokens of one render of the whole filtered document; 0 when nothing is
     /// visible.
     pub total_tokens: usize,
@@ -111,10 +117,15 @@ pub(crate) struct CostReport {
 const HOTSPOT_LIMIT: usize = 5;
 
 pub(crate) fn compute(doc: &ApiDocumentation, config: &DocConfig) -> Result<CostReport> {
+    // Decide the effective schema depth once: TOTAL, slices and schema rows
+    // must all measure the same render (an explicit `--schema-depth` and the
+    // automatic bound for a large selection give identical rows).
+    let resolved = resolve_schema_depth(doc, config);
+    let config: &DocConfig = &resolved.config;
     // One whole-document render: the TOTAL plus the exact use-site
     // observations (which schemas the render linked, and how often).
     let mut whole = Vec::new();
-    let rendered = render(&mut whole, doc, config)?;
+    let rendered = render_resolved(&mut whole, doc, &resolved)?;
     let visible = visible_endpoints(doc, config);
     let total_tokens = if visible.is_empty() {
         0
@@ -125,7 +136,7 @@ pub(crate) fn compute(doc: &ApiDocumentation, config: &DocConfig) -> Result<Cost
     let endpoints: Vec<EndpointCost> = visible
         .iter()
         .map(|endpoint| {
-            let tokens = estimate_slice(doc, config, endpoint)?;
+            let tokens = estimate_slice(doc, &resolved, endpoint)?;
             let share = share_of(tokens, total_tokens);
             Ok(EndpointCost {
                 operation: format!("{} {}", endpoint.method, endpoint.path),
@@ -147,6 +158,8 @@ pub(crate) fn compute(doc: &ApiDocumentation, config: &DocConfig) -> Result<Cost
     Ok(CostReport {
         detail_name: detail_level_name(&config.detail_level).to_string(),
         inline_schemas: config.inline_schemas,
+        auto_schema_depth: resolved.auto_depth(),
+        notice: resolved.notice.clone(),
         total_tokens,
         endpoints,
         schemas,
@@ -162,9 +175,10 @@ pub(crate) fn compute(doc: &ApiDocumentation, config: &DocConfig) -> Result<Cost
 /// and schema mode all stay in effect.
 fn estimate_slice(
     doc: &ApiDocumentation,
-    config: &DocConfig,
+    resolved: &ResolvedConfig,
     endpoint: &Endpoint,
 ) -> Result<usize> {
+    let config: &DocConfig = &resolved.config;
     let mut slice_config = config.clone();
     let mut operations = IndexSet::new();
     operations.insert(OperationRef {
@@ -179,8 +193,14 @@ fn estimate_slice(
         slice_config.service_filter = Some(vec![service.to_string()]);
     }
 
+    // Measure at the resolved depth: slices never re-decide it, so a
+    // whole-document analysis is not bounded per slice while TOTAL is not.
+    let slice = ResolvedConfig {
+        config: std::borrow::Cow::Owned(slice_config),
+        notice: resolved.notice.clone(),
+    };
     let mut buffer = Vec::new();
-    render(&mut buffer, doc, &slice_config)?;
+    render_resolved(&mut buffer, doc, &slice)?;
     Ok(estimate_tokens(&buffer))
 }
 
@@ -413,6 +433,13 @@ pub(crate) fn write_costs<W: Write>(writer: &mut W, report: &CostReport) -> Resu
         "Mode: --detail {}, schemas {}. {TOTAL_LABEL}: ~{} tokens (one render of the whole filtered document).",
         report.detail_name, schema_mode, report.total_tokens
     )?;
+    if let Some(depth) = report.auto_schema_depth {
+        writeln!(
+            writer,
+            "Schema depth: automatic --schema-depth {depth} (the selection reaches more than {} component schemas); every row is measured at this depth.",
+            crate::markdown::AUTO_SCHEMA_DEPTH_THRESHOLD
+        )?;
+    }
     writeln!(writer)?;
 
     writeln!(writer, "{ENDPOINTS_HEADER}")?;
@@ -641,6 +668,8 @@ mod tests {
         CostReport {
             detail_name: "full".into(),
             inline_schemas: false,
+            auto_schema_depth: None,
+            notice: None,
             total_tokens: 2000,
             endpoints: vec![
                 EndpointCost {

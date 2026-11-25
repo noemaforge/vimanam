@@ -53,8 +53,8 @@ Conversion flags cannot be combined with subcommands (`diff`, `completions`, `ma
 | `--detail <summary\|basic\|standard\|full>` | `summary` | Amount of endpoint detail rendered |
 | `--include-schemas` | `false` | Render request and response schema tables (effective only at `--detail full`) |
 | `--inline-schemas` | `false` | Expand `$ref` schemas inline instead of linking to `Schema Definitions` |
-| `--schema-depth <0..=24>` | unbounded | Cap schema traversal edges from each root (`0` keeps roots only) |
-| `--schema <NAME>` | — | Read named schema directly with full metadata (repeatable) |
+| `--schema-depth <0..=24>` | unbounded; `2` for a `--schema` / `--schema-field` / `--operation` slice reaching more than 200 component schemas | Cap schema traversal edges from each root (`0` keeps roots only) |
+| `--schema <NAME>` | — | Read named schema directly with full metadata (repeatable); bounded at depth 2 when it reaches more than 200 component schemas |
 | `--schema-field <NAME#POINTER>` | — | Read schema subtree and ancestor metadata via RFC 6901 pointer (repeatable) |
 | `--include-examples` | `false` | Include request/response examples (effective only at `--detail full`) |
 | `--include-auth` | `false` | Include servers and security schemes |

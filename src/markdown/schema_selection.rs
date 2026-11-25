@@ -200,9 +200,15 @@ pub(super) fn render<W: Write>(
         "# {} — Selected schemas\n",
         super::split::escape(&doc.title)
     )?;
+    let named = match config.schema_depth {
+        Some(depth) => format!(
+            "named-schema selectors retain complete schemas up to --schema-depth {depth}, with deeper branches replaced by retrieval commands"
+        ),
+        None => "named-schema selectors retain complete schemas".to_string(),
+    };
     writeln!(
         writer,
-        "> Explicit schema read. Field selectors omit unselected sibling subtrees and their references; named-schema selectors retain complete schemas. Absence here does not mean absence from the spec.\n"
+        "> Explicit schema read. Field selectors omit unselected sibling subtrees and their references; {named}. Absence here does not mean absence from the spec.\n"
     )?;
     if config.operation_selector.is_some() {
         writeln!(writer, "## Operation context\n")?;

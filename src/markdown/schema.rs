@@ -98,12 +98,16 @@ pub(super) struct Omission {
     depth: usize,
     field: String,
     command: String,
+    /// `METHOD path` when the row belongs to an operation body, whose field
+    /// paths are relative to that body and so only distinct per operation.
+    operation: Option<String>,
 }
 
 /// Collapses omission notices into one stderr line per retrieval command, in
 /// first-seen order (#161). A single field keeps the original one-line form;
-/// several fields sharing a command report their count, depth range and the
-/// first few field paths.
+/// several fields sharing a command report their distinct count (a field is
+/// identified by its operation and path), depth range, the first few field
+/// paths, and how many operations contributed when more than one did.
 pub(super) fn summarize_omissions(omissions: Vec<Omission>) -> Vec<String> {
     const EXAMPLES: usize = 3;
     let mut groups: IndexMap<String, Vec<Omission>> = IndexMap::new();
@@ -115,17 +119,7 @@ pub(super) fn summarize_omissions(omissions: Vec<Omission>) -> Vec<String> {
     }
     groups
         .into_iter()
-        .map(|(command, mut group)| {
-            // Exact duplicates (the same row rendered on several split pages)
-            // count once; order stays first-seen.
-            let mut unique = HashSet::new();
-            group.retain(|omission| unique.insert((omission.depth, omission.field.clone())));
-            if let [single] = group.as_slice() {
-                return format!(
-                    "vimanam: omitted nested schema expansion at depth {} for {}; retrieve full detail: {command}",
-                    single.depth, single.field
-                );
-            }
+        .map(|(command, group)| {
             let low = group.iter().map(|o| o.depth).min().unwrap_or(0);
             let high = group.iter().map(|o| o.depth).max().unwrap_or(0);
             let depth = if low == high {
@@ -133,24 +127,44 @@ pub(super) fn summarize_omissions(omissions: Vec<Omission>) -> Vec<String> {
             } else {
                 format!("depths {low}-{high}")
             };
-            let mut fields: HashSet<&str> = HashSet::new();
-            let names: Vec<&str> = group
+            // Distinct fields (operation + path); the same row rendered on
+            // several split pages or cut at two depths counts once.
+            let mut seen = HashSet::new();
+            let fields: Vec<&Omission> = group
+                .iter()
+                .filter(|o| seen.insert((o.operation.as_deref(), o.field.as_str())))
+                .collect();
+            let operations: HashSet<&str> =
+                group.iter().filter_map(|o| o.operation.as_deref()).collect();
+            if let [single] = fields.as_slice() {
+                return format!(
+                    "vimanam: omitted nested schema expansion at {depth} for {}; retrieve full detail: {command}",
+                    single.field
+                );
+            }
+            let mut names = HashSet::new();
+            let distinct_names: Vec<&str> = fields
                 .iter()
                 .map(|o| o.field.as_str())
-                .filter(|field| fields.insert(field))
+                .filter(|field| names.insert(*field))
                 .collect();
-            let mut examples = names
+            let mut examples = distinct_names
                 .iter()
                 .take(EXAMPLES)
                 .copied()
                 .collect::<Vec<_>>()
                 .join(", ");
-            if names.len() > EXAMPLES {
+            if distinct_names.len() > EXAMPLES {
                 examples.push_str(", ...");
             }
+            let across = if operations.len() > 1 {
+                format!(" across {} operations", operations.len())
+            } else {
+                String::new()
+            };
             format!(
-                "vimanam: omitted nested schema expansion at {depth} for {} fields ({examples}); retrieve full detail: {command}",
-                group.len()
+                "vimanam: omitted nested schema expansion at {depth} for {} fields{across} ({examples}); retrieve full detail: {command}",
+                fields.len()
             )
         })
         .collect()
@@ -1003,10 +1017,12 @@ fn push_cutoff_row(
             (Some(label), true) => label.clone(),
             _ => field.to_string(),
         };
+        let operation = ctx.current_operation.clone();
         ctx.omissions.push(Omission {
             depth,
             field,
             command,
+            operation,
         });
     }
     rows.push(SchemaRow {
@@ -1631,7 +1647,49 @@ mod tests {
             depth,
             field: field.into(),
             command: command.into(),
+            operation: None,
         }
+    }
+
+    fn op_omission(operation: &str, field: &str, command: &str) -> Omission {
+        Omission {
+            operation: Some(operation.into()),
+            ..omission(2, field, command)
+        }
+    }
+
+    #[test]
+    fn field_cut_at_two_depths_counts_once() {
+        assert_eq!(
+            summarize_omissions(vec![omission(2, "a", "c"), omission(3, "a", "c")]),
+            [
+                "vimanam: omitted nested schema expansion at depths 2-3 for a; retrieve full detail: c"
+            ]
+        );
+        assert_eq!(
+            summarize_omissions(vec![
+                omission(2, "a", "c"),
+                omission(3, "a", "c"),
+                omission(2, "b", "c"),
+            ]),
+            [
+                "vimanam: omitted nested schema expansion at depths 2-3 for 2 fields (a, b); retrieve full detail: c"
+            ]
+        );
+    }
+
+    #[test]
+    fn same_path_in_different_operations_counts_per_operation() {
+        assert_eq!(
+            summarize_omissions(vec![
+                op_omission("POST /a", "node", "c"),
+                op_omission("POST /b", "node", "c"),
+                op_omission("POST /b", "other", "c"),
+            ]),
+            [
+                "vimanam: omitted nested schema expansion at depth 2 for 3 fields across 2 operations (node, other); retrieve full detail: c"
+            ]
+        );
     }
 
     #[test]

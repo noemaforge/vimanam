@@ -1030,3 +1030,93 @@ fn omission_notices_are_grouped_by_retrieval_command() {
         )
     );
 }
+
+fn section<'a>(text: &'a str, header: &str) -> &'a str {
+    let start = text.find(header).expect(header);
+    &text[start..]
+}
+
+// Review of #160: --costs resolves the depth once, so the automatic bound and an
+// explicit `--schema-depth 2` measure identical schema rows, and the report says
+// the depth was automatic.
+#[test]
+fn costs_under_automatic_bound_match_explicit_depth() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = write_spec(&dir, "graph.json", &large_cyclic_spec());
+    let slice = [
+        path.as_str(),
+        "--costs",
+        "--operation-id",
+        "CreateNode",
+        "--detail",
+        "full",
+        "--include-schemas",
+    ];
+    let (auto, auto_err) = run_output(&slice);
+    let mut explicit_args = slice.to_vec();
+    explicit_args.extend(["--schema-depth", "2"]);
+    let (explicit, explicit_err) = run_output(&explicit_args);
+
+    assert_eq!(
+        auto_err.lines().next(),
+        Some(AUTO_DEPTH_NOTICE),
+        "{auto_err}"
+    );
+    assert!(explicit_err.is_empty(), "{explicit_err}");
+    assert!(auto.contains(
+        "Schema depth: automatic --schema-depth 2 (the selection reaches more than 200 component schemas); every row is measured at this depth."
+    ));
+    assert!(!explicit.contains("Schema depth: automatic"));
+    // Schema rows are measured at the same depth. TOTAL and the slice differ
+    // only by the Markdown note the automatic bound adds under the title.
+    let schemas = |text: &str| {
+        let table = section(text, "SCHEMAS");
+        table[..table.find("HOTSPOTS").unwrap()].to_string()
+    };
+    assert_eq!(schemas(&auto), schemas(&explicit));
+    assert_eq!(
+        section(&auto, "Most amplifying schemas"),
+        section(&explicit, "Most amplifying schemas")
+    );
+}
+
+#[test]
+fn stats_and_markdown_announce_automatic_bound() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = write_spec(&dir, "graph.json", &large_cyclic_spec());
+    let (_, stats_err) = run_output(&[
+        &path,
+        "--stats",
+        "--operation-id",
+        "CreateNode",
+        "--detail",
+        "full",
+        "--include-schemas",
+    ]);
+    assert_eq!(
+        stats_err.lines().next(),
+        Some(AUTO_DEPTH_NOTICE),
+        "{stats_err}"
+    );
+
+    let out = dir.path().join("out.md");
+    let (_, _) = run_output(&[
+        &path,
+        "--schema",
+        "Node0",
+        "-o",
+        out.to_str().unwrap(),
+        "--no-report",
+    ]);
+    let markdown = std::fs::read_to_string(out).unwrap();
+    assert!(
+        markdown.starts_with(
+            "# Graph — Selected schemas\n\n> Schema expansion is bounded at --schema-depth 2: this selection reaches more than 200 component schemas."
+        ),
+        "{markdown}"
+    );
+    assert!(markdown.contains(
+        "named-schema selectors retain complete schemas up to --schema-depth 2, with deeper branches replaced by retrieval commands."
+    ));
+    assert!(!markdown.contains("\n\n\n"), "{markdown}");
+}
