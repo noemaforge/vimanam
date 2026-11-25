@@ -189,11 +189,18 @@ pub(crate) fn render_resolved<W: Write>(
     };
     let mut buffer = Vec::new();
     let rendered = render_configured(&mut buffer, doc, &resolved.config)?;
-    // Every view and the schema selection start with a `# title` line.
-    let split = buffer
-        .iter()
-        .position(|byte| *byte == b'\n')
-        .map_or(0, |index| index + 1);
+    // Every view starts with `# {title}` written verbatim, so a title holding
+    // a newline spans several lines; the schema selection escapes its title
+    // onto one line. Place the note after the whole title either way.
+    let views_title = format!("# {}\n", doc.title);
+    let split = if buffer.starts_with(views_title.as_bytes()) {
+        views_title.len()
+    } else {
+        buffer
+            .iter()
+            .position(|byte| *byte == b'\n')
+            .map_or(0, |index| index + 1)
+    };
     writer.write_all(&buffer[..split])?;
     write!(
         writer,

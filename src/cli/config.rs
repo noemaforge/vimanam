@@ -103,8 +103,9 @@ pub struct Cli {
 
     /// Maximum schema traversal edges from a root (properties/items/composition/$ref).
     /// Zero retains only roots. Without selectors requires full detail with schemas.
-    /// Default: unbounded, except a --schema/--schema-field/--operation slice whose
-    /// roots reach more than 200 component schemas, which is bounded at 2.
+    /// Default: unbounded, except a selected slice (standalone --schema/--schema-field,
+    /// or --operation/--operation-id with --detail full --include-schemas) whose roots
+    /// transitively reach more than 200 component schemas, which is bounded at 2.
     #[arg(long, value_name = "N")]
     pub schema_depth: Option<usize>,
 

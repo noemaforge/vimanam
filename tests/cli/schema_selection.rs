@@ -1120,3 +1120,46 @@ fn stats_and_markdown_announce_automatic_bound() {
     ));
     assert!(!markdown.contains("\n\n\n"), "{markdown}");
 }
+
+// A multi-line `info.title` is written verbatim by the views; the bound note
+// must follow the whole title, not split it.
+#[test]
+fn automatic_bound_note_follows_multi_line_title() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut spec = large_cyclic_spec();
+    spec["info"]["title"] = serde_json::json!("Graph\nSecond line");
+    let path = write_spec(&dir, "graph.json", &spec);
+    let (stdout, _) = run_output(&[
+        &path,
+        "--operation-id",
+        "CreateNode",
+        "--detail",
+        "full",
+        "--include-schemas",
+        "--no-report",
+    ]);
+    assert!(
+        stdout.starts_with(
+            "# Graph\nSecond line\n\n> Schema expansion is bounded at --schema-depth 2:"
+        ),
+        "{stdout}"
+    );
+}
+
+// Whole documents are never auto-bounded, in --stats and --costs either.
+#[test]
+fn whole_document_stats_and_costs_are_not_auto_bounded() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = write_spec(&dir, "graph.json", &large_cyclic_spec());
+    for mode in ["--stats", "--costs"] {
+        let (stdout, stderr) = run_output(&[&path, mode, "--detail", "full", "--include-schemas"]);
+        assert!(
+            !stdout.contains("Schema depth: automatic"),
+            "{mode}: {stdout}"
+        );
+        assert!(
+            !stderr.contains("bounding schema expansion"),
+            "{mode}: {stderr}"
+        );
+    }
+}
