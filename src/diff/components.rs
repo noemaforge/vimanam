@@ -8,7 +8,7 @@
 
 use std::collections::HashSet;
 
-use indexmap::IndexMap;
+use indexmap::{IndexMap, IndexSet};
 use serde_json::Value;
 
 use super::{Change, ChangeKind, ComponentRef, Direction, SchemaUse, ValueChange, value_changes};
@@ -82,14 +82,9 @@ impl<'r, 'a> Components<'r, 'a> {
     /// component order), per change, one record per usage direction that
     /// reaches the pair.
     pub(super) fn finish(self) -> Vec<Change> {
-        // Pair names -> the reference strings first seen for them.
-        let mut pairs: IndexMap<(String, String), (String, String)> = IndexMap::new();
-        let intern = |edge: RefEdge, pairs: &mut IndexMap<(String, String), (String, String)>| {
-            let entry = pairs.entry(edge.names);
-            let index = entry.index();
-            entry.or_insert(edge.refs);
-            index
-        };
+        let mut pairs: IndexSet<(String, String)> = IndexSet::new();
+        let intern =
+            |edge: RefEdge, pairs: &mut IndexSet<(String, String)>| pairs.insert_full(edge.names).0;
         let use_targets: Vec<Vec<usize>> = self
             .use_edges
             .iter()
@@ -108,10 +103,10 @@ impl<'r, 'a> Components<'r, 'a> {
         let mut pair_changes: Vec<Vec<ValueChange>> = Vec::new();
         let mut next = 0;
         while next < pairs.len() {
-            let ((old, new), (old_ref, new_ref)) = pairs.get_index(next).expect("interned");
+            let (old, new) = pairs.get_index(next).expect("interned");
             let (changes, edges) = self.local_changes(
-                &self.resolver.old.component_value(old, old_ref),
-                &self.resolver.new.component_value(new, new_ref),
+                &self.resolver.old.component_value(old),
+                &self.resolver.new.component_value(new),
             );
             pair_changes.push(changes);
             pair_targets.push(
@@ -144,7 +139,7 @@ impl<'r, 'a> Components<'r, 'a> {
             .filter(|&index| !pair_changes[index].is_empty())
             .collect();
         changed.sort_by_cached_key(|&index| {
-            let (old, new) = pairs.get_index(index).expect("interned").0;
+            let (old, new) = pairs.get_index(index).expect("interned");
             (
                 position(self.resolver.old.schemas, old),
                 position(self.resolver.new.schemas, new),
@@ -155,7 +150,7 @@ impl<'r, 'a> Components<'r, 'a> {
 
         let mut out = Vec::new();
         for index in changed {
-            let (old, new) = pairs.get_index(index).expect("interned").0;
+            let (old, new) = pairs.get_index(index).expect("interned");
             let component = ComponentRef {
                 old: old.clone(),
                 new: new.clone(),

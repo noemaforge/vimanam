@@ -2049,10 +2049,40 @@ mod tests {
         );
     }
 
+    /// `(endpoint path, kind label, pointer, severity)` of every change.
+    fn rows(result: &SpecDiff) -> Vec<(String, &'static str, String, Severity)> {
+        result
+            .changes
+            .iter()
+            .map(|change| {
+                let (label, pointer) = match &change.kind {
+                    ChangeKind::ResponseSchemaChanged { change: value, .. } => {
+                        ("response", value.pointer.clone())
+                    }
+                    ChangeKind::ComponentSchemaChanged {
+                        component,
+                        change: value,
+                        ..
+                    } => (
+                        "component",
+                        format!("{}->{}{}", component.old, component.new, value.pointer),
+                    ),
+                    other => panic!("unexpected {other:?}"),
+                };
+                (
+                    change.endpoint.path.clone(),
+                    label,
+                    pointer,
+                    severity(change),
+                )
+            })
+            .collect()
+    }
+
     #[test]
-    fn a_component_declared_on_one_side_compares_against_the_literal_ref() {
-        // Before 2.3 resolution left an undeclared target as the literal
-        // `{"$ref": ...}`; the component pair keeps exactly that comparison.
+    fn a_component_declared_on_one_side_is_compared_at_the_use_site() {
+        // Resolution leaves an undeclared target as the literal
+        // `{"$ref": ...}`; that comparison stays at the use, as before 2.3.
         let r = json!({"$ref": "#/components/schemas/Pet"});
         let old = component_doc(
             json!({}),
@@ -2062,20 +2092,96 @@ mod tests {
             json!({"Pet": {"type": "object"}}),
             json!({"/p": {"get": {"responses": ok(r)}}}),
         );
-        let result = diff(&old, &new);
-        let rows: Vec<(&str, Severity)> = result
-            .changes
-            .iter()
-            .map(|change| match &change.kind {
-                ChangeKind::ComponentSchemaChanged { change: value, .. } => {
-                    (value.pointer.as_str(), severity(change))
-                }
-                other => panic!("unexpected {other:?}"),
-            })
-            .collect();
         assert_eq!(
-            rows,
-            vec![("/$ref", Severity::Review), ("/type", Severity::Breaking)]
+            rows(&diff(&old, &new)),
+            vec![
+                ("/p".into(), "response", "/$ref".into(), Severity::Review),
+                ("/p".into(), "response", "/type".into(), Severity::Breaking),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_removed_alias_is_not_a_retarget_of_its_target() {
+        // #182 review: `Alias` (a bare `$ref` to the unchanged `Base`) is
+        // deleted while `GET /a` still references it.
+        let r = |name: &str| json!({"$ref": format!("#/components/schemas/{name}")});
+        let base = json!({"type": "object", "properties": {"a": {"type": "string"}}});
+        let paths = json!({"/a": {"get": {"responses": ok(r("Alias"))}}});
+        let old = component_doc(
+            json!({"Alias": r("Base"), "Base": base.clone()}),
+            paths.clone(),
+        );
+        let new = component_doc(json!({"Base": base}), paths);
+        let result = diff(&old, &new);
+        assert_eq!(
+            rows(&result),
+            vec![
+                (
+                    "/a".into(),
+                    "response",
+                    "/properties/a".into(),
+                    Severity::Breaking
+                ),
+                ("/a".into(), "response", "/type".into(), Severity::Breaking),
+                ("/a".into(), "response", "/$ref".into(), Severity::Review),
+            ]
+        );
+
+        // The same along a chain: L0 -> L1 -> L2 -> Leaf, and L1 is deleted.
+        let chain = |with_l1: bool| {
+            let mut schemas = json!({
+                "L0": r("L1"), "L1": r("L2"), "L2": r("Leaf"), "Leaf": {"type": "string"}
+            });
+            if !with_l1 {
+                schemas.as_object_mut().unwrap().remove("L1");
+            }
+            component_doc(schemas, json!({"/c": {"get": {"responses": ok(r("L0"))}}}))
+        };
+        // L0 itself is declared on both sides and its reference now dangles:
+        // a real change inside L0, never a retarget along the chain.
+        let result = diff(&chain(true), &chain(false));
+        assert_eq!(
+            rows(&result),
+            vec![
+                (
+                    "/c".into(),
+                    "component",
+                    "L0->L0/type".into(),
+                    Severity::Breaking
+                ),
+                (
+                    "/c".into(),
+                    "component",
+                    "L0->L0/$ref".into(),
+                    Severity::Review
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_recursive_component_behind_an_overriding_sibling_is_reported_once() {
+        // #182 review: the use expands `X` in place (its `nullable` sibling
+        // overrides it); X's own self-reference is that same pair again.
+        let x = |v: &str| {
+            json!({"type": "object", "properties": {
+                "self": {"$ref": "#/components/schemas/X"}, "v": {"type": v}
+            }})
+        };
+        let paths = json!({"/x": {"get": {"responses": ok(
+            json!({"$ref": "#/components/schemas/X", "nullable": true})
+        )}}});
+        let old = component_doc(json!({"X": x("string")}), paths.clone());
+        let new = component_doc(json!({"X": x("integer")}), paths);
+        assert_eq!(
+            rows(&diff(&old, &new)),
+            vec![(
+                "/x".into(),
+                "response",
+                "/properties/v/type".into(),
+                Severity::Breaking
+            )]
         );
     }
 

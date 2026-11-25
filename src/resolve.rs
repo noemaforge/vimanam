@@ -339,16 +339,14 @@ impl<'a> PairResolver<'a> {
 
 // ── refs as edges (#181) ────────────────────────────────────────────────────
 
-/// A `$ref` on the old side and one on the new side at the same position:
-/// `diff` compares each pair of target names once, instead of inlining both
-/// targets at every position that reaches them.
+/// A `$ref` on the old side and one on the new side at the same position,
+/// each to a component its own document declares: `diff` compares each pair
+/// of target names once, instead of inlining both targets at every position
+/// that reaches them.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct RefEdge {
     /// Old and new component names: the pair's identity.
     pub(crate) names: (String, String),
-    /// The old and new `$ref` strings as written, standing in for a target
-    /// that one document does not declare.
-    pub(crate) refs: (String, String),
 }
 
 /// Keys whose values canonicalisation drops from a schema object; refs under
@@ -410,13 +408,12 @@ struct LocalWalk<'w> {
 }
 
 impl DocResolver<'_> {
-    /// The serialized component `name`, or, when this document does not
-    /// declare it, the literal `{"$ref": reference}`, which is what resolution
-    /// leaves in place of an unresolvable reference.
-    pub(crate) fn component_value(&self, name: &str, reference: &str) -> Value {
+    /// The serialized component `name` (declared: edges only ever name
+    /// declared components), or `Null`.
+    pub(crate) fn component_value(&self, name: &str) -> Value {
         self.component(name)
             .map(|value| value.as_ref().clone())
-            .unwrap_or_else(|| serde_json::json!({ "$ref": reference }))
+            .unwrap_or(Value::Null)
     }
 
     /// Whether this document declares component `name`.
@@ -467,7 +464,8 @@ impl PairResolver<'_> {
     /// from the new one) for a comparison that treats references as edges.
     ///
     /// Walking both in parallel, wherever both sides hold a component `$ref`
-    /// (and at least one target exists), the pair of target names is appended
+    /// whose target its own document declares, the pair of target names is
+    /// appended
     /// to `edges` and the `$ref` keys are dropped from both sides, so the
     /// local comparison sees only annotation siblings; the caller compares
     /// the targets once per pair. Where only one side holds a component
@@ -517,19 +515,27 @@ impl PairResolver<'_> {
                     walk.new_stack.pop();
                     return out;
                 }
-                let (old_ref, new_ref) = (component_ref(before), component_ref(after));
+                // Only a reference whose own document declares its target is
+                // a component reference; an undeclared one stays as written,
+                // exactly as resolution leaves it.
+                let old_ref = component_ref(before).filter(|name| self.old.declares(name));
+                let new_ref = component_ref(after).filter(|name| self.new.declares(name));
                 match (old_ref, new_ref) {
-                    (Some(a), Some(b)) if self.old.declares(&a) || self.new.declares(&b) => {
+                    (Some(a), Some(b)) => {
                         let reference = |map: &Map<String, Value>| {
                             map.get("$ref")
                                 .and_then(Value::as_str)
                                 .unwrap_or_default()
                                 .to_string()
                         };
-                        walk.edges.push(RefEdge {
-                            names: (a, b),
-                            refs: (reference(before), reference(after)),
-                        });
+                        // A pair already being expanded in place on this chain
+                        // (behind an overriding sibling) is compared right
+                        // here; reaching it again is a cycle, as in resolution.
+                        let expanding = walk.old_stack.contains(&reference(before))
+                            && walk.new_stack.contains(&reference(after));
+                        if !expanding {
+                            walk.edges.push(RefEdge { names: (a, b) });
+                        }
                         let strip = |map: &Map<String, Value>| -> Map<String, Value> {
                             map.iter()
                                 .filter(|(key, _)| *key != "$ref")

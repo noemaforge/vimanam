@@ -2,7 +2,7 @@
 //! type facts are review because a type can occur in both input and output.
 use super::*;
 use crate::diff::{self, Location, ValueChange, ValueChangeKind};
-use crate::resolve::{DocResolver, PairResolver, contains_ref, schema_json};
+use crate::resolve::{DocResolver, PairResolver, RefEdge, contains_ref, schema_json};
 use crate::{ApiDocumentation, Endpoint, Schema};
 use serde_json::json;
 use std::collections::{HashMap, HashSet};
@@ -831,7 +831,10 @@ fn compare_aligned(
     // edges (#181): a deprecation inside a shared component is the type's own
     // fact, reported once; this pass finds those beside a `$ref` or where a
     // use switched between inline and referenced form. The subject and
-    // native coordinate remain use-site specific.
+    // native coordinate remain use-site specific. A reference retargeted to a
+    // differently named component is no type's own change, so the edges each
+    // use reaches are collected for `retarget_deprecation_facts`.
+    let mut use_edges: Vec<(RefEdge, String)> = Vec::new();
     for before in &old.endpoints {
         let Some(&after) = new_by_key.get(&(before.method.as_str(), before.path.as_str())) else {
             continue;
@@ -869,10 +872,11 @@ fn compare_aligned(
             {
                 continue;
             }
+            let mut edges = Vec::new();
             let (left, right) = resolver.localize(
                 &left_json.unwrap_or_else(|| extensions_value(&parameter.extensions)),
                 &right_json.unwrap_or_else(|| extensions_value(&next.extensions)),
-                &mut Vec::new(),
+                &mut edges,
             );
             let subject = entity_id(
                 Format::Openapi,
@@ -883,6 +887,7 @@ fn compare_aligned(
                     escape(&parameter.name)
                 ),
             );
+            use_edges.extend(edges.into_iter().map(|edge| (edge, subject.clone())));
             append_deprecation_facts(
                 &mut changes,
                 &subject,
@@ -909,12 +914,14 @@ fn compare_aligned(
             {
                 continue;
             }
-            let (left, right) = resolver.localize(&left, &right, &mut Vec::new());
+            let mut edges = Vec::new();
+            let (left, right) = resolver.localize(&left, &right, &mut edges);
             let subject = entity_id(
                 Format::Openapi,
                 EntityKind::Result,
                 &format!("{root}/results/{}", escape(status)),
             );
+            use_edges.extend(edges.into_iter().map(|edge| (edge, subject.clone())));
             append_deprecation_facts(
                 &mut changes,
                 &subject,
@@ -926,6 +933,7 @@ fn compare_aligned(
             );
         }
     }
+    retarget_deprecation_facts(&mut changes, resolver, use_edges);
     for e in &old.endpoints {
         if let Some(&next) = new_by_key.get(&(e.method.as_str(), e.path.as_str())) {
             let before = pagination(e, &resolver.old);
@@ -1044,6 +1052,135 @@ fn component_fact(
     };
     fact.refresh_id();
     fact
+}
+
+/// Deprecation changes across retargeted references (#181 review): where a
+/// use's `$ref` moved from component `A` to a differently named `B`, directly
+/// or through components it reaches, `A` against `B` is no type's own change,
+/// so the independent type facts cannot report it. Each such pair is compared
+/// once for `deprecated` keywords and reported at the new type, with
+/// `old_component` in details and the reaching uses as context.
+fn retarget_deprecation_facts(
+    changes: &mut Vec<Change>,
+    resolver: &PairResolver,
+    use_edges: Vec<(RefEdge, String)>,
+) {
+    let relevant =
+        |edge: &RefEdge| edge.names.0 != edge.names.1 || !resolver.is_stable(&edge.names.0);
+    let mut pairs: indexmap::IndexSet<(String, String)> = indexmap::IndexSet::new();
+    let mut direct: Vec<Vec<String>> = Vec::new();
+    let mut sources: Vec<Vec<usize>> = Vec::new();
+    let intern = |names: (String, String),
+                  pairs: &mut indexmap::IndexSet<(String, String)>,
+                  direct: &mut Vec<Vec<String>>,
+                  sources: &mut Vec<Vec<usize>>| {
+        let (index, added) = pairs.insert_full(names);
+        if added {
+            direct.push(Vec::new());
+            sources.push(Vec::new());
+        }
+        index
+    };
+    for (edge, subject) in use_edges.into_iter().filter(|(edge, _)| relevant(edge)) {
+        let index = intern(edge.names, &mut pairs, &mut direct, &mut sources);
+        if !direct[index].contains(&subject) {
+            direct[index].push(subject);
+        }
+    }
+    if !pairs.iter().any(|(old, new)| old != new) {
+        return;
+    }
+    let mut retargeted: Vec<(usize, Value, Value)> = Vec::new();
+    let mut next = 0;
+    while next < pairs.len() {
+        let (old, new) = pairs.get_index(next).expect("interned").clone();
+        let mut edges = Vec::new();
+        let (left, right) = resolver.localize(
+            &resolver.old.component_value(&old),
+            &resolver.new.component_value(&new),
+            &mut edges,
+        );
+        for edge in edges.into_iter().filter(relevant) {
+            let target = intern(edge.names, &mut pairs, &mut direct, &mut sources);
+            if !sources[target].contains(&next) {
+                sources[target].push(next);
+            }
+        }
+        if old != new {
+            retargeted.push((next, left, right));
+        }
+        next += 1;
+    }
+    for (index, before, after) in retargeted {
+        let (old, new) = pairs.get_index(index).expect("interned");
+        // Every use whose reference closure contains this pair.
+        let mut visited = vec![false; pairs.len()];
+        let mut stack = vec![index];
+        visited[index] = true;
+        let mut uses: Vec<String> = Vec::new();
+        while let Some(pair) = stack.pop() {
+            for subject in &direct[pair] {
+                if !uses.contains(subject) {
+                    uses.push(subject.clone());
+                }
+            }
+            for &source in &sources[pair] {
+                if !visited[source] {
+                    visited[source] = true;
+                    stack.push(source);
+                }
+            }
+        }
+        // Deterministic, whatever order the closure was walked in.
+        uses.sort();
+        let mut values = Vec::new();
+        diff::diff_values(
+            &semantic_attributes(&before),
+            &semantic_attributes(&after),
+            &mut String::new(),
+            &mut values,
+        );
+        let coordinate = format!("/types/{}", escape(new));
+        for value in values
+            .into_iter()
+            .filter(|v| is_schema_deprecation_pointer(&v.pointer))
+        {
+            let presence = |side: Option<&Value>| match side {
+                Some(v) => json!({"present":true,"value":v}),
+                None => json!({"present":false}),
+            };
+            let (before, after) = match &value.kind {
+                ValueChangeKind::Added(v) => (presence(None), presence(Some(v))),
+                ValueChangeKind::Removed(v) => (presence(Some(v)), presence(None)),
+                ValueChangeKind::Changed { old, new } => (presence(Some(old)), presence(Some(new))),
+            };
+            let mut fact = Change {
+                id: String::new(),
+                subject: entity_id(Format::Openapi, EntityKind::Type, &coordinate),
+                kind: ChangeKind::DeprecatedChanged,
+                severity: Severity::Review,
+                impacts: vec!["source".into()],
+                native: native(
+                    None,
+                    &format!("{coordinate}{}", value.pointer),
+                    None,
+                    None,
+                    false,
+                ),
+                native_kind: "schema_deprecation".into(),
+                details: json!({
+                    "component": new,
+                    "old_component": old,
+                    "pointer": value.pointer,
+                    "before": before,
+                    "after": after,
+                }),
+                uses: uses.clone(),
+            };
+            fact.refresh_id();
+            changes.push(fact);
+        }
+    }
 }
 
 fn promote_schema_fact_to_use_root(change: &mut Change, old: &Contract, new: &Contract) {

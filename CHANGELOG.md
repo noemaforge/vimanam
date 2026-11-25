@@ -41,7 +41,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `parameter_schema_changed` facts whose IDs hashed an argument or result
     subject and a resolved pointer; suppression lists keyed on those IDs
     need the new IDs. A deprecation inside a shared component is now only the
-    named type's own (unchanged) fact, not also one per use.
+    named type's own (unchanged) fact, not also one per use; a deprecation
+    across a reference retargeted from `A` to `B` is one `schema_deprecation`
+    fact at `B` with `old_component` and the reaching uses. A reference to a
+    component its document does not declare is compared at the use site, as
+    before.
     `summary.operations_changed` counts the operations in `uses`.
   - **Contract v1 (`--contract 1`).** v1 adopts the component comparison but
     keeps its one-record-per-affected-endpoint shape: one record per use (the

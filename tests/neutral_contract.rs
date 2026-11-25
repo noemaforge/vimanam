@@ -749,3 +749,50 @@ fn continuation_property_order_is_not_a_pagination_change() {
             .any(|change| change.kind == ChangeKind::PaginationChanged)
     );
 }
+
+#[test]
+fn retargeted_refs_keep_deprecation_facts() {
+    // #182 review: the response moves from `$ref A` to `$ref B`, where B marks
+    // a field (or itself) deprecated. A against B is no type's own change.
+    for (b, pointer) in [
+        (
+            json!({"type":"object","properties":{"n":{"type":"string","deprecated":true}}}),
+            "/properties/n/deprecated",
+        ),
+        (json!({"type":"object","deprecated":true}), "/deprecated"),
+    ] {
+        let a = if pointer == "/deprecated" {
+            json!({"type":"object"})
+        } else {
+            json!({"type":"object","properties":{"n":{"type":"string"}}})
+        };
+        let mut old = spec();
+        old["components"]["schemas"]["A"] = a;
+        old["components"]["schemas"]["B"] = b;
+        old["paths"]["/widgets"]["get"]["responses"]["200"]["content"]["application/json"]["schema"] =
+            json!({"$ref":"#/components/schemas/A"});
+        let mut new = old.clone();
+        new["paths"]["/widgets"]["get"]["responses"]["200"]["content"]["application/json"]["schema"] =
+            json!({"$ref":"#/components/schemas/B"});
+        let facts: Vec<_> = openapi_diff(&parse(&old), &parse(&new))
+            .into_iter()
+            .filter(|c| c.kind == ChangeKind::DeprecatedChanged)
+            .collect();
+        assert_eq!(facts.len(), 1, "{pointer}: {facts:#?}");
+        let fact = &facts[0];
+        assert_eq!(fact.native_kind, "schema_deprecation");
+        assert_eq!(fact.severity, Severity::Review);
+        assert_eq!(fact.details["component"], "B");
+        assert_eq!(fact.details["old_component"], "A");
+        assert_eq!(fact.details["pointer"], pointer);
+        assert_eq!(
+            fact.details["after"],
+            json!({"present": true, "value": true})
+        );
+        assert_eq!(fact.uses.len(), 1);
+        assert!(
+            matches!(&fact.native, NativeLocation::Openapi { method: None, pointer: p, resolved: false, .. }
+            if p == &format!("/types/B{pointer}"))
+        );
+    }
+}
