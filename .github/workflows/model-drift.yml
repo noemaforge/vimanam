@@ -1,0 +1,37 @@
+name: model-drift
+
+# Reports Lean models in formal/VimanamProofs/ whose Rust changed since they
+# were last read (formal/models.toml, scripts/formal/check-model-drift.py).
+# Drift is a reminder to re-read the model and bump it, so it is a warning
+# annotation on the changed Rust, not a failure; a broken manifest (a model
+# with no entry, a ref that no longer resolves) fails. Whether the Rust and
+# the model still agree is checked by the oracle replay in `cargo test`.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/diff/**'
+      - 'formal/**'
+      - 'scripts/formal/**'
+      - '.github/workflows/model-drift.yml'
+  pull_request:
+    paths:
+      - 'src/diff/**'
+      - 'formal/**'
+      - 'scripts/formal/**'
+      - '.github/workflows/model-drift.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  drift:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Check model drift
+        run: python3 -I scripts/formal/check-model-drift.py

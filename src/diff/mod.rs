@@ -59,6 +59,8 @@
 //! byte-identical output.
 
 mod components;
+#[cfg(test)]
+mod formal_oracle;
 pub mod json;
 mod render;
 mod value;
