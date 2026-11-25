@@ -9,9 +9,10 @@
 //! output byte-for-byte identical while avoiding the work it does not need:
 //!
 //! - each component `Schema` is converted to a `Value` once per document;
-//! - [`PairResolver::schemas_equal`] proves, without resolving anything, that
+//! - [`PairResolver::values_equal`] proves, without resolving anything, that
 //!   two schemas resolve to identical values, so unchanged operations skip
-//!   resolution and comparison entirely;
+//!   resolution and comparison entirely ([`PairResolver::resolve_pair`]
+//!   serializes each root once for both the proof and the resolution);
 //! - [`DocResolver::resolve_shallow`] resolves only the top few JSON levels for
 //!   readers (pagination inference) that never look deeper.
 //!
@@ -48,6 +49,20 @@ fn reference_name(reference: &str) -> Option<String> {
         .strip_prefix("#/components/schemas/")
         .or_else(|| reference.strip_prefix("#/definitions/"))
         .map(decode_json_pointer_token)
+}
+
+/// `schema` as JSON, the form every resolution and comparison starts from.
+pub(crate) fn schema_json(schema: &Schema) -> Value {
+    serde_json::to_value(schema).unwrap_or(Value::Null)
+}
+
+/// Whether a `$ref` object appears anywhere in `value`.
+pub(crate) fn contains_ref(value: &Value) -> bool {
+    match value {
+        Value::Object(map) => map.contains_key("$ref") || map.values().any(contains_ref),
+        Value::Array(items) => items.iter().any(contains_ref),
+        _ => false,
+    }
 }
 
 /// Every `$ref` string anywhere in `value`, in document order.
@@ -133,7 +148,7 @@ impl<'a> DocResolver<'a> {
     ///   anything beyond is kept as written. Descending plain objects and
     ///   arrays does not consume the budget.
     pub(crate) fn resolve(&self, schema: &Schema) -> Value {
-        self.resolve_value(&serde_json::to_value(schema).unwrap_or(Value::Null))
+        self.resolve_value(&schema_json(schema))
     }
 
     /// [`Self::resolve`] over an already serialized schema.
@@ -150,7 +165,7 @@ impl<'a> DocResolver<'a> {
     /// above that is identical to the full resolution, so a reader that only
     /// inspects keys of objects at depth `< levels` sees the same data.
     pub(crate) fn resolve_shallow(&self, schema: &Schema, levels: usize) -> Value {
-        let value = serde_json::to_value(schema).unwrap_or(Value::Null);
+        let value = schema_json(schema);
         let mut walk = Walk {
             stack: Vec::new(),
             max_levels: levels,
@@ -287,30 +302,47 @@ impl<'a> PairResolver<'a> {
         }
     }
 
-    /// Whether `old` (resolved against the old document) and `new` (against
-    /// the new one) are guaranteed to resolve to identical values: they
+    /// Whether the serialized schemas `before` (resolved against the old
+    /// document) and `after` (against the new one) are guaranteed to resolve to identical values: they
     /// serialize identically and every reference they contain resolves to a
     /// component that is identical on both sides, transitively. Resolution is
     /// a function of the value and the referenced components alone, so the
     /// resolved values are then equal and any comparison of them is empty.
     /// `false` means only "not proven".
-    pub(crate) fn schemas_equal(&self, old: &Schema, new: &Schema) -> bool {
-        let before = serde_json::to_value(old).unwrap_or(Value::Null);
-        let after = serde_json::to_value(new).unwrap_or(Value::Null);
+    pub(crate) fn values_equal(&self, before: &Value, after: &Value) -> bool {
         if before != after {
             return false;
         }
         let mut refs = Vec::new();
-        collect_refs(&before, &mut refs);
+        collect_refs(before, &mut refs);
         refs.into_iter().all(|reference| {
             reference_name(reference).is_none_or(|name| !self.unstable.contains(&name))
         })
+    }
+
+    /// `old` resolved against the old document and `new` against the new
+    /// one, or `None` when [`Self::values_equal`] proves they resolve
+    /// identically. Each root is serialized once for both steps.
+    pub(crate) fn resolve_pair(&self, old: &Schema, new: &Schema) -> Option<(Value, Value)> {
+        let (before, after) = (schema_json(old), schema_json(new));
+        if self.values_equal(&before, &after) {
+            return None;
+        }
+        Some((
+            self.old.resolve_value(&before),
+            self.new.resolve_value(&after),
+        ))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::{DocResolver, MAX_RESOLVE_DEPTH, PairResolver};
+
+    /// The proof as callers use it: `resolve_pair` declines to resolve.
+    fn proven_equal(pair: &PairResolver, old: &Schema, new: &Schema) -> bool {
+        pair.resolve_pair(old, new).is_none()
+    }
     use crate::models::Schema;
     use indexmap::IndexMap;
     use serde_json::{Value, json};
@@ -351,7 +383,7 @@ mod tests {
     }
 
     #[test]
-    fn schemas_equal_proves_unchanged_closures_equal() {
+    fn proof_proves_unchanged_closures_equal() {
         let (old, new) = (graph("string"), graph("string"));
         let pair = PairResolver::new(&old, &new);
         for root in [
@@ -359,42 +391,63 @@ mod tests {
             reference("Node"),
             json!({"type": "integer"}),
         ] {
-            assert!(pair.schemas_equal(&schema(root.clone()), &schema(root)));
+            assert!(proven_equal(&pair, &schema(root.clone()), &schema(root)));
         }
         // A reference that resolves on neither side stays literal on both.
         let dangling = schema(reference("Missing"));
-        assert!(pair.schemas_equal(&dangling, &dangling));
+        assert!(proven_equal(&pair, &dangling, &dangling));
     }
 
     #[test]
-    fn schemas_equal_rejects_a_transitively_changed_reference() {
+    fn proof_rejects_a_transitively_changed_reference() {
         let (old, new) = (graph("string"), graph("integer"));
         let pair = PairResolver::new(&old, &new);
-        assert!(!pair.schemas_equal(&schema(reference("A")), &schema(reference("A"))));
-        assert!(!pair.schemas_equal(&schema(reference("B")), &schema(reference("B"))));
+        assert!(!proven_equal(
+            &pair,
+            &schema(reference("A")),
+            &schema(reference("A"))
+        ));
+        assert!(!proven_equal(
+            &pair,
+            &schema(reference("B")),
+            &schema(reference("B"))
+        ));
         // Components that cannot reach C are still provably equal.
-        assert!(pair.schemas_equal(&schema(reference("Node")), &schema(reference("Node"))));
-        assert!(pair.schemas_equal(&schema(reference("Other")), &schema(reference("Other"))));
+        assert!(proven_equal(
+            &pair,
+            &schema(reference("Node")),
+            &schema(reference("Node"))
+        ));
+        assert!(proven_equal(
+            &pair,
+            &schema(reference("Other")),
+            &schema(reference("Other"))
+        ));
         // And the proof only ever claims equality the resolver confirms.
         let resolved = |resolver: &DocResolver| resolver.resolve(&schema(reference("A")));
         assert_ne!(resolved(&pair.old), resolved(&pair.new));
     }
 
     #[test]
-    fn schemas_equal_rejects_differing_roots_and_one_sided_components() {
+    fn proof_rejects_differing_roots_and_one_sided_components() {
         let old = graph("string");
         let mut new = graph("string");
         new.shift_remove("Other");
         let pair = PairResolver::new(&old, &new);
-        assert!(!pair.schemas_equal(&schema(reference("Other")), &schema(reference("Other"))));
-        assert!(!pair.schemas_equal(
+        assert!(!proven_equal(
+            &pair,
+            &schema(reference("Other")),
+            &schema(reference("Other"))
+        ));
+        assert!(!proven_equal(
+            &pair,
             &schema(json!({"type": "string"})),
             &schema(json!({"type": "integer"}))
         ));
     }
 
     #[test]
-    fn schemas_equal_propagates_changes_around_cycles() {
+    fn proof_propagates_changes_around_cycles() {
         let cycle = |leaf: &str| {
             schemas(&[
                 (
@@ -410,10 +463,18 @@ mod tests {
         };
         let (old, new) = (cycle("string"), cycle("boolean"));
         let pair = PairResolver::new(&old, &new);
-        assert!(!pair.schemas_equal(&schema(reference("P")), &schema(reference("P"))));
+        assert!(!proven_equal(
+            &pair,
+            &schema(reference("P")),
+            &schema(reference("P"))
+        ));
         let unchanged = cycle("string");
         let pair = PairResolver::new(&old, &unchanged);
-        assert!(pair.schemas_equal(&schema(reference("P")), &schema(reference("P"))));
+        assert!(proven_equal(
+            &pair,
+            &schema(reference("P")),
+            &schema(reference("P"))
+        ));
     }
 
     #[test]

@@ -2,7 +2,7 @@
 //! type facts are review because a type can occur in both input and output.
 use super::*;
 use crate::diff::{self, Location, ValueChange, ValueChangeKind};
-use crate::resolve::{DocResolver, PairResolver};
+use crate::resolve::{DocResolver, PairResolver, contains_ref, schema_json};
 use crate::{ApiDocumentation, Endpoint, Schema};
 use serde_json::json;
 use std::collections::{HashMap, HashSet};
@@ -829,26 +829,26 @@ fn compare_aligned(
                 continue;
             }
             // Only ref-bearing schemas can hide a deprecation change the
-            // legacy differ strips; provably identical ones have none.
-            if !(parameter.schema.as_ref().is_some_and(schema_contains_ref)
-                || next.schema.as_ref().is_some_and(schema_contains_ref))
+            // legacy differ strips; provably identical ones have none. Each
+            // schema is serialized once for the ref check, the proof and the
+            // resolution.
+            let left_json = parameter.schema.as_ref().map(schema_json);
+            let right_json = next.schema.as_ref().map(schema_json);
+            if !(left_json.as_ref().is_some_and(contains_ref)
+                || right_json.as_ref().is_some_and(contains_ref))
             {
                 continue;
             }
-            if let (Some(left), Some(right)) = (&parameter.schema, &next.schema)
-                && resolver.schemas_equal(left, right)
+            if let (Some(left), Some(right)) = (&left_json, &right_json)
+                && resolver.values_equal(left, right)
             {
                 continue;
             }
-            let left = parameter
-                .schema
-                .as_ref()
-                .map(|s| resolver.old.resolve(s))
+            let left = left_json
+                .map(|value| resolver.old.resolve_value(&value))
                 .unwrap_or_else(|| extensions_value(&parameter.extensions));
-            let right = next
-                .schema
-                .as_ref()
-                .map(|s| resolver.new.resolve(s))
+            let right = right_json
+                .map(|value| resolver.new.resolve_value(&value))
                 .unwrap_or_else(|| extensions_value(&next.extensions));
             let subject = entity_id(
                 Format::Openapi,
@@ -879,13 +879,14 @@ fn compare_aligned(
             ) else {
                 continue;
             };
-            if !(schema_contains_ref(left) || schema_contains_ref(right))
-                || resolver.schemas_equal(left, right)
+            let (left, right) = (schema_json(left), schema_json(right));
+            if !(contains_ref(&left) || contains_ref(&right))
+                || resolver.values_equal(&left, &right)
             {
                 continue;
             }
-            let left = resolver.old.resolve(left);
-            let right = resolver.new.resolve(right);
+            let left = resolver.old.resolve_value(&left);
+            let right = resolver.new.resolve_value(&right);
             let subject = entity_id(
                 Format::Openapi,
                 EntityKind::Result,
@@ -975,17 +976,6 @@ fn has_operation_schema_root(subject: &str, old: &Contract, new: &Contract) -> b
             .and_then(|id| find(new, id).or_else(|| find(old, id)));
     }
     false
-}
-
-fn schema_contains_ref(schema: &Schema) -> bool {
-    fn has_ref(value: &Value) -> bool {
-        match value {
-            Value::Object(map) => map.contains_key("$ref") || map.values().any(has_ref),
-            Value::Array(items) => items.iter().any(has_ref),
-            _ => false,
-        }
-    }
-    has_ref(&schema_value(schema))
 }
 
 fn append_deprecation_facts(
@@ -1259,7 +1249,8 @@ fn opaque_string(schema: &Value) -> bool {
 /// `type` and `format` it reads. Objects at level 5 and below are never
 /// inspected, so they are left unresolved: fully inlining a list response
 /// (`data: array of a cross-linked object`) can be enormous. Raise this if
-/// `pagination` ever reads deeper.
+/// `pagination` ever reads deeper; `pagination_reads_only_the_shallow_levels`
+/// fails if the two drift apart.
 const PAGINATION_LEVELS: usize = 5;
 
 /// Inferred OpenAPI pagination evidence for one operation, or `None`.
@@ -1283,6 +1274,15 @@ const PAGINATION_LEVELS: usize = 5;
 /// `null` and the fact's ID changes (pinned by
 /// `evidence_2_0_0_on_one_side_with_broader_evidence_on_the_other_changes_the_id`).
 fn pagination(e: &Endpoint, resolver: &DocResolver) -> Option<Value> {
+    pagination_with(e, &|schema| {
+        resolver.resolve_shallow(schema, PAGINATION_LEVELS)
+    })
+}
+
+/// [`pagination`] with the 2xx response resolution supplied by the caller,
+/// so `pagination_reads_only_the_shallow_levels` can check that full and
+/// shallow resolution yield the same evidence.
+fn pagination_with(e: &Endpoint, resolve: &dyn Fn(&Schema) -> Value) -> Option<Value> {
     let query = || e.parameters.iter().filter(|p| p.parameter_in == "query");
     let mut controls: Vec<Value> = query()
         .filter(|p| PAGINATION_CONTROLS.contains(&p.name.as_str()))
@@ -1298,10 +1298,7 @@ fn pagination(e: &Endpoint, resolver: &DocResolver) -> Option<Value> {
         .responses
         .iter()
         .filter(|(s, _)| s.starts_with('2'))
-        .filter_map(|(s, r)| {
-            crate::markdown::response_schema(r)
-                .map(|schema| (s, resolver.resolve_shallow(schema, PAGINATION_LEVELS)))
-        })
+        .filter_map(|(s, r)| crate::markdown::response_schema(r).map(|schema| (s, resolve(schema))))
         .collect();
     let mut legacy: Vec<Value> = resolved
         .iter()
@@ -1422,4 +1419,104 @@ fn pagination_strength(evidence: &Value) -> (&'static str, String) {
         },
         rule,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{PAGINATION_LEVELS, pagination_with};
+    use crate::models::ApiDocumentation;
+    use crate::resolve::DocResolver;
+    use serde_json::{Value, json};
+
+    /// Pagination evidence for every endpoint, resolving 2xx responses either
+    /// fully or down to `levels` JSON levels.
+    fn evidence(api: &ApiDocumentation, levels: usize) -> Vec<Option<Value>> {
+        let resolver = DocResolver::new(&api.schemas);
+        api.endpoints
+            .iter()
+            .map(|e| pagination_with(e, &|schema| resolver.resolve_shallow(schema, levels)))
+            .collect()
+    }
+
+    /// Continuation, end-flag and list fields reached only through `$ref`s at
+    /// JSON levels 2 to 6 of a 2xx response, under every pagination rule.
+    fn deep_ref_spec() -> ApiDocumentation {
+        let r = |name: &str| json!({"$ref": format!("#/components/schemas/{name}")});
+        let responses = [
+            r("Body"),
+            json!({"allOf": [r("Body")]}),
+            json!({"$ref": "#/components/schemas/Body", "description": "sibling"}),
+            json!({"type": "object", "properties": {"items": r("List"), "meta": r("Meta")}}),
+        ];
+        let paths: serde_json::Map<String, Value> = responses
+            .iter()
+            .enumerate()
+            .flat_map(|(i, response)| {
+                ["page_token", "starting_after", "cursor"].map(|control| {
+                    (
+                        format!("/r{i}/{control}"),
+                        json!({"get": {
+                            "operationId": format!("r{i}_{control}"),
+                            "parameters": [
+                                {"name": "limit", "in": "query", "schema": {"type": "integer"}},
+                                {"name": control, "in": "query", "schema": {"type": "string"}}
+                            ],
+                            "responses": {"200": {"description": "ok", "content": {"application/json": {"schema": response}}}}
+                        }}),
+                    )
+                })
+            })
+            .collect();
+        let spec = json!({
+            "openapi": "3.0.3",
+            "info": {"title": "Deep", "version": "1"},
+            "paths": paths,
+            "components": {"schemas": {
+                "Tok": {"type": "string"},
+                "Flag": {"type": "boolean"},
+                "When": {"type": "string", "format": "date-time"},
+                "Item": {"type": "object", "properties": {"id": r("Tok"), "self": r("Item")}},
+                "List": {"type": "array", "items": r("Item")},
+                "Meta": {"type": "object", "properties": {
+                    "next_cursor": r("Tok"), "has_more": r("Flag"), "deep": r("Deep")
+                }},
+                "Deep": {"type": "object", "properties": {"cursor": r("Tok"), "next": r("Meta")}},
+                "Body": {"type": "object", "properties": {
+                    "data": r("List"), "page": r("Meta"), "next_page_token": r("Tok"),
+                    "starting_after": r("When"), "is_last": r("Flag")
+                }}
+            }}
+        });
+        crate::parse_openapi_bytes(&serde_json::to_vec(&spec).unwrap(), "json", None).unwrap()
+    }
+
+    #[test]
+    fn pagination_reads_only_the_shallow_levels() {
+        let mut specs = vec![("deep_ref_spec".to_string(), deep_ref_spec())];
+        let fixtures = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+        for entry in std::fs::read_dir(fixtures).unwrap() {
+            let path = entry.unwrap().path();
+            if matches!(
+                path.extension().and_then(|e| e.to_str()),
+                Some("json" | "yaml")
+            ) && let Ok(api) = crate::parse_openapi(&path)
+            {
+                specs.push((path.display().to_string(), api));
+            }
+        }
+        assert!(specs.len() > 20, "fixtures were not found");
+        for (name, api) in &specs {
+            assert_eq!(
+                evidence(api, PAGINATION_LEVELS),
+                evidence(api, usize::MAX),
+                "{name}: pagination reads deeper than PAGINATION_LEVELS"
+            );
+        }
+        // The generated spec is sensitive to the cut: one level fewer loses
+        // evidence, so the equality above is not vacuous.
+        let deep = deep_ref_spec();
+        let full = evidence(&deep, usize::MAX);
+        assert!(full.iter().filter(|e| e.is_some()).count() >= 6, "{full:?}");
+        assert_ne!(evidence(&deep, PAGINATION_LEVELS - 1), full);
+    }
 }

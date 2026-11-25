@@ -836,13 +836,22 @@ fn diff_parameter_pair(
         });
     }
 
-    if let (Some(old_schema), Some(new_schema)) = (&old_param.schema, &new_param.schema)
-        && resolver.schemas_equal(old_schema, new_schema)
-    {
-        return;
-    }
-    let old_schema = parameter_schema_value(old_param, &resolver.old);
-    let new_schema = parameter_schema_value(new_param, &resolver.new);
+    let (old_schema, new_schema) = match (&old_param.schema, &new_param.schema) {
+        (Some(old_schema), Some(new_schema)) => {
+            let Some((mut old_schema, mut new_schema)) =
+                resolver.resolve_pair(old_schema, new_schema)
+            else {
+                return;
+            };
+            canonicalize_schema_value(&mut old_schema);
+            canonicalize_schema_value(&mut new_schema);
+            (old_schema, new_schema)
+        }
+        _ => (
+            parameter_schema_value(old_param, &resolver.old),
+            parameter_schema_value(new_param, &resolver.new),
+        ),
+    };
     for change in value_changes(&old_schema, &new_schema) {
         changes.push(Change {
             endpoint: endpoint.clone(),
@@ -899,13 +908,20 @@ fn schema_changes(
     new: Option<&crate::models::Schema>,
     resolver: &PairResolver,
 ) -> Vec<ValueChange> {
-    if let (Some(old), Some(new)) = (old, new)
-        && resolver.schemas_equal(old, new)
-    {
-        return Vec::new();
-    }
-    let old = optional_schema_value(old, &resolver.old);
-    let new = optional_schema_value(new, &resolver.new);
+    let (old, new) = match (old, new) {
+        (Some(old), Some(new)) => {
+            let Some((mut old, mut new)) = resolver.resolve_pair(old, new) else {
+                return Vec::new();
+            };
+            canonicalize_schema_value(&mut old);
+            canonicalize_schema_value(&mut new);
+            (old, new)
+        }
+        (old, new) => (
+            optional_schema_value(old, &resolver.old),
+            optional_schema_value(new, &resolver.new),
+        ),
+    };
     value_changes(&old, &new)
 }
 
