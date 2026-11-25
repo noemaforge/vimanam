@@ -415,6 +415,86 @@ theorem operation_id (o n : Bool) :
     severity (.operationIdChanged o n) = .nonBreaking ↔ (o = false ∧ n = true) := by
   cases o <;> cases n <;> simp [severity]
 
+/-! ## Shared components (#181)
+
+A change inside a shared `$ref` component is reported once per (component
+pair, pointer, usage direction), with a pointer relative to the component.
+The theorems below say its verdict is the one each inlined occurrence would
+get: the component's table follows its direction, and a reach through `not`
+is Review like any change under `not`. -/
+
+/-- The inlined form of a component change: a request or response schema
+change at the occurrence's pointer. -/
+def inline : Direction → Pointer → Kind → Change
+  | .request, p, k => .requestSchemaChanged p k
+  | .response, p, k => .responseSchemaChanged p k
+
+theorem locateGo_append_general (n : Node) (loc : Loc) (pre q : Pointer) :
+    locateGo n loc (pre ++ q) = locateGo (walk n pre) (locateGo n loc pre) q := by
+  induction pre generalizing n loc with
+  | nil => rfl
+  | cons t ts ih => exact ih _ _
+
+/-- Below a schema position, `locate` of a non-empty pointer does not depend
+on the prefix that reached it. -/
+theorem locate_append_schema (pre p : Pointer) (h : walk .schema pre = .schema) (hp : p ≠ []) :
+    locate (pre ++ p) = locate p := by
+  cases p with
+  | nil => exact absurd rfl hp
+  | cons s ss =>
+    unfold locate
+    rw [locateGo_append_general, h]
+    rfl
+
+theorem underNot_append_schema (pre p : Pointer) (h : walk .schema pre = .schema) :
+    underNot (pre ++ p) = (underNot pre || underNot p) := by
+  rw [underNot, underNotGo_append, h, underNot, underNot]
+
+theorem bodyDropped_of_ne (p : Pointer) (k : Kind) (hp : p ≠ []) : bodyDropped p k = false := by
+  unfold bodyDropped; split <;> simp_all
+
+/-- `severity` on `ComponentSchemaChanged` with a plain reach uses the table
+of its direction: the request table for parameters and request bodies, the
+response table for responses. So every direction theorem above holds for
+component changes too. -/
+theorem component_follows_direction (d : Direction) (p : Pointer) (k : Kind) :
+    severity (.componentSchemaChanged d false p k) = severity (inline d p k) := by
+  cases d <;> rfl
+
+/-- `severity` on `ComponentSchemaChanged` reached through `not` is Review,
+whatever the change. -/
+theorem component_negated_review (d : Direction) (p : Pointer) (k : Kind) :
+    severity (.componentSchemaChanged d true p k) = .review := by
+  cases d <;> rfl
+
+/-- Reporting a component change once gives each occurrence's verdict: for a
+`$ref` sitting in schema position at `pre` in an operation's schema (not
+under `not`), the component change at `p` gets the verdict the inlined change
+at `pre ++ p` gets. The component's root (`p = []`) is the exception: there
+the root rules apply (`bodyDropped` fires when the component's schema becomes
+`null`) where the inlined change sits at `pre`. -/
+theorem component_matches_inline (d : Direction) (pre p : Pointer) (k : Kind)
+    (h : walk .schema pre = .schema) (hn : underNot pre = false) (hp : p ≠ []) :
+    severity (.componentSchemaChanged d false p k) = severity (inline d (pre ++ p) k) := by
+  have hpp : pre ++ p ≠ [] := by simp [hp]
+  rw [component_follows_direction]
+  cases d <;>
+    simp [inline, severity, requestSeverity, responseSeverity, locate_append_schema pre p h hp,
+      underNot_append_schema pre p h, hn, bodyDropped_of_ne _ _ hp, bodyDropped_of_ne _ _ hpp]
+
+/-- A reach through `not` agrees with inlining too: when the `$ref` sits under
+a `not` keyword in the operation's schema, the inlined change is Review, as
+the `negated` component change is. -/
+theorem component_negated_matches_inline (d : Direction) (pre p : Pointer) (k : Kind)
+    (hn : underNot pre = true) :
+    severity (.componentSchemaChanged d true p k) = severity (inline d (pre ++ p) k) := by
+  have hpre : pre ≠ [] := by intro h; subst h; simp [underNot, underNotGo] at hn
+  have hpp : pre ++ p ≠ [] := by simp [hpre]
+  have hu : underNot (pre ++ p) = true := by
+    rw [underNot, underNotGo_append, ← underNot, hn]; rfl
+  rw [component_negated_review]
+  cases d <;> simp [inline, severity, requestSeverity, responseSeverity, hu, bodyDropped_of_ne _ _ hpp]
+
 /-! ## Findings: no-ops the table rates Breaking (#184)
 
 `noop` knows only the boolean keywords with a default (`nullable`,

@@ -11,7 +11,9 @@ use std::path::PathBuf;
 use serde_json::{Value, json};
 
 use super::test_support::change;
-use super::{ChangeKind, MoveRule, Severity, ValueChange, ValueChangeKind, severity};
+use super::{
+    ChangeKind, ComponentRef, Direction, MoveRule, Severity, ValueChange, ValueChangeKind, severity,
+};
 use super::{diff_values, locate, under_not};
 use crate::diff::value::Location;
 use crate::report::EndpointRef;
@@ -54,6 +56,7 @@ variants!(
     DeprecatedChanged,
     RequestSchemaChanged,
     ResponseSchemaChanged,
+    ComponentSchemaChanged,
 );
 
 /// `diff::severity` on `kind`, recording which variant was rated.
@@ -271,6 +274,27 @@ fn replay(rust: &str, cases: &[Value], seen: &mut BTreeSet<&'static str>) -> Vec
                         })
                         .collect(),
                 )
+            }
+            "diff::severity(ComponentSchemaChanged)" => {
+                let direction = match input[0].as_str().expect("direction") {
+                    "request" => Direction::Request,
+                    "response" => Direction::Response,
+                    other => panic!("unknown direction {other}"),
+                };
+                let kind = ChangeKind::ComponentSchemaChanged {
+                    component: ComponentRef {
+                        old: "Widget".into(),
+                        new: "Widget".into(),
+                    },
+                    direction,
+                    change: ValueChange {
+                        pointer: pointer(&input[2]),
+                        kind: kind(&input[3]),
+                    },
+                    negated: input[1].as_bool().expect("negated"),
+                    uses: Vec::new(),
+                };
+                json!(severity_name(rate(kind, seen)))
             }
             _ => {
                 let kind = schema_change(rust, pointer(&input[0]), kind(&input[1]));

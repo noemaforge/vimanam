@@ -25,11 +25,12 @@
 
 [[model]]
 lean = "formal/VimanamProofs/Severity.lean"
-read_against = "aa6b1ab"
-read_digest = "v1:sha256:46d7a2db99f0837ecbce807d8232f1d6ea3c970170e9ee0505a7b365957b73ac"
+read_against = "9979a924613c"
+read_digest = "v1:sha256:a31e895ac52d3bac379a4f834793da4b7bea08680cf81bd193711fb2585693d4"
 rust = [
   "src/diff/mod.rs#Severity",
   "src/diff/mod.rs#ChangeKind",
+  "src/diff/mod.rs#Direction",
   "src/diff/mod.rs#severity",
   "src/diff/mod.rs#became",
   "src/diff/mod.rs#request_schema_severity",

@@ -100,6 +100,10 @@ to pointers through `locate` and `under_not`; nothing uses `native_decide`.
 | `parameter_required_like_schema_required` | A parameter's `required` flag is rated like a `required` schema member. |
 | `removal_breaking_addition_not` | Table pin: removing or moving an endpoint, removing a parameter or response code, or moving a parameter is Breaking; adding an endpoint, response code or optional parameter is Non-breaking. |
 | `operation_id` | Table pin: only gaining an `operationId` is Non-breaking. |
+| `component_follows_direction` | `ComponentSchemaChanged` (#181) with a plain reach uses the table of its direction, so every theorem above holds for component changes too. |
+| `component_negated_review` | `ComponentSchemaChanged` reached through `not` (`negated`) is Review. |
+| `component_matches_inline` | Reporting a component change once gives each occurrence's verdict: for a `$ref` in schema position at `pre` (not under `not`), the change at component pointer `p ≠ []` gets the verdict the inlined change at `pre ++ p` gets. |
+| `component_negated_matches_inline` | A reach through `not` agrees with inlining: the inlined change under `not` is Review, as the `negated` component change is. |
 | `request_noop_breaking`, `request_noop_breaking_witness` | Finding (open), see below. |
 | `response_noop_breaking`, `response_noop_breaking_witness` | Finding (open), see below. |
 
@@ -159,6 +163,14 @@ no-op is Breaking", replacing the two finding theorems:
 * Response status codes: removing one is rated Breaking by convention
   (clients rely on documented statuses), which the model records but does not
   justify by variance.
+* Shared components (#181): how `diff::components` and
+  `resolve::PairResolver::localize` find components, their uses, directions
+  and `negated` reaches. The model takes a `ComponentSchemaChanged` as given.
+  At a component's root (`p = []`) the response root rule fires when the
+  component's schema becomes `null`, so the root is excluded from
+  `component_matches_inline`, and `response_swap` keeps its `p ≠ []`
+  hypothesis (it is about `response_schema_severity`, whichever change kind
+  calls it).
 * Endpoint matching and moves, the protobuf and GraphQL rule tables
   (`src/contract/`), the v2 JSON verdicts, and rendering.
 
@@ -214,8 +226,9 @@ test skips with a message, except under `CI`, where it fails.
 
 Covered: every fixed pointer (keyword lookalikes, `not` at several depths)
 with every change kind in both tables, random pointers over a keyword
-vocabulary, every structural change, and every pair of a small family of
-`enum` keywords. The `lean` workflow regenerates the vectors and fails when
+vocabulary, every structural change, `ComponentSchemaChanged` in both
+directions, negated and plain (the component root with every change kind,
+then random pairs), and every pair of a small family of `enum` keywords. The `lean` workflow regenerates the vectors and fails when
 the committed ones are stale; commit regenerated vectors with the model
 change that moved them.
 
@@ -228,22 +241,14 @@ with `--wfail`, rejects `sorry` and `admit`, runs the axiom audit
 line, every answer names only `propext`, `Quot.sound`, `Classical.choice`)
 and checks the oracle vectors. Actions are pinned to commit SHAs.
 
-## After #182
+## Re-reading after a rule change
 
-noemaforge/vimanam#182 (#181) adds `ChangeKind::ComponentSchemaChanged`,
-which `severity` dispatches by usage direction to the same two schema tables.
-That changes `ChangeKind` and `severity`, so the drift check flags
-`Severity.lean`. The re-read is: add the variant (with its direction) to
-`Change` and `severity` in `Severity.lean`, extend the oracle's replay and
-structural cases, regenerate the vectors, bump the digest, and add a
-theorem that a component change gets the request or response verdict of its
-direction. `Direction.lean` should not need to change, with one check:
-component pointers are relative to the component, so the root rule
-(`bodyDropped`, `p = []`) now fires at a component root, and
-`response_swap`'s `p ≠ []` hypothesis must be re-checked there. The oracle
-test's `variant` match will not compile until the new variant is added.
-Expect a textual conflict next to `#[cfg(test)] mod formal_oracle;` in
-`src/diff/mod.rs`, where #182 adds `mod components;`.
+When the drift check flags `Severity.lean`: re-read the flagged items, update
+`Severity.lean` (and `Change`/`severity` for a new `ChangeKind` variant: the
+oracle test's `variants!` list will not compile until the variant is there),
+extend the exporter and the replay, regenerate the vectors, and bump the
+digest. `Direction.lean` changes only when a guarantee changes. #182
+(`ComponentSchemaChanged`) was re-read this way.
 
 ## Next candidates
 
@@ -257,7 +262,11 @@ Each is a property the current tests check by fuzzing only.
   model of component maps, the ref-stack cycle guard and the depth cap of 64.
 * Edge-diff completeness (#181). With refs diffed as edges, a change inside a
   shared component is reported once per (component pair, pointer, usage
-  direction). Property: for every change the fully inlined diff reports at an
-  operation, the edge diff reports the same change in the reached component
-  with that operation among its uses, in the same direction, and vice versa;
-  so the set of Breaking verdicts, and exit code 3, are unchanged.
+  direction). `component_matches_inline` already shows each such report gets
+  every occurrence's inlined verdict. What remains is the reporting itself:
+  for every change the fully inlined diff reports at an operation, the edge
+  diff reports the same change in the reached component with that operation
+  among its uses, in the same direction (and `negated` exactly when the reach
+  passes through `not`), and vice versa; so the set of Breaking verdicts, and
+  exit code 3, are unchanged. Needs a model of `diff::components`'
+  reachability walk.

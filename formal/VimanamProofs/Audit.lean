@@ -49,6 +49,14 @@ import VimanamProofs
 #print axioms Vimanam.Severity.request_noop_breaking_witness
 #print axioms Vimanam.Severity.response_noop_breaking
 #print axioms Vimanam.Severity.response_noop_breaking_witness
+#print axioms Vimanam.Severity.locateGo_append_general
+#print axioms Vimanam.Severity.locate_append_schema
+#print axioms Vimanam.Severity.underNot_append_schema
+#print axioms Vimanam.Severity.bodyDropped_of_ne
+#print axioms Vimanam.Severity.component_follows_direction
+#print axioms Vimanam.Severity.component_negated_review
+#print axioms Vimanam.Severity.component_matches_inline
+#print axioms Vimanam.Severity.component_negated_matches_inline
 
 #print axioms Vimanam.EnumReport.locate_member
 #print axioms Vimanam.EnumReport.underNot_member

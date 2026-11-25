@@ -23,6 +23,8 @@ file only.
 * A change kind is `Added v`, `Removed v` or `Changed old new`. The differ
   (`diff_values`) never reports `Changed a a`; theorems that need this take
   `Kind.Wf`.
+* A `ComponentSchemaChanged` (#181) keeps its direction, `negated` flag and
+  change; which component and which uses it reports are dropped.
 * `ParameterAdded`, `EndpointRemoved` and the other structural changes keep
   only the fields `severity` reads (names, locations and statuses are
   dropped; an `operationId` is reduced to present or absent).
@@ -32,7 +34,9 @@ file only.
 Not modelled, so not guaranteed here: how `diff_values` produces changes
 (except the enum-keyword reporting in `EnumReport.lean`), `$ref` resolution
 and canonicalisation, the suppression of the companion `required` removal in
-`value_changes`, endpoint matching and moves, the protobuf and GraphQL rule
+`value_changes`, how `diff::components` finds shared components, their uses,
+directions and `negated` reaches (`resolve::PairResolver::localize`),
+endpoint matching and moves, the protobuf and GraphQL rule
 tables (`src/contract/`), and the v2 JSON verdicts. `type` changes are taken
 as having no known direction (the table rates them Breaking on both sides);
 in particular adding `"null"` to an OpenAPI 3.1 `type` array widens the
@@ -227,7 +231,17 @@ def responseSeverity (p : Pointer) (k : Kind) : Severity :=
   else if underNot p then .review
   else responseRule (locate p) k
 
-/-- `diff::ChangeKind`, keeping only what `severity` reads. -/
+/-- `diff::Direction`: whether a shared component's uses send it (request)
+or receive it (response). -/
+inductive Direction
+  | request
+  | response
+  deriving DecidableEq, Repr
+
+/-- `diff::ChangeKind`, keeping only what `severity` reads. For
+`ComponentSchemaChanged` that is the direction, the `negated` flag and the
+field-level change, whose pointer is relative to the component (`component`
+and `uses` are dropped). -/
 inductive Change
   | endpointAdded
   | endpointRemoved (wasDeprecated : Bool)
@@ -243,6 +257,7 @@ inductive Change
   | deprecatedChanged (now : Bool)
   | requestSchemaChanged (p : Pointer) (k : Kind)
   | responseSchemaChanged (p : Pointer) (k : Kind)
+  | componentSchemaChanged (direction : Direction) (negated : Bool) (p : Pointer) (k : Kind)
   deriving DecidableEq, Repr
 
 /-- `diff::severity`. -/
@@ -260,5 +275,8 @@ def severity : Change → Severity
   | .operationIdChanged _ _ => .breaking
   | .deprecatedChanged _ => .nonBreaking
   | .responseSchemaChanged p k => responseSeverity p k
+  | .componentSchemaChanged _ true _ _ => .review
+  | .componentSchemaChanged .request false p k => requestSeverity p k
+  | .componentSchemaChanged .response false p k => responseSeverity p k
 
 end Vimanam.Severity

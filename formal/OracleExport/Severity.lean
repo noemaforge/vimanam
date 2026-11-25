@@ -10,6 +10,9 @@
   with every change kind (each `Val` in each position), then random pointers
   with random kinds (parameters: the random pairs only).
 * `severity` on every structural `ChangeKind` (all flag combinations).
+* `severity` on `ComponentSchemaChanged`, both directions, negated and plain:
+  the root pointer with every change kind, then the first 100 random
+  (pointer, kind) pairs.
 * `EnumReport.report` against `diff_values` on `{"enum": old}` vs
   `{"enum": new}` (an absent side is `{}`): the pointers and kinds in order,
   and each change's request and response verdict.
@@ -113,6 +116,16 @@ def changeJson : Change → Json
   | .deprecatedChanged n => toJson #[toJson "deprecated_changed", toJson n]
   | _ => toJson #["schema"]
 
+def directionName : Direction → String
+  | .request => "request"
+  | .response => "response"
+
+def componentCases (pairs : List (Pointer × Kind)) : List Json :=
+  [Direction.request, .response].flatMap fun d => [false, true].flatMap fun negated =>
+    (allKinds.map (fun k => (([] : Pointer), k)) ++ pairs).map fun (p, k) =>
+      case (toJson #[toJson (directionName d), toJson negated, ptrJson p, kindJson k])
+        (toJson (sevName (severity (.componentSchemaChanged d negated p k))))
+
 def enumJson : EnumReport.Enum → Json
   | none => Json.null
   | some xs => toJson xs.toArray
@@ -144,6 +157,7 @@ def vectors : Vectors :=
         "Values: true, false, null as JSON; other is the string \"x\".",
         "A pointer is its tokens; none contains '~' or '/', so the Rust pointer is \"/\" + tokens joined by \"/\" (\"\" for []).",
         "request/response: every fixed pointer with every change kind, then 300 random (pointer, kind) pairs; parameter: the random pairs only (same Rust table as request).",
+        "component: [direction, negated, pointer, kind]; the pointer is relative to the component; the root with every kind, then the first 100 random pairs, for each direction and negated flag.",
         "Changed with equal sides is included: diff_values never emits it, but severity must still agree.",
         "enum_report: the enum keyword of a root schema, old and new each absent (null) or a list of distinct integers; output is [pointer, kind, request verdict, response verdict] per reported change, in order."
       ]
@@ -158,6 +172,8 @@ def vectors : Vectors :=
           cases := tableCases responseSeverity pairs },
         { lean := "Severity.severity", rust := "diff::severity(structural ChangeKind)",
           cases := structural.map fun c => case (changeJson c) (toJson (sevName (severity c))) },
+        { lean := "Severity.severity", rust := "diff::severity(ComponentSchemaChanged)",
+          cases := componentCases (randomPairs.take 100) },
         { lean := "EnumReport.report", rust := "diff::value::diff_values on an enum keyword",
           cases := enumCases }
       ]
