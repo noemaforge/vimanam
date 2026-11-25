@@ -7,8 +7,8 @@ the same records, and writes a report of every disagreement, classified, with
 a shrunk repro per disagreement class.
 
     python3 -I scripts/formal/refdiff-harness.py \\
-        --pr  path/to/pr/target/release/vimanam \\
-        --main path/to/main/target/release/vimanam \\
+        --rust target/release/vimanam \\
+        [--per-path path/to/aa6b1ab/target/release/vimanam] \\
         --seeds 300 --out SCRATCH_DIR
 
 Inputs: the fixed cases in formal/refdiff/cases/ (repros from #182's review
@@ -17,14 +17,16 @@ aliases, one-sided components, mixed ref spellings, refs under `not`).
 
 Comparisons (see formal/README.md, "Reference semantics of `$ref` diffs"):
 
-* grouped: the model's grouped records against the `--pr` binary's v1
+* grouped: the model's grouped records against the `--rust` binary's v1
+  (main since #182 merged; `--pr` is an alias)
   records (`diff --format json --contract 1`: one record per (use, change),
   with `component`/`old_component` for ref-reached changes). Unit:
   (use, owner, owner-relative pointer, change, severity).
-* per-path: the model's per-path records against the `--main` binary's v1
-  records (absolute pointers, no owners). main's own artifacts (spelling- and
-  side-keyed cycle cuts, the 64-hop cap) show up here; they are classified,
-  not shrunk.
+* per-path: the model's per-path records against an optional `--per-path`
+  binary built from before #182 (aa6b1ab or earlier; `--main` is an alias),
+  whose v1 records have absolute pointers and no owners. That Rust's own
+  artifacts (spelling- and side-keyed cycle cuts, the 64-hop cap) show up
+  here; they are classified, not shrunk.
 
 Values are normalised before comparing: an object or array is compared only
 as "an object"/"an array" (how much of it is expanded is an implementation
@@ -494,8 +496,10 @@ def _try(f, *a):
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    ap.add_argument("--pr", required=True, help="vimanam binary implementing #181 (grouped comparison)")
-    ap.add_argument("--main", help="vimanam binary from main (per-path comparison)")
+    ap.add_argument("--rust", "--pr", dest="pr", required=True,
+                    help="vimanam binary with #181's edge diff, e.g. main (grouped comparison)")
+    ap.add_argument("--per-path", "--main", dest="main",
+                    help="vimanam binary from before #182, e.g. aa6b1ab (per-path comparison)")
     ap.add_argument("--seeds", type=int, default=300)
     ap.add_argument("--first-seed", type=int, default=1)
     ap.add_argument("--out", required=True, help="output directory (report.md, repros)")
@@ -603,7 +607,7 @@ def write_report(out, args, pairs, by_class, main_by_class, errors, shrunk, main
     lines += [f"- pairs: {len(pairs)} ({sum(1 for p in pairs if not p[0].startswith('seed'))} fixed cases "
               f"from formal/refdiff/cases, {args.seeds} generated seeds × 2 directions)",
               f"- grouped comparison: `{args.pr}`", f"- per-path comparison: `{args.main}`", ""]
-    lines += ["## Grouped view vs `--pr` (v1 records)", "",
+    lines += ["## Grouped view vs `--rust` (v1 records)", "",
               "Record: `use | owner | pointer | change | severity` (owner `use` = the use site, "
               "`X->Y` = component pair).", "",
               "| Class | Records | Pairs | Repro |", "| --- | ---: | ---: | --- |"]
@@ -623,7 +627,7 @@ def write_report(out, args, pairs, by_class, main_by_class, errors, shrunk, main
             lines += [f"- `{name}`: model {fmt(m)}; rust {fmt(r)}"]
         lines.append("")
     if args.main:
-        lines += ["## Per-path view vs `--main` (v1 records)", "",
+        lines += ["## Per-path view vs `--per-path` (v1 records)", "",
                   f"- agree: {main_agree} pairs (uses past the model's per-path budget excluded)",
                   "- differ, by whether either document has a component reference cycle:", ""]
         for cls, items in sorted(main_by_class.items()):

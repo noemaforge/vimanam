@@ -56,13 +56,15 @@ rust = [
 ]
 
 # The `$ref` diff reference model. It specifies #181's intended semantics,
-# so it is a reference for #182 rather than a transcription of this Rust; the
-# refs are what its per-path view reproduces from main (resolution,
-# canonicalisation, the companion-`required` rule, ref names).
+# so it is a reference for #182 rather than a transcription of this Rust. The
+# first refs are what its per-path view reproduces (resolution,
+# canonicalisation, the companion-`required` rule, ref names); the rest are
+# the edge diff and its v1 JSON records, which scripts/formal/refdiff-harness.py
+# compares with the grouped view: when they drift, re-run the harness.
 [[model]]
 lean = "formal/VimanamProofs/RefDiff.lean"
-read_against = "aa6b1ab"
-read_digest = "v1:sha256:0a872a597bd94fe8b7f80ffb28755dec0ef0f045479847e39ffe10e22fdb8471"
+read_against = "d147bb1fc5dc"
+read_digest = "v1:sha256:1352fd7e4d60b7f35a67ff354b926b142189e48af34138a25f93f1972aac432c"
 rust = [
   "src/resolve.rs#reference_name",
   "src/resolve.rs#DocResolver",
@@ -74,4 +76,9 @@ rust = [
   "src/utils.rs#canonicalize_type_union",
   "src/diff/mod.rs#value_changes",
   "src/diff/render.rs#required_member_pointer",
+  "src/resolve.rs#RefEdge",
+  "src/resolve.rs#PairResolver",
+  "src/diff/components.rs",
+  "src/diff/json.rs#component_kind_and_details",
+  "src/diff/json.rs#component_entries",
 ]

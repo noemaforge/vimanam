@@ -187,8 +187,8 @@ no-op is Breaking", replacing the two finding theorems:
 `read_digest`, a SHA-256 over those items with comments, `#[cfg(test)]` code
 and whitespace normalised away.
 `scripts/formal/check-model-drift.py` recomputes it; the `model-drift`
-workflow runs it on every change to `src/diff/`, `formal/` or
-`scripts/formal/` and annotates the changed Rust with a warning when a model
+workflow runs it on every change to `src/diff/`, `src/resolve.rs`,
+`src/utils.rs`, `formal/` or `scripts/formal/` and annotates the changed Rust with a warning when a model
 has drifted, one annotation per changed file. The warning names only the refs
 that changed since the state the digest was taken at: `read_against` when it
 is that state, otherwise the newest of the last 100 commits touching the
@@ -207,6 +207,12 @@ python3 -I scripts/formal/check-model-drift.py --bump Severity
 A bump is a claim that the model was re-read; editing the Lean alone does not
 clear drift. A model file with no entry, or a ref that no longer resolves,
 fails the check.
+
+`RefDiff.lean` also lists the edge diff and its v1 JSON records
+(`resolve.rs#PairResolver`, `diff/components.rs`, ...), which it does not
+transcribe: when those drift, re-run `scripts/formal/refdiff-harness.py`
+against the new binary (see "Reference semantics of `$ref` diffs") before
+bumping.
 
 ## Differential oracle
 
@@ -367,17 +373,19 @@ whole tree, the grouped view within one owner's comparison).
 ```bash
 cd formal && lake exe refdiff OLD.json NEW.json      # model output for one pair
 scripts/formal/check-refdiff.sh                      # pinned output on refdiff/cases is current
-python3 -I scripts/formal/refdiff-harness.py --pr PR_BIN --main MAIN_BIN --seeds 300 --out DIR
+cargo build --release                                # main: #182's edge diff
+python3 -I scripts/formal/refdiff-harness.py --rust target/release/vimanam --seeds 300 --out DIR
 ```
 
 The harness generates spec pairs (cycles, siblings over references,
 retargets, aliases, one-sided components, mixed spellings, references under
 `not`; both directions of each), adds `refdiff/cases/`, and compares:
 
-* the grouped view with `--pr`'s `diff --format json --contract 1` records
+* the grouped view with `--rust`'s `diff --format json --contract 1` records
   (one per use and change, with `component`/`old_component`), record by
   record: `(use, owner, owner-relative pointer, change, verdict)`;
-* the per-path view with `--main`'s v1 records.
+* optionally, the per-path view with `--per-path`'s v1 records, from a
+  binary built before #182 (aa6b1ab), which diffed every path in full.
 
 Objects and arrays in changes compare only as "an object"/"an array" (how
 far a side was expanded is not observable through the table) and `$ref`
