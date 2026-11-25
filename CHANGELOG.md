@@ -15,9 +15,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   edges per commit (#164). On opentelemetry-proto (`40cb2e5..d31f7ac`,
   `trace_service.proto` and 3 imports) Git subprocesses drop from 39 to 10
   and the median wall time from 896 ms to 248 ms; the generated 200-proto
-  repository drops from 40 to 11 subprocesses and 948 ms to 269 ms. Output
-  and error messages are unchanged: blob bytes are raw (no textconv or
-  filters), and any batch failure falls back to `git show`.
+  repository drops from 40 to 11 subprocesses and 948 ms to 269 ms.
+  Rename tracking diffs history edges in chunks through one
+  `git diff-tree --stdin` per 256 edges instead of one `diff-tree` per edge:
+  a 400-commit merge-fallback history drops from 418 subprocesses to 12
+  (14.4 s to 0.46 s). Output and error messages are unchanged: blob bytes
+  are raw (no textconv or filters), and any batch failure falls back to the
+  original per-blob `git show` or per-edge `diff-tree`.
 
 ### Fixed
 

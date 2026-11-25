@@ -498,6 +498,11 @@ impl Repository {
         let Some(changes) = log_changes(&history, &edges) else {
             return Ok(None);
         };
+        let verify = changes
+            .iter()
+            .map(|(child, _)| (edges[child].to_owned(), (*child).to_owned()))
+            .collect::<Vec<_>>();
+        self.prefetch_edges(&verify);
         let mut historical = path.to_path_buf();
         for (child, changes) in changes {
             let Some(log_path) = map_path(&changes, &historical, false)? else {
@@ -515,30 +520,63 @@ impl Repository {
         Ok(Some(historical))
     }
 
+    /// Rename-aware changes between `parent` and `child`, from the session
+    /// cache (filled in batches by [`Self::prefetch_edges`]) or one
+    /// `diff-tree`, whose errors are reported unchanged.
     fn edge_changes(&self, parent: &str, child: &str) -> Result<Vec<u8>> {
         let key = (parent.to_owned(), child.to_owned());
         if let Some(changes) = self.session().edges.get(&key) {
             return Ok(changes.clone());
         }
-        let changes = self.git(
-            [
-                "diff-tree",
-                "--no-commit-id",
-                "--name-status",
-                "-r",
-                "-z",
-                "--no-ext-diff",
-                "--no-textconv",
-                "-M50%",
-                "-l0",
-                parent,
-                child,
-                "--",
-            ],
-            "inspect renames",
-        )?;
+        let mut args = vec!["diff-tree", "--no-commit-id"];
+        args.extend(EDGE_DIFF_OPTIONS);
+        args.extend([parent, child, "--"]);
+        let changes = checked(&self.root, args, "inspect renames")?;
         self.session().edges.insert(key, changes.clone());
         Ok(changes)
+    }
+
+    /// Diff many `(parent, child)` commit edges in one `git diff-tree
+    /// --stdin` process and cache each edge's records exactly as a single
+    /// `diff-tree parent child` prints them. This is only an optimization:
+    /// on any failure or unexpected output nothing is cached, and
+    /// [`Self::edge_changes`] diffs edges one at a time as before.
+    fn prefetch_edges(&self, edges: &[(String, String)]) {
+        let edges = {
+            let session = self.session();
+            let mut seen = BTreeSet::new();
+            edges
+                .iter()
+                .filter(|edge| !session.edges.contains_key(*edge) && seen.insert(*edge))
+                .collect::<Vec<_>>()
+        };
+        // A lone edge costs one process either way.
+        if edges.len() < 2 || !edges.iter().all(|(p, c)| is_oid(p) && is_oid(c)) {
+            return;
+        }
+        // "<commit> <parent>" diffs the commit against that parent alone.
+        let mut input = Vec::new();
+        for (parent, child) in &edges {
+            input.extend_from_slice(format!("{child} {parent}\n").as_bytes());
+        }
+        let mut args = vec!["diff-tree", "--stdin", "--always"];
+        args.extend(EDGE_DIFF_OPTIONS);
+        let Ok(output) = run_with_input(&self.root, args, input) else {
+            return;
+        };
+        if !output.status.success() {
+            return;
+        }
+        let children = edges.iter().map(|(_, c)| c.as_str()).collect::<Vec<_>>();
+        let Some(records) = stdin_edge_changes(&output.stdout, &children) else {
+            return;
+        };
+        let mut session = self.session();
+        for ((parent, child), changes) in edges.into_iter().zip(records) {
+            session
+                .edges
+                .insert((parent.clone(), child.clone()), changes);
+        }
     }
 
     fn trace(
@@ -582,6 +620,19 @@ impl Repository {
         if !forward {
             nodes.reverse();
         }
+        // Every candidate edge in visiting order. Edges are fetched in
+        // bounded chunks starting at the first one a route actually needs,
+        // so a lineage that ends early wastes at most one chunk.
+        let order = nodes
+            .iter()
+            .flat_map(|node| {
+                node[1..]
+                    .iter()
+                    .filter(|p| allowed.contains(*p))
+                    .map(|p| (p.clone(), node[0].clone()))
+            })
+            .collect::<Vec<_>>();
+        let mut position = 0usize;
         let mut states = BTreeMap::from([(
             if forward { base } else { tip }.to_owned(),
             TraceState {
@@ -595,6 +646,8 @@ impl Repository {
             let mut edge_breaks = Vec::new();
             let mut active_routes = 0usize;
             for parent in node[1..].iter().filter(|p| allowed.contains(*p)) {
+                let index = position;
+                position += 1;
                 let (from, to) = if forward {
                     (parent, child)
                 } else {
@@ -608,6 +661,14 @@ impl Repository {
                 }
                 if state.paths.is_empty() {
                     continue;
+                }
+                if !self
+                    .session()
+                    .edges
+                    .contains_key(&(parent.clone(), child.clone()))
+                {
+                    let end = order.len().min(index + EDGE_BATCH);
+                    self.prefetch_edges(&order[index..end]);
                 }
                 let changes = self.edge_changes(parent, child)?;
                 for path in state.paths {
@@ -639,6 +700,68 @@ impl Repository {
             );
         }
         Ok(result)
+    }
+}
+
+/// Options shared by single-edge and `--stdin` rename diffs, so both produce
+/// identical records.
+const EDGE_DIFF_OPTIONS: [&str; 7] = [
+    "--name-status",
+    "-r",
+    "-z",
+    "--no-ext-diff",
+    "--no-textconv",
+    "-M50%",
+    "-l0",
+];
+
+/// Edges per `diff-tree --stdin` request.
+const EDGE_BATCH: usize = 256;
+
+fn is_oid(value: &str) -> bool {
+    matches!(value.len(), 40 | 64) && value.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
+/// Split `diff-tree --stdin --always -z --name-status` output into one record
+/// list per requested child, in request order. Each response is the child ID
+/// then `status NUL path NUL [path NUL]` records; paths are consumed by
+/// status, so a path that looks like an object ID cannot end a response.
+/// Returns `None` for anything unexpected.
+fn stdin_edge_changes(bytes: &[u8], children: &[&str]) -> Option<Vec<Vec<u8>>> {
+    let bytes = bytes.strip_suffix(b"\0")?;
+    let mut fields = bytes.split(|b| *b == 0).peekable();
+    let mut records = Vec::with_capacity(children.len());
+    for child in children {
+        if fields.next()? != child.as_bytes() {
+            return None;
+        }
+        let mut changes = Vec::new();
+        while let Some(status) = fields.next_if(|f| edge_status_names(f).is_some()) {
+            changes.extend_from_slice(status);
+            changes.push(0);
+            for _ in 0..edge_status_names(status)? {
+                let name = fields.next()?;
+                if name.is_empty() {
+                    return None;
+                }
+                changes.extend_from_slice(name);
+                changes.push(0);
+            }
+        }
+        records.push(changes);
+    }
+    fields.next().is_none().then_some(records)
+}
+
+/// Paths following a `--name-status` status: two for renames/copies with a
+/// score, one for every other status letter.
+fn edge_status_names(status: &[u8]) -> Option<usize> {
+    match status {
+        [b'A' | b'D' | b'M' | b'T' | b'U' | b'X' | b'B'] => Some(1),
+        [b'R' | b'C', score @ ..] if !score.is_empty() && score.iter().all(u8::is_ascii_digit) => {
+            Some(2)
+        }
+        _ => None,
     }
 }
 
@@ -874,6 +997,31 @@ where
     })
 }
 
+/// Run Git with `input` on stdin, written from a separate thread so a full
+/// stdout pipe can never deadlock against a full stdin pipe.
+fn run_with_input<I, S>(directory: &Path, args: I, input: Vec<u8>) -> std::io::Result<Output>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<OsStr>,
+{
+    let mut child = git_command(directory)
+        .args(args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+    let mut stdin = child.stdin.take();
+    let writer = std::thread::spawn(move || {
+        if let Some(stdin) = stdin.as_mut() {
+            // A write error means Git exited early; its status reports it.
+            let _ = stdin.write_all(&input);
+        }
+    });
+    let output = child.wait_with_output();
+    let _ = writer.join();
+    output
+}
+
 /// Git with this module's fixed hardening: no pager, replace objects, glob
 /// pathspecs, colour, or inherited repository/index/pathspec environment.
 fn git_command(directory: &Path) -> Command {
@@ -1032,6 +1180,111 @@ mod tests {
             repo.at_commit(&commit, Path::new("a.txt")).unwrap().bytes,
             b"alpha\n"
         );
+    }
+
+    #[test]
+    fn batched_edge_diffs_match_single_edge_diffs() {
+        let Some((dir, _)) = repository() else {
+            return;
+        };
+        let root = dir.path();
+        let commit = |message: &str| {
+            git(root, &["add", "--all"]);
+            git(
+                root,
+                &[
+                    "-c",
+                    "user.name=Test",
+                    "-c",
+                    "user.email=test@example.invalid",
+                    "-c",
+                    "commit.gpgsign=false",
+                    "commit",
+                    "-q",
+                    "--allow-empty",
+                    "-m",
+                    message,
+                ],
+            );
+        };
+        let body = "one\ntwo\nthree\nfour\nfive\n";
+        // Names that look like statuses or object IDs must stay names.
+        let hash_like = "0123456789abcdef0123456789abcdef01234567";
+        for name in ["M", "R100", hash_like, "spec.json"] {
+            std::fs::write(root.join(name), format!("{name}\n{body}")).unwrap();
+        }
+        commit("names");
+        git(root, &["mv", "spec.json", "renamed.json"]);
+        git(root, &["mv", "M", "D"]);
+        commit("renames");
+        commit("empty");
+        git(root, &["checkout", "-qb", "side", "HEAD~2"]);
+        std::fs::write(root.join("side.txt"), "side\n").unwrap();
+        std::fs::remove_file(root.join(hash_like)).unwrap();
+        commit("side");
+        git(root, &["checkout", "-q", "-"]);
+        git(
+            root,
+            &[
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.invalid",
+                "merge",
+                "-q",
+                "--no-edit",
+                "side",
+            ],
+        );
+        let history = git(root, &["rev-list", "--parents", "HEAD"]);
+        let edges = history
+            .lines()
+            .flat_map(|line| {
+                let mut ids = line.split(' ');
+                let child = ids.next().unwrap().to_owned();
+                ids.map(move |parent| (parent.to_owned(), child.clone()))
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>();
+        assert!(edges.len() >= 5);
+        let batched = Repository::discover(root).unwrap();
+        batched.prefetch_edges(&edges);
+        assert_eq!(batched.session().edges.len(), edges.len());
+        let single = Repository::discover(root).unwrap();
+        let mut renames = 0;
+        for (parent, child) in &edges {
+            let expected = single.edge_changes(parent, child).unwrap();
+            renames += expected.windows(4).filter(|w| *w == b"\0R10").count();
+            assert_eq!(
+                batched.session().edges[&(parent.clone(), child.clone())],
+                expected,
+                "{parent}..{child}"
+            );
+        }
+        assert!(renames >= 2);
+    }
+
+    #[test]
+    fn unexpected_batched_edge_output_is_rejected() {
+        let a = "a".repeat(40);
+        let b = "b".repeat(40);
+        let ok = format!("{a}\0M\0x\0{b}\0R100\0{b}\0y\0");
+        assert_eq!(
+            stdin_edge_changes(ok.as_bytes(), &[&a, &b]).unwrap(),
+            vec![b"M\0x\0".to_vec(), format!("R100\0{b}\0y\0").into_bytes()]
+        );
+        for bad in [
+            format!("{a}\0M\0x\0"),
+            format!("{b}\0{a}\0"),
+            format!("{a}\0Q\0x\0{b}\0"),
+            format!("{a}\0{b}\0M\0"),
+            format!("{a}\0{b}"),
+        ] {
+            assert!(
+                stdin_edge_changes(bad.as_bytes(), &[&a, &b]).is_none(),
+                "{bad:?}"
+            );
+        }
     }
 
     #[cfg(unix)]

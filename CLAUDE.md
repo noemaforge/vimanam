@@ -101,7 +101,9 @@ implicitly. `gitrefs::Repository` clones share one session:
 resolved refs, `ls-tree` listings and rename edges are cached per commit, and
 blobs stream through one `git cat-file --batch` child (raw bytes, no
 textconv/filters); any batch failure disables it and re-reads with the
-original `git show`, so error text is unchanged. Pass the CLI's `Repository`
+original `git show`, so error text is unchanged. Rename edges likewise
+prefetch through `git diff-tree --stdin` in chunks (`EDGE_BATCH`), caching
+nothing on unexpected output so `edge_changes` falls back per edge. Pass the CLI's `Repository`
 along rather than re-discovering it. Renderer IR uses native RPC/result labels; existing budgets/schema
 selectors/Skill manifest protection apply. Tests in `tests/protobuf.rs` and
 `tests/protobuf_cli.rs` cover pure-Rust source compilation, descriptor parity
