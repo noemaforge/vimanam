@@ -62,6 +62,9 @@ struct Session {
     /// caller will need full listings anyway, such as protobuf imports).
     full_listings: bool,
     blobs: BlobState,
+    /// Successful `diff-tree --stdin` batches (test instrumentation).
+    #[cfg(test)]
+    edge_batches: usize,
 }
 
 #[derive(Default)]
@@ -582,6 +585,10 @@ impl Repository {
             return;
         };
         let mut session = self.session();
+        #[cfg(test)]
+        {
+            session.edge_batches += 1;
+        }
         for ((parent, child), changes) in edges.into_iter().zip(records) {
             session
                 .edges
@@ -725,8 +732,9 @@ const EDGE_DIFF_OPTIONS: [&str; 7] = [
     "-l0",
 ];
 
-/// Edges per `diff-tree --stdin` request.
-const EDGE_BATCH: usize = 256;
+/// Edges per `diff-tree --stdin` request. Unit tests use a tiny batch so
+/// small histories span several chunks.
+const EDGE_BATCH: usize = if cfg!(test) { 3 } else { 256 };
 
 fn is_oid(value: &str) -> bool {
     matches!(value.len(), 40 | 64) && value.bytes().all(|b| b.is_ascii_hexdigit())
@@ -1284,6 +1292,83 @@ mod tests {
             );
         }
         assert!(renames >= 2);
+    }
+
+    #[test]
+    fn trace_across_several_edge_chunks_matches_single_edge_diffs() {
+        let Some((dir, _)) = repository() else {
+            return;
+        };
+        let root = dir.path();
+        let body = "one\ntwo\nthree\nfour\nfive\n";
+        std::fs::write(root.join("spec-0.json"), body).unwrap();
+        let mut name = "spec-0.json".to_owned();
+        let mut base = String::new();
+        // After the commit adding spec-0.json (the base), 11 edges in
+        // 3-edge chunks: the trace must advance through 4 chunks.
+        for i in 0..=11 {
+            if i > 0 && i % 2 == 0 {
+                let next = format!("spec-{i}.json");
+                git(root, &["mv", &name, &next]);
+                name = next;
+            } else {
+                std::fs::write(root.join(format!("noise-{i}.txt")), "x\n").unwrap();
+            }
+            git(root, &["add", "--all"]);
+            git(
+                root,
+                &[
+                    "-c",
+                    "user.name=Test",
+                    "-c",
+                    "user.email=test@example.invalid",
+                    "-c",
+                    "commit.gpgsign=false",
+                    "commit",
+                    "-qm",
+                    &format!("step {i}"),
+                ],
+            );
+            if i == 0 {
+                base = git(root, &["rev-parse", "HEAD"]);
+            }
+        }
+        let tip = git(root, &["rev-parse", "HEAD"]);
+        let history = git(root, &["rev-list", "--parents", &format!("{base}..{tip}")]);
+        let edges = history
+            .lines()
+            .map(|line| {
+                let (child, parent) = line.split_once(' ').unwrap();
+                (parent.to_owned(), child.to_owned())
+            })
+            .collect::<Vec<_>>();
+        assert!(edges.len() > 3 * EDGE_BATCH);
+        let single = Repository::discover(root).unwrap();
+        for (forward, start, end) in [
+            (true, "spec-0.json", name.as_str()),
+            (false, name.as_str(), "spec-0.json"),
+        ] {
+            let batched = Repository::discover(root).unwrap();
+            let state = batched
+                .trace(&base, &tip, BTreeSet::from([PathBuf::from(start)]), forward)
+                .unwrap();
+            assert_eq!(state.paths, BTreeSet::from([PathBuf::from(end)]));
+            assert!(!state.broken);
+            let cached = batched.session().edges.clone();
+            assert_eq!(cached.len(), edges.len(), "every chunk was fetched");
+            assert_eq!(
+                batched.session().edge_batches,
+                edges.len().div_ceil(EDGE_BATCH),
+                "each chunk came from one diff-tree --stdin"
+            );
+            for (parent, child) in &edges {
+                assert_eq!(
+                    cached[&(parent.clone(), child.clone())],
+                    single.edge_changes(parent, child).unwrap(),
+                    "{parent}..{child}"
+                );
+            }
+        }
     }
 
     #[test]
