@@ -127,3 +127,17 @@ coordinate paths and a `result` response. Introspection JSON is sniffed from
 bytes (`"__schema"`), so OpenAPI JSON detection is unchanged. `diff --context`
 is GraphQL-only. Tests: `tests/graphql.rs`, `tests/graphql_cli.rs`; see
 `docs/graphql.md` and fixture provenance.
+
+## Formal model (Lean)
+
+`formal/` is a Lean 4 model of the `diff` severity rule table (`severity`,
+the request/response schema tables, `became`, `locate`, `under_not`, and the
+`diff_values` enum reporting) with direction theorems; see
+`formal/README.md`. No Mathlib, pinned toolchain, `lake build --wfail`, axiom
+audit (`scripts/formal/check-axiom-audit.sh`). `lake exe oracle` writes
+`formal/oracle/*.json`, which `src/diff/formal_oracle.rs` replays through the
+real Rust in `cargo test`: a rule-table change that disagrees with the model
+fails there. Changing a modelled item in `src/diff/` makes
+`scripts/formal/check-model-drift.py` warn until the model is re-read and
+bumped (`--bump Severity`); change the Lean model and regenerate the vectors
+together with a deliberate rule change.

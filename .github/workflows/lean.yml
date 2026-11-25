@@ -1,0 +1,107 @@
+name: lean
+
+# Checks the Lean 4 model of the diff severity rule table under formal/. The
+# development has no Lake dependencies (no Mathlib), so the only thing fetched
+# is the Lean release itself, pinned by version (formal/lean-toolchain) and
+# verified by SHA-256 below. To upgrade Lean: bump formal/lean-toolchain and
+# LEAN_SHA256 together.
+#   curl -sSfL https://github.com/leanprover/lean4/releases/download/v<ver>/lean-<ver>-linux.tar.zst | sha256sum
+#
+# The Rust replay of the oracle vectors (src/diff/formal_oracle.rs) runs in
+# ci.yml with the rest of `cargo test`; model drift is reported by
+# model-drift.yml.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'formal/**'
+      - 'scripts/formal/**'
+      - '.github/workflows/lean.yml'
+  pull_request:
+    paths:
+      - 'formal/**'
+      - 'scripts/formal/**'
+      - '.github/workflows/lean.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  LEAN_SHA256: 2b7ab1ed8b92d2e6abfaf41344823b510064dbc9c0260cac73eb496ab2dea6eb
+
+jobs:
+  proofs:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install pinned Lean
+        run: |
+          set -euo pipefail
+          ver="$(sed -n 's|^leanprover/lean4:v||p' formal/lean-toolchain)"
+          test -n "$ver"
+          curl -sSfL --retry 3 -o "$RUNNER_TEMP/lean.tar.zst" \
+            "https://github.com/leanprover/lean4/releases/download/v${ver}/lean-${ver}-linux.tar.zst"
+          echo "${LEAN_SHA256}  $RUNNER_TEMP/lean.tar.zst" | sha256sum -c -
+          mkdir -p "$HOME/lean"
+          tar --zstd -xf "$RUNNER_TEMP/lean.tar.zst" -C "$HOME/lean" --strip-components=1
+          rm -f "$RUNNER_TEMP/lean.tar.zst"
+          echo "$HOME/lean/bin" >> "$GITHUB_PATH"
+
+      - name: Restore Lake build
+        id: lake-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: formal/.lake
+          key: lake-${{ runner.os }}-${{ hashFiles('formal/lean-toolchain') }}-${{ hashFiles('formal/lakefile.toml', 'formal/lake-manifest.json', 'formal/**/*.lean') }}
+          restore-keys: |
+            lake-${{ runner.os }}-${{ hashFiles('formal/lean-toolchain') }}-
+
+      - name: Build proofs
+        working-directory: formal
+        run: |
+          set -euo pipefail
+          lean --version
+          lake build --wfail 2>&1 | tee "$RUNNER_TEMP/build.log"
+
+      - name: Reject sorry
+        working-directory: formal
+        run: |
+          set -euo pipefail
+          if grep -rnwE 'sorry|admit' --include='*.lean' .; then
+            echo "::error::sorry/admit found in the Lean sources"; exit 1
+          fi
+          if grep -nE "sorryAx|declaration uses 'sorry'" "$RUNNER_TEMP/build.log"; then
+            echo "::error::a proof depends on sorry"; exit 1
+          fi
+
+      # Every theorem has a `#print axioms` line, and every answer names only
+      # propext, Quot.sound and Classical.choice.
+      - name: Audit axioms
+        run: scripts/formal/check-axiom-audit.sh
+
+      # Regenerate formal/oracle/*.json from the models and fail if the
+      # committed vectors are stale, so a model change cannot ship with vectors
+      # the Rust replay reads from the old model.
+      - name: Check the oracle vectors
+        run: scripts/formal/check-oracle.sh
+
+      - name: Drift checker's self-test
+        run: python3 -I scripts/formal/check-model-drift.py --self-test
+
+      # Keep the cache quota for main: branches restore from it but do not
+      # write their own entries.
+      - name: Save Lake build
+        if: github.ref == 'refs/heads/main' && steps.lake-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: formal/.lake
+          key: ${{ steps.lake-cache.outputs.cache-primary-key }}

@@ -1,0 +1,56 @@
+# Which Rust each Lean model in formal/VimanamProofs/ describes, and a
+# fingerprint of that Rust as it was when the model was last read against it.
+# scripts/formal/check-model-drift.py reads this file: a model whose Rust no
+# longer matches its `read_digest` is flagged until the model is re-read and
+# bumped. See formal/README.md, "Keeping the models in step with the Rust".
+#
+# One [[model]] per .lean file under formal/VimanamProofs/ other than
+# Audit.lean, Direction.lean (the theorems over Severity.lean) and
+# History.lean, which read no Rust of their own:
+#
+#   lean          the model file, from the repository root.
+#   read_against  set by --bump: a commit with the bumped refs, so a drift
+#                 report can name only the refs that changed (a hint; the
+#                 report searches history when it is gone).
+#   read_digest   `v1:sha256:` over the refs, sorted, and each ref's code with
+#                 comments and #[cfg(test)] items blanked and whitespace
+#                 collapsed outside literals. Never edit it by hand: after
+#                 re-reading the model, run
+#                   python3 -I scripts/formal/check-model-drift.py --bump Severity
+#   rust          the Rust it models. A bare path is the whole file;
+#                 `path#name` is every item called `name` in it (fn, enum,
+#                 struct, ..., and the impl blocks of a type of that name).
+#                 An item ref does not cover the helpers it calls: list those
+#                 too when the model depends on them.
+
+[[model]]
+lean = "formal/VimanamProofs/Severity.lean"
+read_against = "9979a924613c"
+read_digest = "v1:sha256:a31e895ac52d3bac379a4f834793da4b7bea08680cf81bd193711fb2585693d4"
+rust = [
+  "src/diff/mod.rs#Severity",
+  "src/diff/mod.rs#ChangeKind",
+  "src/diff/mod.rs#Direction",
+  "src/diff/mod.rs#severity",
+  "src/diff/mod.rs#became",
+  "src/diff/mod.rs#request_schema_severity",
+  "src/diff/mod.rs#response_schema_severity",
+  "src/diff/value.rs#ValueChangeKind",
+  "src/diff/value.rs#Location",
+  "src/diff/value.rs#Node",
+  "src/diff/value.rs#locate",
+  "src/diff/value.rs#under_not",
+]
+
+[[model]]
+lean = "formal/VimanamProofs/EnumReport.lean"
+read_against = "aa6b1ab"
+read_digest = "v1:sha256:3777644d4be1486f910196347501c90d9265354d9fae1b73a306304328f4073b"
+rust = [
+  "src/diff/value.rs#diff_values",
+  "src/diff/value.rs#diff_nodes",
+  "src/diff/value.rs#diff_sets",
+  "src/diff/value.rs#empty_counterpart",
+  "src/diff/value.rs#set_element_segment",
+  "src/diff/value.rs#push_segment",
+]

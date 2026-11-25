@@ -44,6 +44,7 @@ swagger*.json
 # Comparison-only fixtures (guard against *.md / openapi*.json patterns)
 !scripts/compare-fixtures/**
 !scripts/README.md
+!formal/README.md
 !docs/**/*.md
 !site/**/*.md
 !site/**/*.mdx
@@ -53,6 +54,9 @@ site/node_modules/
 site/dist/
 site/.astro/
 site/package-lock.json
+
+# Lean build output (formal/)
+formal/.lake/
 
 # Temporary files
 __pycache__/
