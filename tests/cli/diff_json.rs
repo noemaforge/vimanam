@@ -185,17 +185,57 @@ fn diff_json_parses_and_summary_matches_the_markdown_line() {
         .map(|part| part.parse().unwrap())
         .collect();
     let summary = &document["summary"];
+    let changes = document["changes"].as_array().unwrap();
+    let records = |severity: &str| {
+        changes
+            .iter()
+            .filter(|record| record["severity"] == severity)
+            .count() as u64
+    };
+    // v1 severity counts count records: one per affected use of a changed
+    // shared component (#181).
+    let counts: Vec<u64> = ["breaking", "non_breaking", "review"]
+        .iter()
+        .map(|severity| summary[*severity].as_u64().unwrap())
+        .collect();
+    assert_eq!(
+        counts,
+        vec![
+            records("breaking"),
+            records("non_breaking"),
+            records("review")
+        ]
+    );
+    // The Markdown line counts a component change once per direction: the
+    // endpoint counts agree, and the severity counts agree once records of
+    // the same component change collapse into one row.
+    let collapsed = |severity: &str| {
+        changes
+            .iter()
+            .filter(|record| record["severity"] == severity)
+            .map(|record| match record["details"].get("component") {
+                Some(component) => (
+                    component.to_string(),
+                    record["details"]["schema_change"].to_string(),
+                    record["kind"] == "response_schema_changed",
+                ),
+                None => (record["id"].to_string(), String::new(), false),
+            })
+            .collect::<std::collections::BTreeSet<_>>()
+            .len() as u64
+    };
     assert_eq!(
         numbers,
         vec![
             summary["endpoints_added"].as_u64().unwrap(),
             summary["endpoints_removed"].as_u64().unwrap(),
             summary["endpoints_changed"].as_u64().unwrap(),
-            summary["breaking"].as_u64().unwrap(),
-            summary["non_breaking"].as_u64().unwrap(),
-            summary["review"].as_u64().unwrap(),
+            collapsed("breaking"),
+            collapsed("non_breaking"),
+            collapsed("review"),
         ]
     );
+    assert_eq!(counts, vec![4, 8, 1], "{summary}");
 }
 
 #[test]
@@ -210,23 +250,43 @@ fn diff_json_records_match_the_markdown_tables() {
         other => panic!("unknown severity: {other}"),
     };
 
+    // A shared-component change has one v1 record per affected use but one
+    // Markdown row (#181).
+    let mut component_rows = std::collections::BTreeSet::new();
     let mut expected: Vec<(String, String, String)> = document["changes"]
         .as_array()
         .unwrap()
         .iter()
-        .map(|record| {
-            (
-                section_of(record["severity"].as_str().unwrap()).to_string(),
+        .filter_map(|record| {
+            let section = section_of(record["severity"].as_str().unwrap()).to_string();
+            if let Some(component) = record["details"]["component"].as_str() {
+                let key = (
+                    section.clone(),
+                    component.to_string(),
+                    record["details"]["schema_change"].to_string(),
+                    record["kind"] == "response_schema_changed",
+                );
+                return component_rows.insert(key).then(|| {
+                    (
+                        section,
+                        "Component schema changed".to_string(),
+                        format!("component `{component}"),
+                    )
+                });
+            }
+            Some((
+                section,
                 markdown_label(record),
                 format!(
                     "{} {}",
                     record["endpoint"]["method"].as_str().unwrap(),
                     record["endpoint"]["path"].as_str().unwrap()
                 ),
-            )
+            ))
         })
         .collect();
     expected.sort();
+    assert_eq!(component_rows.len(), 3);
 
     let mut actual = markdown_change_rows(&markdown);
     actual.sort();
@@ -560,13 +620,16 @@ fn diff_json_ids_survive_unrelated_edits() {
         .collect();
 
     assert!(extended_ids.len() > baseline_ids.len());
-    // Existing records keep their IDs and their order; the unrelated
-    // endpoint's records are appended (old-spec endpoints are diffed first).
-    assert_eq!(
-        &extended_ids[..baseline_ids.len()],
-        baseline_ids.as_slice(),
-        "an unrelated edit must not rewrite existing IDs"
-    );
+    // Existing records keep their IDs and their relative order; the unrelated
+    // endpoint's record sits among the endpoint records, before the shared
+    // component records that follow them (#181).
+    let mut remaining = extended_ids.iter();
+    for id in &baseline_ids {
+        assert!(
+            remaining.any(|candidate| candidate == id),
+            "an unrelated edit must not rewrite or reorder existing IDs: {id}"
+        );
+    }
 }
 
 #[test]

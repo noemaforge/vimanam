@@ -72,6 +72,24 @@ In OpenAPI Markdown and contract v2 JSON output, Vimanam pairs removed and added
 
 A paired move emits one breaking `operation_moved` change (`Endpoint moved` in Markdown) followed by the operation's inner parameter, schema, and pagination changes. Ambiguous keys stay separate removals and additions. Pass `--exact-paths` to disable move pairing and restore exact matching.
 
+## Shared components are reported once
+
+OpenAPI `$ref` targets are compared as edges, the way `oasdiff` does: each pair of referenced components is compared once, and a change inside a shared component is reported once per usage direction, with every operation that reaches it listed under the tables:
+
+```markdown
+| Component schema changed | component `Widget` | response `/properties/pricing` added (3 operations) |
+
+## Affected operations
+
+### `Widget`
+
+- `GET /widgets` response 200
+- `POST /widgets` response 201
+- `GET /widgets/{id}` response 200
+```
+
+A component sent in requests and returned in responses gets one row per direction, each classified by its own rule table, so `--fail-on-breaking` fails when either direction breaks. Changes inside an operation's own inline schemas stay on that operation. This keeps densely cross-linked specs fast: a change under Stripe's 97-node reference cycle is one row, not one per reference path (millions).
+
 ## Include hygiene and token deltas with `--report`
 
 Pass `--report` to append a `Deltas` section comparing both versions:

@@ -4,6 +4,7 @@ mod common;
 mod conversion;
 mod costs;
 mod diff;
+mod diff_components;
 mod diff_json;
 mod diff_moves;
 mod diff_refs;

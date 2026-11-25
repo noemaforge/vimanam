@@ -2,7 +2,7 @@
 //! type facts are review because a type can occur in both input and output.
 use super::*;
 use crate::diff::{self, Location, ValueChange, ValueChangeKind};
-use crate::resolve::{DocResolver, PairResolver, contains_ref, schema_json};
+use crate::resolve::{DocResolver, PairResolver, RefEdge, contains_ref, schema_json};
 use crate::{ApiDocumentation, Endpoint, Schema};
 use serde_json::json;
 use std::collections::{HashMap, HashSet};
@@ -565,10 +565,32 @@ fn compare_aligned(
         .iter()
         .map(|e| ((e.method.as_str(), e.path.as_str()), e))
         .collect();
-    let json = diff::json::to_json(legacy, None, "", "");
     let mut changes = vec![];
-    for (change, record) in legacy.changes.iter().zip(json.changes) {
+    for change in &legacy.changes {
         use diff::ChangeKind as K;
+        if let K::ComponentSchemaChanged {
+            component,
+            direction,
+            change: value,
+            negated,
+            uses,
+        } = &change.kind
+        {
+            // Deprecation under keywords the legacy canonicalizer does not
+            // walk is reported by the independent type facts.
+            if !is_schema_deprecation_pointer(&value.pointer) {
+                changes.push(component_fact(
+                    component,
+                    *direction,
+                    *negated,
+                    value,
+                    uses,
+                    diff::severity(change),
+                ));
+            }
+            continue;
+        }
+        let (record_kind, record_details) = diff::json::json_kind_and_details(&change.kind);
         let e = *by_key
             .get(&(
                 change.endpoint.method.as_str(),
@@ -581,7 +603,7 @@ fn compare_aligned(
         let mut status = None;
         let mut pointer = String::new();
         let mut resolved = false;
-        let mut details = serde_json::to_value(record.details).unwrap();
+        let mut details = serde_json::to_value(record_details).unwrap();
         let kind = match &change.kind {
             K::EndpointAdded => ChangeKind::OperationAdded,
             K::EndpointMoved { from, .. } => {
@@ -654,6 +676,7 @@ fn compare_aligned(
                 }
                 schema_kind(change, true)
             }
+            K::ComponentSchemaChanged { .. } => unreachable!("handled above"),
             K::ResponseSchemaChanged { status: s, change } => {
                 if is_schema_deprecation_pointer(&change.pointer) {
                     continue;
@@ -676,12 +699,13 @@ fn compare_aligned(
             severity: verdict(diff::severity(change)),
             impacts: vec!["source".into()],
             native: native(Some(e), &pointer, parameter_in, status, resolved),
-            native_kind: serde_json::to_value(record.kind)
+            native_kind: serde_json::to_value(record_kind)
                 .unwrap()
                 .as_str()
                 .unwrap()
                 .into(),
             details,
+            uses: Vec::new(),
         };
         c.refresh_id();
         changes.push(c);
@@ -804,9 +828,15 @@ fn compare_aligned(
             changes.push(candidate);
         }
     }
-    // Refs are edges in the public surface, so also inspect their resolved
-    // operation uses for deprecation changes that the legacy schema differ
-    // strips. The subject and native coordinate remain use-site specific.
+    // The legacy schema differ strips `deprecated`, so also compare each
+    // ref-bearing operation use for deprecation changes. References stay
+    // edges (#181): a deprecation inside a shared component is the type's own
+    // fact, reported once; this pass finds those beside a `$ref` or where a
+    // use switched between inline and referenced form. The subject and
+    // native coordinate remain use-site specific. A reference retargeted to a
+    // differently named component is no type's own change, so the edges each
+    // use reaches are collected for `component_deprecation_facts`.
+    let mut use_edges: Vec<(RefEdge, String)> = Vec::new();
     for before in &old.endpoints {
         let Some(&after) = new_by_key.get(&(before.method.as_str(), before.path.as_str())) else {
             continue;
@@ -844,12 +874,12 @@ fn compare_aligned(
             {
                 continue;
             }
-            let left = left_json
-                .map(|value| resolver.old.resolve_value(&value))
-                .unwrap_or_else(|| extensions_value(&parameter.extensions));
-            let right = right_json
-                .map(|value| resolver.new.resolve_value(&value))
-                .unwrap_or_else(|| extensions_value(&next.extensions));
+            let mut edges = Vec::new();
+            let (left, right) = resolver.localize(
+                &left_json.unwrap_or_else(|| extensions_value(&parameter.extensions)),
+                &right_json.unwrap_or_else(|| extensions_value(&next.extensions)),
+                &mut edges,
+            );
             let subject = entity_id(
                 Format::Openapi,
                 EntityKind::Argument,
@@ -859,6 +889,7 @@ fn compare_aligned(
                     escape(&parameter.name)
                 ),
             );
+            use_edges.extend(edges.into_iter().map(|edge| (edge, subject.clone())));
             append_deprecation_facts(
                 &mut changes,
                 &subject,
@@ -885,13 +916,14 @@ fn compare_aligned(
             {
                 continue;
             }
-            let left = resolver.old.resolve_value(&left);
-            let right = resolver.new.resolve_value(&right);
+            let mut edges = Vec::new();
+            let (left, right) = resolver.localize(&left, &right, &mut edges);
             let subject = entity_id(
                 Format::Openapi,
                 EntityKind::Result,
                 &format!("{root}/results/{}", escape(status)),
             );
+            use_edges.extend(edges.into_iter().map(|edge| (edge, subject.clone())));
             append_deprecation_facts(
                 &mut changes,
                 &subject,
@@ -903,6 +935,7 @@ fn compare_aligned(
             );
         }
     }
+    component_deprecation_facts(&mut changes, resolver, use_edges);
     for e in &old.endpoints {
         if let Some(&next) = new_by_key.get(&(e.method.as_str(), e.path.as_str())) {
             let before = pagination(e, &resolver.old);
@@ -928,6 +961,7 @@ fn compare_aligned(
                         );
                         json!({"before":before,"after":after,"confidence":confidence,"evidence_rule":rule})
                     },
+                    uses: Vec::new(),
                 };
                 c.refresh_id();
                 changes.push(c);
@@ -935,6 +969,236 @@ fn compare_aligned(
         }
     }
     Ok(changes)
+}
+
+/// The neutral fact for one shared-component change (#181): subject the named
+/// type (the old one for a removal, so it resolves in the old surface, else
+/// the new one), the legacy directional verdict, and the reaching uses as
+/// context. Its ID hashes the component, direction and schema change, never
+/// the uses, so it does not depend on which operations reach the component.
+fn component_fact(
+    component: &diff::ComponentRef,
+    direction: diff::Direction,
+    negated: bool,
+    change: &ValueChange,
+    uses: &[diff::SchemaUse],
+    severity: diff::Severity,
+) -> Change {
+    let kind = if change.pointer == "/type" {
+        ChangeKind::TypeKindChanged
+    } else {
+        schema_kind(change, false)
+    };
+    let name = if matches!(
+        kind,
+        ChangeKind::FieldRemoved | ChangeKind::EnumValueRemoved
+    ) {
+        &component.old
+    } else {
+        &component.new
+    };
+    let coordinate = format!("/types/{}", escape(name));
+    let mut entries = serde_json::Map::new();
+    for (key, value) in diff::json::component_entries(component, negated) {
+        entries.insert(key.into(), value);
+    }
+    entries.insert("direction".into(), json!(direction.as_str()));
+    entries.insert(
+        "schema_change".into(),
+        json!(diff::json::json_schema_change(change)),
+    );
+    let mut ids: Vec<String> = Vec::with_capacity(uses.len());
+    let mut seen = HashSet::with_capacity(uses.len());
+    for use_ in uses {
+        let root = format!(
+            "/paths/{}/{}",
+            escape(&use_.endpoint.path),
+            use_.endpoint.method.to_lowercase()
+        );
+        let id = match &use_.location {
+            diff::UseLocation::Parameter { name, location } => entity_id(
+                Format::Openapi,
+                EntityKind::Argument,
+                &format!("{root}/arguments/{}/{}", escape(location), escape(name)),
+            ),
+            diff::UseLocation::RequestBody { name } => entity_id(
+                Format::Openapi,
+                EntityKind::Argument,
+                &format!("{root}/arguments/body/{}", escape(name)),
+            ),
+            diff::UseLocation::Response { status } => entity_id(
+                Format::Openapi,
+                EntityKind::Result,
+                &format!("{root}/results/{}", escape(status)),
+            ),
+        };
+        if seen.insert(id.clone()) {
+            ids.push(id);
+        }
+    }
+    let mut fact = Change {
+        id: String::new(),
+        subject: entity_id(Format::Openapi, EntityKind::Type, &coordinate),
+        kind,
+        severity: verdict(severity),
+        impacts: vec!["source".into()],
+        native: native(
+            None,
+            &format!("{coordinate}{}", change.pointer),
+            None,
+            None,
+            false,
+        ),
+        native_kind: "component_schema_changed".into(),
+        details: Value::Object(entries),
+        uses: ids,
+    };
+    fact.refresh_id();
+    fact
+}
+
+/// Deprecation changes inside the component pairs the uses reach (#181
+/// review). The independent type facts compare each type's declared schema,
+/// so they miss a deprecation that only the pair comparison sees: across a
+/// reference retargeted from `A` to a differently named `B`, or inside a
+/// reference that met an inline schema and was expanded in place. Each
+/// reached pair is compared once for `deprecated` keywords and reported at
+/// the new type (`old_component` in details when the names differ), with the
+/// reaching uses as context, unless the type's own fact already says it.
+fn component_deprecation_facts(
+    changes: &mut Vec<Change>,
+    resolver: &PairResolver,
+    use_edges: Vec<(RefEdge, String)>,
+) {
+    let relevant =
+        |edge: &RefEdge| edge.names.0 != edge.names.1 || !resolver.is_stable(&edge.names.0);
+    let mut pairs: indexmap::IndexSet<(String, String)> = indexmap::IndexSet::new();
+    let mut direct: Vec<Vec<String>> = Vec::new();
+    let mut sources: Vec<Vec<usize>> = Vec::new();
+    let intern = |names: (String, String),
+                  pairs: &mut indexmap::IndexSet<(String, String)>,
+                  direct: &mut Vec<Vec<String>>,
+                  sources: &mut Vec<Vec<usize>>| {
+        let (index, added) = pairs.insert_full(names);
+        if added {
+            direct.push(Vec::new());
+            sources.push(Vec::new());
+        }
+        index
+    };
+    for (edge, subject) in use_edges.into_iter().filter(|(edge, _)| relevant(edge)) {
+        let index = intern(edge.names, &mut pairs, &mut direct, &mut sources);
+        if !direct[index].contains(&subject) {
+            direct[index].push(subject);
+        }
+    }
+    if pairs.is_empty() {
+        return;
+    }
+    let mut retargeted: Vec<(usize, Value, Value)> = Vec::new();
+    let mut next = 0;
+    while next < pairs.len() {
+        let (old, new) = pairs.get_index(next).expect("interned").clone();
+        let mut edges = Vec::new();
+        let (left, right) = resolver.localize(
+            &resolver.old.component_value(&old),
+            &resolver.new.component_value(&new),
+            &mut edges,
+        );
+        for edge in edges.into_iter().filter(relevant) {
+            let target = intern(edge.names, &mut pairs, &mut direct, &mut sources);
+            if !sources[target].contains(&next) {
+                sources[target].push(next);
+            }
+        }
+        retargeted.push((next, left, right));
+        next += 1;
+    }
+    for (index, before, after) in retargeted {
+        let (old, new) = pairs.get_index(index).expect("interned");
+        // Every use whose reference closure contains this pair.
+        let mut visited = vec![false; pairs.len()];
+        let mut stack = vec![index];
+        visited[index] = true;
+        let mut uses: Vec<String> = Vec::new();
+        while let Some(pair) = stack.pop() {
+            for subject in &direct[pair] {
+                if !uses.contains(subject) {
+                    uses.push(subject.clone());
+                }
+            }
+            for &source in &sources[pair] {
+                if !visited[source] {
+                    visited[source] = true;
+                    stack.push(source);
+                }
+            }
+        }
+        // Deterministic, whatever order the closure was walked in.
+        uses.sort();
+        let mut values = Vec::new();
+        diff::diff_values(
+            &semantic_attributes(&before),
+            &semantic_attributes(&after),
+            &mut String::new(),
+            &mut values,
+        );
+        let coordinate = format!("/types/{}", escape(new));
+        for value in values
+            .into_iter()
+            .filter(|v| is_schema_deprecation_pointer(&v.pointer))
+        {
+            let presence = |side: Option<&Value>| match side {
+                Some(v) => json!({"present":true,"value":v}),
+                None => json!({"present":false}),
+            };
+            let (before, after) = match &value.kind {
+                ValueChangeKind::Added(v) => (presence(None), presence(Some(v))),
+                ValueChangeKind::Removed(v) => (presence(Some(v)), presence(None)),
+                ValueChangeKind::Changed { old, new } => (presence(Some(old)), presence(Some(new))),
+            };
+            let mut fact = Change {
+                id: String::new(),
+                subject: entity_id(Format::Openapi, EntityKind::Type, &coordinate),
+                kind: ChangeKind::DeprecatedChanged,
+                severity: Severity::Review,
+                impacts: vec!["source".into()],
+                native: native(
+                    None,
+                    &format!("{coordinate}{}", value.pointer),
+                    None,
+                    None,
+                    false,
+                ),
+                native_kind: "schema_deprecation".into(),
+                details: {
+                    let mut details = json!({"component": new});
+                    if old != new {
+                        details["old_component"] = json!(old);
+                    }
+                    details["pointer"] = json!(value.pointer);
+                    details["before"] = before;
+                    details["after"] = after;
+                    details
+                },
+                uses: uses.clone(),
+            };
+            // The new type's own fact already says the same (B gained the
+            // keyword and A never had it there): report it once.
+            let own = changes.iter().any(|existing| {
+                existing.kind == ChangeKind::DeprecatedChanged
+                    && existing.subject == fact.subject
+                    && existing.details.get("old_component").is_none()
+                    && ["pointer", "before", "after"]
+                        .iter()
+                        .all(|key| existing.details.get(*key) == fact.details.get(*key))
+            });
+            if !own {
+                fact.refresh_id();
+                changes.push(fact);
+            }
+        }
+    }
 }
 
 fn promote_schema_fact_to_use_root(change: &mut Change, old: &Contract, new: &Contract) {
@@ -1024,6 +1288,7 @@ fn append_deprecation_facts(
             native,
             native_kind: "schema_deprecation".into(),
             details,
+            uses: Vec::new(),
         };
         change.refresh_id();
         if !changes.iter().any(|existing| {

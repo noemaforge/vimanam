@@ -49,7 +49,8 @@ import { Aside } from '@astrojs/starlight/components';
 ## Stable entity and change identities
 
 - **Entity IDs (`ve2_`)**: `"ve2_" + SHA-256` of canonical JSON `{v: 2, format, kind, coordinate}` with keys sorted recursively. Descriptions, comments, generator versions, and declaration order never alter an entity ID.
-- **Change IDs (`vc2_`)**: `"vc2_" + SHA-256` of canonical JSON `{v: 2, subject, kind, details}`. Severity labels, impact dimensions, file paths, raw file hashes, and generator versions stay outside the hash so suppression lists keyed on `vc2_` IDs remain stable across policy updates.
+- **Change IDs (`vc2_`)**: `"vc2_" + SHA-256` of canonical JSON `{v: 2, subject, kind, details}`. Severity labels, impact dimensions, `uses`, file paths, raw file hashes, and generator versions stay outside the hash so suppression lists keyed on `vc2_` IDs remain stable across policy updates.
+- **Shared OpenAPI components**: a change inside a `$ref` target is one `component_schema_changed` fact per usage direction, with the named type as `subject`, `component` and `direction` in `details`, and the reaching argument/result entity IDs in `uses`. Because `uses` is not hashed, the ID does not change when another operation starts using the component. Since 2.3.0 these replace the per-operation facts earlier releases emitted for every reference path.
 
 ## Cross-format surface mapping
 

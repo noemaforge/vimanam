@@ -233,10 +233,11 @@ pub enum Commands {
     /// that is unique across each whole spec; `--exact-paths` (and
     /// `--format json --contract 1`) report a move as removed plus added.
     /// Parameters are matched by name and location, responses by status
-    /// code. Request and response bodies are
-    /// compared as fully resolved schemas, so a change to a shared component
-    /// schema is reported on every endpoint that references it. Only the
-    /// first media type of a body or response is compared.
+    /// code. Schemas compare `$ref` targets as edges: each pair of referenced
+    /// components is compared once, and a change inside a shared component is
+    /// reported once per usage direction (request or response), listing every
+    /// operation that reaches it. Only the first media type of a body or
+    /// response is compared.
     ///
     /// Example: `vimanam diff v1/openapi.json v2/openapi.json --fail-on-breaking`
     Diff(Box<DiffArgs>),

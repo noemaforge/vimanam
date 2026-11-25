@@ -212,15 +212,37 @@ fn escaped_named_refs_compositions_and_mixed_usage_keep_coherent_ids() {
     let mut new = value.clone();
     new["components"]["schemas"]["A/B~C"]["properties"]["~field/"]["type"] = json!("integer");
     let facts = openapi_diff(&old, &parse(&new));
+    // The shared type is reached from a request (the `filter` parameter) and a
+    // response (through `Widget`): one directional fact per usage direction at
+    // the type, with the reaching uses as context (#181).
+    let directional: Vec<_> = facts
+        .iter()
+        .filter(|c| c.native_kind == "component_schema_changed")
+        .collect();
+    assert_eq!(directional.len(), 2, "{directional:#?}");
+    for fact in &directional {
+        assert_eq!(fact.subject, ty.id);
+        assert_eq!(fact.kind, ChangeKind::FieldTypeChanged);
+        assert_eq!(fact.severity, Severity::Breaking);
+        assert_eq!(fact.details["component"], "A/B~C");
+        assert_eq!(
+            fact.details["schema_change"]["pointer"],
+            "/properties/~0field~1/type"
+        );
+        assert_eq!(fact.uses.len(), 1, "{fact:#?}");
+        assert!(
+            matches!(&fact.native, NativeLocation::Openapi { method: None, pointer, resolved: false, .. }
+            if pointer == "/types/A~1B~0C/properties/~0field~1/type")
+        );
+    }
+    assert_eq!(directional[0].details["direction"], "request");
+    assert_eq!(directional[1].details["direction"], "response");
+    assert_ne!(directional[0].uses, directional[1].uses);
+    // The independent named-type facts stay review.
     assert!(
         facts
             .iter()
-            .any(|c| c.kind == ChangeKind::ArgumentTypeChanged && c.severity == Severity::Breaking)
-    );
-    assert!(
-        facts
-            .iter()
-            .filter(|c| c.subject == ty.id)
+            .filter(|c| c.subject == ty.id && c.native_kind == "surface_changed")
             .all(|c| c.severity == Severity::Review)
     );
     let ids: std::collections::BTreeSet<_> = facts.iter().map(|c| &c.id).collect();
@@ -358,21 +380,22 @@ fn inline_deprecation_and_swagger_query_defaults_and_constraints_are_v2_facts() 
         .iter()
         .filter(|c| c.kind == ChangeKind::DeprecatedChanged)
         .collect();
+    // References are edges (#181): a deprecation inside a shared component is
+    // the named type's own fact, reported once rather than once per use.
     assert_eq!(
         ref_deprecations.len(),
-        2,
-        "one independent named-type fact and one operation use fact"
+        1,
+        "one independent named-type fact: {ref_deprecations:#?}"
     );
-    assert!(ref_deprecations.iter().any(|c| matches!(
-        &c.native,
-        NativeLocation::Openapi {
-            method: Some(_),
-            status: Some(_),
-            resolved: true,
-            ..
-        }
-    )));
     assert!(ref_deprecations.iter().any(|c| matches!(&c.native, NativeLocation::Openapi { method:None, pointer, .. } if pointer.starts_with("/types/Shared"))));
+    // A deprecation beside the `$ref` at the use site is still the use's.
+    let mut sibling = ref_old.clone();
+    sibling["paths"]["/widgets"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]
+        ["deprecated"] = json!(true);
+    let sibling_changes = openapi_diff(&parse(&ref_old), &parse(&sibling));
+    assert!(sibling_changes.iter().any(|c| c.kind == ChangeKind::DeprecatedChanged
+        && matches!(&c.native, NativeLocation::Openapi { method: Some(_), status: Some(_), pointer, .. } if pointer == "/deprecated")),
+        "{sibling_changes:#?}");
 
     let swagger = |default: i64, maximum: i64| {
         json!({
@@ -679,23 +702,19 @@ fn later_request_media_type_deprecation_is_omitted() {
                     )
             })
     );
+    // A deprecated first-media-type component is the named type's fact
+    // (#181), reported once like any other change inside a shared component.
     let mut ref_first = ref_old.clone();
     ref_first["components"]["schemas"]["FirstBody"]["deprecated"] = json!(true);
-    assert!(
-        openapi_diff(&parse(&ref_old), &parse(&ref_first))
-            .iter()
-            .any(|change| {
-                change.kind == ChangeKind::DeprecatedChanged
-                    && matches!(
-                        &change.native,
-                        NativeLocation::Openapi {
-                            method: Some(_),
-                            parameter_in: Some(location),
-                            ..
-                        } if location == "body"
-                    )
-            })
-    );
+    let facts: Vec<_> = openapi_diff(&parse(&ref_old), &parse(&ref_first))
+        .into_iter()
+        .filter(|change| change.kind == ChangeKind::DeprecatedChanged)
+        .collect();
+    assert_eq!(facts.len(), 1, "{facts:#?}");
+    assert!(matches!(
+        &facts[0].native,
+        NativeLocation::Openapi { method: None, pointer, .. } if pointer.starts_with("/types/FirstBody")
+    ));
 }
 
 #[test]
@@ -729,4 +748,141 @@ fn continuation_property_order_is_not_a_pagination_change() {
             .iter()
             .any(|change| change.kind == ChangeKind::PaginationChanged)
     );
+}
+
+#[test]
+fn retargeted_refs_keep_deprecation_facts() {
+    // #182 review: the response moves from `$ref A` to `$ref B`, where B marks
+    // a field (or itself) deprecated. A against B is no type's own change.
+    for (b, pointer) in [
+        (
+            json!({"type":"object","properties":{"n":{"type":"string","deprecated":true}}}),
+            "/properties/n/deprecated",
+        ),
+        (json!({"type":"object","deprecated":true}), "/deprecated"),
+    ] {
+        let a = if pointer == "/deprecated" {
+            json!({"type":"object"})
+        } else {
+            json!({"type":"object","properties":{"n":{"type":"string"}}})
+        };
+        let mut old = spec();
+        old["components"]["schemas"]["A"] = a;
+        old["components"]["schemas"]["B"] = b;
+        old["paths"]["/widgets"]["get"]["responses"]["200"]["content"]["application/json"]["schema"] =
+            json!({"$ref":"#/components/schemas/A"});
+        let mut new = old.clone();
+        new["paths"]["/widgets"]["get"]["responses"]["200"]["content"]["application/json"]["schema"] =
+            json!({"$ref":"#/components/schemas/B"});
+        let facts: Vec<_> = openapi_diff(&parse(&old), &parse(&new))
+            .into_iter()
+            .filter(|c| c.kind == ChangeKind::DeprecatedChanged)
+            .collect();
+        assert_eq!(facts.len(), 1, "{pointer}: {facts:#?}");
+        let fact = &facts[0];
+        assert_eq!(fact.native_kind, "schema_deprecation");
+        assert_eq!(fact.severity, Severity::Review);
+        assert_eq!(fact.details["component"], "B");
+        assert_eq!(fact.details["old_component"], "A");
+        assert_eq!(fact.details["pointer"], pointer);
+        assert_eq!(
+            fact.details["after"],
+            json!({"present": true, "value": true})
+        );
+        assert_eq!(fact.uses.len(), 1);
+        assert!(
+            matches!(&fact.native, NativeLocation::Openapi { method: None, pointer: p, resolved: false, .. }
+            if p == &format!("/types/B{pointer}"))
+        );
+    }
+}
+
+#[test]
+fn retargets_nested_in_same_named_components_keep_deprecation_facts() {
+    // #182 round 2: the use's only direct edge is (Wrap, Wrap) — or
+    // (Top, Top) one level further out — and the retarget sits inside it.
+    let a = json!({"type":"object","properties":{"s":{"type":"string"}}});
+    let mut b = a.clone();
+    b["deprecated"] = json!(true);
+    for (depth, extra_change) in [(1, false), (2, false), (1, true)] {
+        let wrap = |target: &str| {
+            let mut wrap = json!({"type":"object","properties":{"w":{"$ref":format!("#/components/schemas/{target}")}}});
+            if extra_change && target == "B" {
+                wrap["properties"]["z"] = json!({"type":"integer"});
+            }
+            wrap
+        };
+        let mut old = spec();
+        old["components"]["schemas"]["A"] = a.clone();
+        old["components"]["schemas"]["B"] = b.clone();
+        old["components"]["schemas"]["Wrap"] = wrap("A");
+        old["components"]["schemas"]["Top"] =
+            json!({"type":"object","properties":{"t":{"$ref":"#/components/schemas/Wrap"}}});
+        let root = if depth == 1 { "Wrap" } else { "Top" };
+        old["paths"]["/widgets"]["get"]["responses"]["200"]["content"]["application/json"]["schema"] =
+            json!({"$ref":format!("#/components/schemas/{root}")});
+        let mut new = old.clone();
+        new["components"]["schemas"]["Wrap"] = wrap("B");
+        let facts: Vec<_> = openapi_diff(&parse(&old), &parse(&new))
+            .into_iter()
+            .filter(|c| {
+                c.kind == ChangeKind::DeprecatedChanged && c.native_kind == "schema_deprecation"
+            })
+            .collect();
+        assert_eq!(facts.len(), 1, "depth {depth}: {facts:#?}");
+        assert_eq!(facts[0].details["old_component"], "A");
+        assert_eq!(facts[0].details["component"], "B");
+        assert_eq!(facts[0].details["pointer"], "/deprecated");
+        assert_eq!(facts[0].uses.len(), 1);
+    }
+}
+
+#[test]
+fn a_retarget_to_a_newly_deprecated_type_is_reported_once() {
+    // #182 round 2: B gains `deprecated` itself while a use moves from A to
+    // B; B's own type fact already says it.
+    let mut old = spec();
+    old["components"]["schemas"]["A"] = json!({"type":"object"});
+    old["components"]["schemas"]["B"] = json!({"type":"object"});
+    old["paths"]["/widgets"]["get"]["responses"]["200"]["content"]["application/json"]["schema"] =
+        json!({"$ref":"#/components/schemas/A"});
+    let mut new = old.clone();
+    new["components"]["schemas"]["B"]["deprecated"] = json!(true);
+    new["paths"]["/widgets"]["get"]["responses"]["200"]["content"]["application/json"]["schema"] =
+        json!({"$ref":"#/components/schemas/B"});
+    let facts: Vec<_> = openapi_diff(&parse(&old), &parse(&new))
+        .into_iter()
+        .filter(|c| c.kind == ChangeKind::DeprecatedChanged)
+        .collect();
+    assert_eq!(facts.len(), 1, "{facts:#?}");
+    assert_eq!(facts[0].native_kind, "surface_changed");
+    assert!(
+        matches!(&facts[0].native, NativeLocation::Openapi { pointer, .. } if pointer == "/types/B/deprecated")
+    );
+}
+
+#[test]
+fn deprecations_seen_only_by_in_place_expansion_inside_a_component_are_kept() {
+    // #182 round 3: W.f moves from `$ref D` (deprecated) to an inline schema.
+    // W's declared schema has no `deprecated` change, but its effective one
+    // does.
+    let mut old = spec();
+    old["components"]["schemas"]["D"] = json!({"type":"string","deprecated":true});
+    old["components"]["schemas"]["W"] =
+        json!({"type":"object","properties":{"f":{"$ref":"#/components/schemas/D"}}});
+    old["paths"]["/widgets"]["get"]["responses"]["200"]["content"]["application/json"]["schema"] =
+        json!({"$ref":"#/components/schemas/W"});
+    let mut new = old.clone();
+    new["components"]["schemas"]["W"]["properties"]["f"] = json!({"type":"string"});
+    let facts: Vec<_> = openapi_diff(&parse(&old), &parse(&new))
+        .into_iter()
+        .filter(|c| {
+            c.kind == ChangeKind::DeprecatedChanged && c.native_kind == "schema_deprecation"
+        })
+        .collect();
+    assert_eq!(facts.len(), 1, "{facts:#?}");
+    assert_eq!(facts[0].details["component"], "W");
+    assert!(facts[0].details.get("old_component").is_none());
+    assert_eq!(facts[0].details["pointer"], "/properties/f/deprecated");
+    assert_eq!(facts[0].uses.len(), 1);
 }

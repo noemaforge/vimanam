@@ -1,11 +1,15 @@
 #!/usr/bin/env python3
-"""Timing check for `vimanam diff` on large `$ref` graphs (#152).
+"""Timing check for `vimanam diff` on large `$ref` graphs (#152, #181).
 
 Runs pinned public OpenAPI pairs through `vimanam diff` in each output mode,
 serially, and reports the median wall time, the min-max range, peak RSS and
-the output size and SHA-256. With `--baseline`, runs a second binary on the
-same inputs and checks that the outputs are byte-identical wherever the
-baseline finishes inside the timeout.
+the output size and SHA-256. The cases include the 15 consecutive Stripe
+release pairs of `spec3.json` from a402765 to bcfd59f, which only finish since
+`diff` compares `$ref` targets as edges (#181). With `--baseline`, runs a
+second binary on the same inputs and checks that the outputs are
+byte-identical wherever the baseline finishes inside its timeout; pass
+`--allow-different` when the two binaries are expected to disagree (a
+baseline from before #181 on specs with `$ref`s), to report without failing.
 
 Standard library only. The corpus layout matches `benchmark-public.py`:
 
@@ -18,6 +22,10 @@ Example (measure on a quiet machine; runs are serial by design):
         --binary target/release/vimanam \\
         --baseline /tmp/vimanam-main \\
         --corpus /tmp/vimanam-eval-corpus --runs 5
+
+`--only stripe-releases` runs just the release pairs; `--baseline-timeout`
+bounds the baseline separately (a pre-#181 baseline times out on every
+release pair).
 """
 
 from __future__ import annotations
@@ -34,24 +42,24 @@ import tempfile
 import time
 from pathlib import Path
 
+# The last 16 commits touching Stripe's `openapi/spec3.json`, oldest first.
+STRIPE_RELEASES = [
+    "a402765", "0aaf9a6", "da3eadb", "cfe95bf", "a54c388", "d771243", "6a1ea0a", "fbd0091",
+    "f4ac6d9", "7061322", "d5d11f6", "af5309c", "30d3391", "c8faccb", "2bab976", "bcfd59f",
+]
+
 # (name, repo dir, path in repo, old rev, new rev, modes, note)
 CASES = [
     ("OpenAI a01e367..373f26a", "openai-repo", "openapi.json", "a01e367", "373f26a", ["md", "v1", "v2"], ""),
     ("Stripe 5237fa0 self-diff", "stripe-openapi", "openapi/spec3.json", "5237fa0", "5237fa0", ["md", "v1", "v2"], ""),
     ("Stripe 2f8d147..5237fa0", "stripe-openapi", "openapi/spec3.json", "2f8d147", "5237fa0", ["md", "v1", "v2"], ""),
-    # A real release pair whose one changed component sits under Stripe's
-    # 97-node reference cycle. Every path to it is reported, and there are
-    # millions, so this is expected to time out until refs are compared as
-    # edges (a semantics change). Kept to track that.
-    (
-        "Stripe 2bab976..bcfd59f",
-        "stripe-openapi",
-        "openapi/spec3.json",
-        "2bab976",
-        "bcfd59f",
-        ["md"],
-        "expected to time out: exact output is millions of rows",
-    ),
+    # Consecutive Stripe releases (#181). Before refs were compared as edges
+    # every one timed out: a change under Stripe's 97-node reference cycle
+    # was reported once per reference path, and there are millions.
+    *[
+        (f"Stripe {old}..{new}", "stripe-openapi", "openapi/spec3.json", old, new, ["md", "v1", "v2"], "")
+        for old, new in zip(STRIPE_RELEASES, STRIPE_RELEASES[1:])
+    ],
 ]
 
 MODES = {
@@ -135,6 +143,14 @@ def main() -> int:
     ap.add_argument("--corpus", required=True, help="directory with openai-repo/ and stripe-openapi/")
     ap.add_argument("--runs", type=int, default=5)
     ap.add_argument("--timeout", type=float, default=60.0, help="seconds per run")
+    ap.add_argument("--baseline-timeout", type=float, help="seconds per baseline run (default: --timeout)")
+    ap.add_argument("--allow-different", action="store_true", help="report baseline differences without failing")
+    ap.add_argument(
+        "--only",
+        choices=["all", "stripe-releases"],
+        default="all",
+        help="run every case (default) or only the consecutive Stripe release pairs",
+    )
     ap.add_argument("--output", help="write results as JSON here")
     args = ap.parse_args()
 
@@ -155,7 +171,10 @@ def main() -> int:
     mismatches = 0
     with tempfile.TemporaryDirectory() as tmp:
         tmpdir = Path(tmp)
-        for name, repo, path, old_rev, new_rev, modes, note in CASES:
+        cases = CASES
+        if args.only == "stripe-releases":
+            cases = [case for case in CASES if case[3] in STRIPE_RELEASES and case[3] != case[4]]
+        for name, repo, path, old_rev, new_rev, modes, note in cases:
             repo_dir = corpus / repo
             specs = []
             for rev in (old_rev, new_rev):
@@ -168,7 +187,9 @@ def main() -> int:
                 new = measure(binary, flags, tmpdir / "binary.out", args.runs, args.timeout)
                 row = {"case": name, "mode": mode, "binary": new, "note": note}
                 if baseline:
-                    base = measure(baseline, flags, tmpdir / "baseline.out", args.runs, args.timeout)
+                    base = measure(
+                        baseline, flags, tmpdir / "baseline.out", args.runs, args.baseline_timeout or args.timeout
+                    )
                     row["baseline"] = base
                     if "output_sha256" in base and "output_sha256" in new:
                         row["identical"] = base["output_sha256"] == new["output_sha256"]
@@ -178,7 +199,7 @@ def main() -> int:
                 print(f"{name:28} {mode:3} {fmt(new):>22}  baseline {fmt(row.get('baseline')):>22}  {same} {note}", flush=True)
     if args.output:
         Path(args.output).write_text(json.dumps(results, indent=2) + "\n")
-    return 1 if mismatches else 0
+    return 1 if mismatches and not args.allow_different else 0
 
 
 if __name__ == "__main__":
