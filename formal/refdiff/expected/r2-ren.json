@@ -1,0 +1,6 @@
+[
+{"change": {"after": "#/components/schemas/Widget", "op": "added"}, "dir": "response", "neg": false, "owner": {"new": "Holder", "old": "Holder"}, "ptr": "/properties/w/$ref", "severity": "review", "use": "GET /b response:200"},
+{"change": {"after": "Gadget", "before": "Widget", "op": "retargeted"}, "dir": "response", "neg": false, "owner": {"new": "Gadget", "old": "Widget"}, "ptr": "", "severity": "review", "use": "GET /a response:200"},
+{"change": {"before": "object", "op": "removed"}, "dir": "response", "neg": false, "owner": {"new": "Holder", "old": "Holder"}, "ptr": "/properties/w/type", "severity": "breaking", "use": "GET /b response:200"},
+{"change": {"before": {"type": "string"}, "op": "removed"}, "dir": "response", "neg": false, "owner": {"new": "Holder", "old": "Holder"}, "ptr": "/properties/w/properties/a", "severity": "breaking", "use": "GET /b response:200"}
+]

@@ -32,8 +32,10 @@ python3 -I scripts/formal/check-model-drift.py
 | `VimanamProofs/Direction.lean` | The specification (`effect`, `noop`) and the direction theorems over `Severity.lean`. Reads no Rust of its own. |
 | `VimanamProofs/EnumReport.lean` | What `diff_values` reports for an `enum` keyword, and the direction theorems for the verdicts it then gets. |
 | `VimanamProofs/History.lean` | The pre-#175 tables and reporting, and the findings they violate. Reads no current Rust. |
+| `VimanamProofs/RefDiff.lean` | The `$ref`-aware schema diff reference model (#181): executable, no theorems. See "Reference semantics of `$ref` diffs". |
 | `VimanamProofs/Audit.lean` | `#print axioms` for every theorem. |
-| `OracleExport/` | `lake exe oracle`: writes `oracle/*.json` from the model definitions. |
+| `OracleExport/` | `lake exe oracle`: writes `oracle/*.json` from the model definitions. `lake exe refdiff`: evaluates `RefDiff.lean` on spec pairs. |
+| `refdiff/cases/`, `refdiff/expected/` | Fixed spec pairs for the `$ref` model (#182's review-round repros) and the model's pinned grouped output on them. |
 | `oracle/` | The committed oracle vectors. |
 | `models.toml` | Which Rust each model reads, with a fingerprint of it. |
 
@@ -242,8 +244,10 @@ change that moved them.
 changes: it installs the pinned Lean release (checked by SHA-256), builds
 with `--wfail`, rejects `sorry` and `admit`, runs the axiom audit
 (`scripts/formal/check-axiom-audit.sh`: every theorem has a `#print axioms`
-line, every answer names only `propext`, `Quot.sound`, `Classical.choice`)
-and checks the oracle vectors. Actions are pinned to commit SHAs.
+line, every answer names only `propext`, `Quot.sound`, `Classical.choice`),
+and checks the oracle vectors and that `refdiff/expected/` is the
+reference model's current output on `refdiff/cases/`
+(`scripts/formal/check-refdiff.sh`). Actions are pinned to commit SHAs.
 
 ## Re-reading after a rule change
 
@@ -253,6 +257,143 @@ oracle test's `variants!` list will not compile until the variant is there),
 extend the exporter and the replay, regenerate the vectors, and bump the
 digest. `Direction.lean` changes only when a guarantee changes. #182
 (`ComponentSchemaChanged`) was re-read this way.
+
+## Reference semantics of `$ref` diffs
+
+`VimanamProofs/RefDiff.lean` is the specification of what `diff` reports for
+schemas that use `$ref`, which #181 decides in outline only ("compare `$ref`
+targets as edges"). It is an executable reference model used as an oracle,
+not a proof development: the definitions are `partial`, the sanity checks are
+`#guard`s, and proofs are deferred until the design settles. This section is
+the same specification in prose.
+
+### Inputs
+
+* **Components** are the document's `components.schemas` (OpenAPI 3) or
+  `definitions` (Swagger 2). A `$ref` names a component when it is
+  `#/components/schemas/NAME` or `#/definitions/NAME`, in either kind of
+  document, with the token decoded (`~1` is `/`, `~0` is `~`). The two
+  spellings are the same name everywhere below. Any other `$ref`, or one
+  naming a component the document does not declare, is a plain object.
+* **Uses** are the schema positions of an endpoint present in both
+  documents (matched on `METHOD path`): each non-body parameter matched on
+  `(in, name)` (Swagger 2 parameters rebuilt from `type`, `format`, `items`,
+  `enum`), the request body (first media type), and each response status
+  present on both sides. Parameters and request bodies are the **request**
+  direction, responses the **response** direction.
+* Every schema is first **canonicalised** as `canonicalize_schema_value`
+  does: annotations (`description`, `title`, `example`, `examples`,
+  `deprecated`, `x-*`) are removed from schema objects, `type` arrays are
+  sets, and `required`/`enum` are compared as sets. Annotation siblings of a
+  `$ref` therefore vanish before anything below: they never mask.
+
+### The comparison walk
+
+Two schemas are compared as `diff_values` compares them (objects key by key,
+`required`/`enum` as sets reported per member, a `properties` map or
+`required` set missing on one side compared as empty, a missing `enum`
+reported whole, other arrays by index, scalars by equality; a `required`
+member removed together with its property is not reported, within one
+comparison), with three rules at a schema position holding a `$ref`:
+
+1. **Hop.** Both sides reference a declared component, `X` (old) and `Y`
+   (new). The `$ref` keys are not compared. The *mask* is the set of keys a
+   sibling sets on either side. Each masked key is compared here, as the
+   effective value on each side: the sibling if that side has one, else the
+   target's value at that key (siblings win, as resolution merges them).
+   Every other key is the pair `(X, Y)`'s business: the hop leads to the
+   state `(X, Y, mask, neg)`, where `neg` says the hop is under a `not`.
+2. **One-sided expansion.** One side references a declared component and
+   the other side is an inline object (including an undeclared `$ref`
+   object): the reference is replaced by its target with its siblings merged
+   over it, and the walk continues at the same position. Two sides can keep
+   expanding against each other's inline content forever; the walk is a
+   function of the value pair it compares, so where a pair produced by an
+   expansion recurs deeper on the chain the rest is periodic and nothing more
+   is reported, and where it recurs at the same position (an alias loop such
+   as `X = {"$ref": X, "type": "array"}`) its value is the fixpoint: the
+   merged siblings without `$ref`.
+3. **As written.** Anything else (a reference facing a non-object or
+   nothing, two undeclared references, a value present on one side only) is
+   compared as written. A subtree present on one side only is one
+   addition or removal; its contents are not expanded.
+
+### Owners, states and reach
+
+A change found by a walk belongs to its **owner**: the use site for the walk
+from a use's root, or the pair `(X, Y)` for the walk that compares the two
+targets from their roots. Each pair is compared once, whatever reaches it.
+
+A state `(X, Y, mask, neg)` *sees* the pair's changes whose relative pointer
+does not start with a masked key (overlay masking: under a masked key the
+value comes from the sibling, and was compared at the hop), and reaches the
+states of the hops the pair's walk found at positions it sees. A hop at the
+pair's root (an alias, `X = {"$ref": Z, ...}`) inherits the mask; `neg`
+accumulates. A use reaches the states of its own hops and everything
+reachable from them; the set of states is finite, so cycles need no cut.
+
+### Output
+
+The **grouped view** is, for each use `u` and each state `s` it reaches:
+
+* every change of the use's own walk: `(u, use site, pointer, change)`;
+* every change of `s`'s pair that `s` sees: `(u, (X, Y), relative pointer,
+  change, neg)`;
+* if `X ≠ Y`, one retarget fact `(u, (X, Y), "", retargeted X → Y, neg)`,
+  even when the two components are structurally identical.
+
+Grouping these by everything but `u` gives #181's output: each change once
+per (owner, pointer, change, direction, `neg`), with the uses that reach it.
+A component change whose top-level key is masked on every path from a use is
+not listed for that use.
+
+**Verdicts**: a retarget is Review; a change reached under `not` (`neg`) is
+Review, as `under_not` makes it for an inline schema; otherwise the
+direction's table from `Severity.lean` (`requestSeverity` or
+`responseSeverity`) on the owner-relative pointer.
+
+The **per-path view** is the same walk unfolded per use with absolute
+pointers, cutting where a state recurs on its own path: what fully inlining
+both sides and diffing by JSON pointer reports, which is main's semantics
+without main's artifacts (main cuts cycles by ref spelling, separately on
+each side, compares the two literal `$ref` objects at a cut, and stops after
+64 hops). Regrouping the per-path view by owner gives the grouped view,
+except for retarget facts and for a `required` member whose property is
+removed by a different owner (the per-path view suppresses it over the
+whole tree, the grouped view within one owner's comparison).
+
+### Running it against the Rust
+
+```bash
+cd formal && lake exe refdiff OLD.json NEW.json      # model output for one pair
+scripts/formal/check-refdiff.sh                      # pinned output on refdiff/cases is current
+python3 -I scripts/formal/refdiff-harness.py --pr PR_BIN --main MAIN_BIN --seeds 300 --out DIR
+```
+
+The harness generates spec pairs (cycles, siblings over references,
+retargets, aliases, one-sided components, mixed spellings, references under
+`not`; both directions of each), adds `refdiff/cases/`, and compares:
+
+* the grouped view with `--pr`'s `diff --format json --contract 1` records
+  (one per use and change, with `component`/`old_component`), record by
+  record: `(use, owner, owner-relative pointer, change, verdict)`;
+* the per-path view with `--main`'s v1 records.
+
+Objects and arrays in changes compare only as "an object"/"an array" (how
+far a side was expanded is not observable through the table) and `$ref`
+strings compare by component name. Each disagreement is classified
+(`verdict-under-not`, `retarget-fact-missing`, `attribution-*`,
+`extra-in-rust-*`, `missing-in-rust-*`), and one pair per class is shrunk by
+delta debugging into `DIR/repro/`. The report is `DIR/report.md`.
+
+### Not covered
+
+`$ref`s at non-schema positions (`default`, an `example` is stripped
+anyway), parameter, response and request-body `$ref`s, external references,
+the `"a | b"` type-union string, non-object component targets beyond
+"compare as written", endpoint moves (v1 output never pairs them), key
+order (`Lean.Json` sorts keys, so "first media type" is the first in sorted
+order), and every structural change (endpoints, parameters, status codes).
 
 ## Next candidates
 
@@ -264,13 +405,14 @@ Each is a property the current tests check by fuzzing only.
   `DocResolver::resolve` of the two sides, then `canonicalize_schema_value`,
   gives equal values, so skipping the pair never hides a change. Needs a
   model of component maps, the ref-stack cycle guard and the depth cap of 64.
-* Edge-diff completeness (#181). With refs diffed as edges, a change inside a
-  shared component is reported once per (component pair, pointer, usage
-  direction). `component_matches_inline` already shows each such report gets
-  every occurrence's inlined verdict. What remains is the reporting itself:
-  for every change the fully inlined diff reports at an operation, the edge
-  diff reports the same change in the reached component with that operation
-  among its uses, in the same direction (and `negated` exactly when the reach
-  passes through `not`), and vice versa; so the set of Breaking verdicts, and
-  exit code 3, are unchanged. Needs a model of `diff::components`'
-  reachability walk.
+* Edge-diff completeness (#181), now stated executably in `RefDiff.lean`
+  (see "Reference semantics of `$ref` diffs"). With refs diffed as edges, a
+  change inside a shared component is reported once per (component pair,
+  pointer, usage direction). `component_matches_inline` already shows each
+  such report gets every occurrence's inlined verdict. Property to prove:
+  regrouping the per-path view by owner gives the grouped view (with the two
+  exceptions stated there), in the same direction (and `negated` exactly
+  when the reach passes through `not`), and a change's verdict in the
+  grouped view equals its per-path verdict; so the set of Breaking verdicts,
+  and exit code 3, are unchanged. Needs total (non-`partial`) definitions
+  and a model of `diff::components`' reachability walk.

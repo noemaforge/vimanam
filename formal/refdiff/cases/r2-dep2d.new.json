@@ -1,0 +1,62 @@
+{
+ "openapi": "3.0.3",
+ "info": {
+  "title": "T",
+  "version": "1"
+ },
+ "paths": {
+  "/y": {
+   "get": {
+    "responses": {
+     "200": {
+      "description": "ok",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Top"
+        }
+       }
+      }
+     }
+    }
+   }
+  }
+ },
+ "components": {
+  "schemas": {
+   "Top": {
+    "type": "object",
+    "properties": {
+     "t": {
+      "$ref": "#/components/schemas/Wrap"
+     }
+    }
+   },
+   "Wrap": {
+    "type": "object",
+    "properties": {
+     "w": {
+      "$ref": "#/components/schemas/B"
+     }
+    }
+   },
+   "A": {
+    "type": "object",
+    "properties": {
+     "s": {
+      "type": "string"
+     }
+    }
+   },
+   "B": {
+    "type": "object",
+    "properties": {
+     "s": {
+      "type": "string"
+     }
+    },
+    "deprecated": true
+   }
+  }
+ }
+}

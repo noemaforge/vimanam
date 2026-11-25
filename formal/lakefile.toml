@@ -19,3 +19,11 @@ globs = ["OracleExport.+"]
 [[lean_exe]]
 name = "oracle"
 root = "OracleExport.Main"
+
+# The `$ref` diff reference model's evaluator: `lake exe refdiff OLD NEW`
+# prints the model's grouped and per-path output for one spec pair, which
+# scripts/formal/refdiff-harness.py compares with the Rust. See README.md,
+# "Reference semantics of `$ref` diffs".
+[[lean_exe]]
+name = "refdiff"
+root = "OracleExport.RefDiffMain"

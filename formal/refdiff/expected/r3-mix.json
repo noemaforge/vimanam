@@ -1,0 +1,6 @@
+[
+{"change": {"after": "integer", "before": "string", "op": "changed"}, "dir": "request", "neg": false, "owner": {"new": "Z", "old": "Z"}, "ptr": "/properties/v/type", "severity": "breaking", "use": "GET /plainY-param param:query:p"},
+{"change": {"after": "integer", "before": "string", "op": "changed"}, "dir": "request", "neg": false, "owner": {"new": "Z", "old": "Z"}, "ptr": "/properties/v/type", "severity": "breaking", "use": "POST /inline-req body"},
+{"change": {"after": "integer", "before": "string", "op": "changed"}, "dir": "request", "neg": false, "owner": {"new": "Z", "old": "Z"}, "ptr": "/properties/v/type", "severity": "breaking", "use": "POST /sibY-req body"},
+{"change": {"after": "integer", "before": "string", "op": "changed"}, "dir": "response", "neg": false, "owner": {"new": "Z", "old": "Z"}, "ptr": "/properties/v/type", "severity": "breaking", "use": "GET /sib-resp response:200"}
+]

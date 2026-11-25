@@ -1,0 +1,4 @@
+[
+{"change": {"before": "q", "op": "removed"}, "dir": "request", "neg": false, "owner": {"new": "X", "old": "X"}, "ptr": "/properties/e/enum/q", "severity": "breaking", "use": "POST /a body"},
+{"change": {"before": "q", "op": "removed"}, "dir": "request", "neg": false, "owner": {"new": "X", "old": "X"}, "ptr": "/properties/e/enum/q", "severity": "breaking", "use": "POST /b body"}
+]

@@ -1,0 +1,10 @@
+[
+{"change": {"after": "integer", "before": "string", "op": "changed"}, "dir": "response", "neg": false, "owner": {"new": "Z", "old": "Z"}, "ptr": "/properties/v/type", "severity": "breaking", "use": "GET /u0 response:200"},
+{"change": {"after": "integer", "before": "string", "op": "changed"}, "dir": "response", "neg": false, "owner": {"new": "Z", "old": "Z"}, "ptr": "/properties/v/type", "severity": "breaking", "use": "GET /u1 response:200"},
+{"change": {"after": "integer", "before": "string", "op": "changed"}, "dir": "response", "neg": false, "owner": {"new": "Z", "old": "Z"}, "ptr": "/properties/v/type", "severity": "breaking", "use": "GET /u2 response:200"},
+{"change": {"after": "integer", "before": "string", "op": "changed"}, "dir": "response", "neg": false, "owner": {"new": "Z", "old": "Z"}, "ptr": "/properties/v/type", "severity": "breaking", "use": "GET /u3 response:200"},
+{"change": {"after": "integer", "before": "string", "op": "changed"}, "dir": "response", "neg": false, "owner": {"new": "Z", "old": "Z"}, "ptr": "/properties/v/type", "severity": "breaking", "use": "GET /u4 response:200"},
+{"change": {"after": "integer", "before": "string", "op": "changed"}, "dir": "response", "neg": false, "owner": {"new": "Z", "old": "Z"}, "ptr": "/properties/v/type", "severity": "breaking", "use": "GET /u5 response:200"},
+{"change": {"after": "integer", "before": "string", "op": "changed"}, "dir": "response", "neg": false, "owner": {"new": "Z", "old": "Z"}, "ptr": "/properties/v/type", "severity": "breaking", "use": "GET /u6 response:200"},
+{"change": {"after": "integer", "before": "string", "op": "changed"}, "dir": "response", "neg": false, "owner": {"new": "Z", "old": "Z"}, "ptr": "/properties/v/type", "severity": "breaking", "use": "GET /u7 response:200"}
+]

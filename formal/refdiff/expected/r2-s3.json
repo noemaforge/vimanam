@@ -1,0 +1,3 @@
+[
+{"change": {"after": "Y", "before": "X", "op": "retargeted"}, "dir": "response", "neg": false, "owner": {"new": "Y", "old": "X"}, "ptr": "", "severity": "review", "use": "GET /a response:200"}
+]

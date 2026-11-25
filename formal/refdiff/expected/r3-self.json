@@ -1,0 +1,3 @@
+[
+{"change": {"after": "boolean", "before": "object", "op": "changed"}, "dir": "response", "neg": false, "owner": {"new": "Page", "old": "Page"}, "ptr": "/properties/x/type", "severity": "breaking", "use": "GET /a response:200"}
+]

@@ -1,0 +1,5 @@
+[
+{"change": {"after": "#/components/schemas/Alias", "op": "added"}, "dir": "response", "neg": false, "owner": null, "ptr": "/$ref", "severity": "review", "use": "GET /a response:200"},
+{"change": {"before": "object", "op": "removed"}, "dir": "response", "neg": false, "owner": null, "ptr": "/type", "severity": "breaking", "use": "GET /a response:200"},
+{"change": {"before": {"type": "string"}, "op": "removed"}, "dir": "response", "neg": false, "owner": null, "ptr": "/properties/a", "severity": "breaking", "use": "GET /a response:200"}
+]
