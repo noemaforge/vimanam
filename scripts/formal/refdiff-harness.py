@@ -309,8 +309,16 @@ def rust_records(rust: dict, grouped: bool) -> set[tuple]:
         change = norm_change(sc["operation"], before, after)
         if grouped:
             comp = d.get("component")
-            owner = "use" if comp is None else f"{d.get('old_component', comp)}->{comp}"
-            out.add((use, owner, sc["pointer"], change, rec["severity"]))
+            old_comp = d.get("old_component", comp)
+            owner = "use" if comp is None else f"{old_comp}->{comp}"
+            pointer = sc["pointer"]
+            # #182 (from 870e2ad) writes the retarget fact as a change of the
+            # component names at `/$ref`; the model's record for it is
+            # `retargeted X -> Y` at the pair root.
+            if (comp is not None and old_comp != comp and pointer == "/$ref"
+                    and sc["operation"] == "changed" and (before, after) == (old_comp, comp)):
+                pointer, change = "", f"retargeted {old_comp} -> {comp}"
+            out.add((use, owner, pointer, change, rec["severity"]))
         else:
             out.add((use, sc["pointer"], change, rec["severity"]))
     return out

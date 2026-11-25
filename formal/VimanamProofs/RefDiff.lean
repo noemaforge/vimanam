@@ -529,7 +529,7 @@ def uses (oldDoc newDoc : J) : List Use :=
     let ep := s!"{en.method} {en.path}"
     let nonBody (oas2 : Bool) (e : Endpoint) :=
       let _ := oas2
-      (params e).filter fun p => p.field? "in" != some (.str "body") && (p.field? "in").isSome
+      (params e).filter fun p => p.field? "in" != some (.str "body")
     let ps := (nonBody o2 eo).filterMap fun po =>
       (nonBody n2 en).find? (fun pn => pn.field? "in" == po.field? "in" && pn.field? "name" == po.field? "name")
         |>.map fun pn =>
