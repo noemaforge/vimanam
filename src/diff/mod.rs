@@ -2364,4 +2364,78 @@ mod tests {
             ]
         );
     }
+
+    #[test]
+    fn an_overlay_reads_the_target_through_alias_chains() {
+        // #182 round 4: a sibling on one side only is compared against the
+        // other side's effective value, which resolution finds by following
+        // the alias chain.
+        let r = |name: &str| json!({"$ref": format!("#/components/schemas/{name}")});
+        let with = |name: &str, ty: &str| json!({"$ref": format!("#/components/schemas/{name}"), "type": ty});
+        let doc = |schemas: &Value, use_: Value| {
+            component_doc(
+                schemas.clone(),
+                json!({"/x": {"post": {"requestBody": body(use_.clone()), "responses": ok(use_)}}}),
+            )
+        };
+        let one_hop = json!({"A": r("B"), "B": {"type": "integer"}});
+        // al1: the sibling restates what the alias resolves to.
+        assert!(
+            diff(&doc(&one_hop, with("A", "integer")), &doc(&one_hop, r("A")))
+                .changes
+                .is_empty()
+        );
+        // al2: the sibling appears on the new side only.
+        let type_rows = |result: SpecDiff| -> Vec<String> {
+            result
+                .changes
+                .iter()
+                .map(|change| match &change.kind {
+                    ChangeKind::RequestSchemaChanged { change: value }
+                    | ChangeKind::ResponseSchemaChanged { change: value, .. } => {
+                        format!("{} {:?}", value.pointer, value.kind)
+                    }
+                    other => panic!("unexpected {other:?}"),
+                })
+                .collect()
+        };
+        let changed =
+            "/type Changed { old: String(\"integer\"), new: String(\"string\") }".to_string();
+        assert_eq!(
+            type_rows(diff(
+                &doc(&one_hop, r("A")),
+                &doc(&one_hop, with("A", "string"))
+            )),
+            vec![changed.clone(), changed.clone()]
+        );
+        // Two hops.
+        let two_hops = json!({"A": r("M"), "M": r("B"), "B": {"type": "integer"}});
+        assert!(
+            diff(
+                &doc(&two_hops, with("A", "integer")),
+                &doc(&two_hops, r("A"))
+            )
+            .changes
+            .is_empty()
+        );
+        assert_eq!(
+            type_rows(diff(
+                &doc(&two_hops, r("A")),
+                &doc(&two_hops, with("A", "string"))
+            )),
+            vec![changed.clone(), changed]
+        );
+        // An alias cycle resolves to nothing: the sibling is all there is.
+        let cycle = json!({"A": r("B"), "B": r("A")});
+        assert_eq!(
+            type_rows(diff(
+                &doc(&cycle, r("A")),
+                &doc(&cycle, with("A", "string"))
+            )),
+            vec![
+                "/type Added(String(\"string\"))".to_string(),
+                "/type Added(String(\"string\"))".to_string()
+            ]
+        );
+    }
 }

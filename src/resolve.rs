@@ -432,6 +432,28 @@ impl DocResolver<'_> {
             .unwrap_or(Value::Null)
     }
 
+    /// The value resolution gives `key` at the top of component `name`: its
+    /// own key, else, while the component is a `$ref` to another declared
+    /// component (whose siblings win, as in [`Self::resolve`]), that
+    /// component's, hop by hop. `None` when no hop has it, or at a cycle,
+    /// an undeclared target or [`MAX_RESOLVE_DEPTH`] hops, where resolution
+    /// leaves the reference literal.
+    fn resolved_key(&self, name: &str, key: &str) -> Option<Value> {
+        let mut seen = vec![name.to_string()];
+        let mut current = self.component(name)?;
+        loop {
+            if let Some(value) = current.get(key) {
+                return Some(value.clone());
+            }
+            let next = component_ref(current.as_object()?)?;
+            if !self.declares(&next) || seen.contains(&next) || seen.len() > MAX_RESOLVE_DEPTH {
+                return None;
+            }
+            seen.push(next.clone());
+            current = self.component(&next)?;
+        }
+    }
+
     /// Whether this document declares component `name`.
     fn declares(&self, name: &str) -> bool {
         self.schemas.contains_key(name)
@@ -537,32 +559,24 @@ impl PairResolver<'_> {
                             .collect();
                         mask.sort();
                         mask.dedup();
-                        let effective = |map: &Map<String, Value>, target: &Value| {
-                            let mut out: Map<String, Value> = map
-                                .iter()
-                                .filter(|(key, _)| *key != "$ref")
-                                .map(|(key, value)| (key.clone(), value.clone()))
-                                .collect();
-                            for key in &mask {
-                                if !out.contains_key(key)
-                                    && let Some(value) = target.get(key)
-                                {
-                                    out.insert(key.clone(), value.clone());
+                        let effective =
+                            |map: &Map<String, Value>, doc: &DocResolver, target: &str| {
+                                let mut out: Map<String, Value> = map
+                                    .iter()
+                                    .filter(|(key, _)| *key != "$ref")
+                                    .map(|(key, value)| (key.clone(), value.clone()))
+                                    .collect();
+                                for key in &mask {
+                                    if !out.contains_key(key)
+                                        && let Some(value) = doc.resolved_key(target, key)
+                                    {
+                                        out.insert(key.clone(), value);
+                                    }
                                 }
-                            }
-                            out
-                        };
-                        let (old_effective, new_effective) = if mask.is_empty() {
-                            (
-                                effective(before, &Value::Null),
-                                effective(after, &Value::Null),
-                            )
-                        } else {
-                            (
-                                effective(before, &self.old.component_value(&a)),
-                                effective(after, &self.new.component_value(&b)),
-                            )
-                        };
+                                out
+                            };
+                        let old_effective = effective(before, &self.old, &a);
+                        let new_effective = effective(after, &self.new, &b);
                         let at = (walk.depth > 0).then(|| walk.top.clone()).flatten();
                         walk.edges.push(RefEdge {
                             names: (a, b),
