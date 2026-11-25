@@ -273,6 +273,8 @@ def model_grouped(m: dict) -> set[tuple]:
 
 # Model records reached through a `not` (their verdict is Review for that reason).
 NEGATED: set[tuple] = set()
+# Rust records with `details.under_not` (#182 from fb7d637).
+RUST_NEGATED: set[tuple] = set()
 
 
 def model_per_path(m: dict) -> set[tuple]:
@@ -319,6 +321,8 @@ def rust_records(rust: dict, grouped: bool) -> set[tuple]:
                     and sc["operation"] == "changed" and (before, after) == (old_comp, comp)):
                 pointer, change = "", f"retargeted {old_comp} -> {comp}"
             out.add((use, owner, pointer, change, rec["severity"]))
+            if d.get("under_not"):
+                RUST_NEGATED.add((use, owner, pointer, change, rec["severity"]))
         else:
             out.add((use, sc["pointer"], change, rec["severity"]))
     return out
@@ -365,6 +369,12 @@ def classify_grouped(model: set[tuple], rust: set[tuple]) -> list[tuple[str, tup
             found.append((kind, m, r))
             continue
         found.append(("missing-in-rust" + ("-masked-reach" if owner != "use" else "-at-use"), m, None))
+    # Records both sides report, where only one side says "reached under
+    # `not`". (A record reached both ways is negated on the model side and may
+    # coincide with a plain Review record; only flag Rust-only negation.)
+    for r in sorted(model & rust):
+        if r in RUST_NEGATED and r not in NEGATED:
+            found.append(("under-not-flag-extra-in-rust", r, r))
     for r in only_r:
         if r in used_r:
             continue
