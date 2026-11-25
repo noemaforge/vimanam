@@ -7,7 +7,7 @@
 "Values: true, false, null as JSON; other is the string \"x\".",
 "A pointer is its tokens; none contains '~' or '/', so the Rust pointer is \"/\" + tokens joined by \"/\" (\"\" for []).",
 "request/response: every fixed pointer with every change kind, then 300 random (pointer, kind) pairs; parameter: the random pairs only (same Rust table as request).",
-"component: [direction, negated, pointer, kind]; the pointer is relative to the component; the root with every kind, then the first 100 random pairs, for each direction and negated flag.",
+"component: [direction, negated, pointer, kind]; the pointer is relative to the component; the retarget record ([\"$ref\"], changed other other), the root with every kind, then the first 100 random pairs, for each direction and negated flag.",
 "Changed with equal sides is included: diff_values never emits it, but severity must still agree.",
 "enum_report: the enum keyword of a root schema, old and new each absent (null) or a list of distinct integers; output is [pointer, kind, request verdict, response verdict] per reported change, in order."
 ],
@@ -2760,6 +2760,7 @@
 {"input":["deprecated_changed",true],"output":"non_breaking"}
 ]},
 {"lean": "Severity.severity", "rust": "diff::severity(ComponentSchemaChanged)", "cases": [
+{"input":["request",false,["$ref"],["changed","other","other"]],"output":"review"},
 {"input":["request",false,[],["added","true"]],"output":"review"},
 {"input":["request",false,[],["added","false"]],"output":"review"},
 {"input":["request",false,[],["added","null"]],"output":"review"},
@@ -2884,6 +2885,7 @@
 {"input":["request",false,[],["removed","other"]],"output":"review"},
 {"input":["request",false,["0"],["removed","other"]],"output":"review"},
 {"input":["request",false,["additionalProperties","anyOf"],["removed","false"]],"output":"review"},
+{"input":["request",true,["$ref"],["changed","other","other"]],"output":"review"},
 {"input":["request",true,[],["added","true"]],"output":"review"},
 {"input":["request",true,[],["added","false"]],"output":"review"},
 {"input":["request",true,[],["added","null"]],"output":"review"},
@@ -3008,6 +3010,7 @@
 {"input":["request",true,[],["removed","other"]],"output":"review"},
 {"input":["request",true,["0"],["removed","other"]],"output":"review"},
 {"input":["request",true,["additionalProperties","anyOf"],["removed","false"]],"output":"review"},
+{"input":["response",false,["$ref"],["changed","other","other"]],"output":"review"},
 {"input":["response",false,[],["added","true"]],"output":"review"},
 {"input":["response",false,[],["added","false"]],"output":"review"},
 {"input":["response",false,[],["added","null"]],"output":"review"},
@@ -3132,6 +3135,7 @@
 {"input":["response",false,[],["removed","other"]],"output":"review"},
 {"input":["response",false,["0"],["removed","other"]],"output":"review"},
 {"input":["response",false,["additionalProperties","anyOf"],["removed","false"]],"output":"review"},
+{"input":["response",true,["$ref"],["changed","other","other"]],"output":"review"},
 {"input":["response",true,[],["added","true"]],"output":"review"},
 {"input":["response",true,[],["added","false"]],"output":"review"},
 {"input":["response",true,[],["added","null"]],"output":"review"},

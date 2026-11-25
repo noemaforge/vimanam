@@ -166,11 +166,15 @@ no-op is Breaking", replacing the two finding theorems:
 * Shared components (#181): how `diff::components` and
   `resolve::PairResolver::localize` find components, their uses, directions
   and `negated` reaches. The model takes a `ComponentSchemaChanged` as given.
-  At a component's root (`p = []`) the response root rule fires when the
-  component's schema becomes `null`, so the root is excluded from
-  `component_matches_inline`, and `response_swap` keeps its `p ≠ []`
-  hypothesis (it is about `response_schema_severity`, whichever change kind
-  calls it).
+  The component's root (`p = []`) is excluded from
+  `component_matches_inline` for two reasons. The response root rule fires
+  there when the component's schema becomes `null`, but not at the inlined
+  position. And `locate []` is `other` while the inlined position can be a
+  keyword location: a request component change at `[]` to `false` is Review,
+  but the same change inlined at `["additionalProperties"]` is Breaking; this
+  cannot happen today, because the parser rejects boolean component schemas.
+  `response_swap` keeps its `p ≠ []` hypothesis (it is about
+  `response_schema_severity`, whichever change kind calls it).
 * Endpoint matching and moves, the protobuf and GraphQL rule tables
   (`src/contract/`), the v2 JSON verdicts, and rendering.
 

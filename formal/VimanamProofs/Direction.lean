@@ -470,9 +470,13 @@ theorem component_negated_review (d : Direction) (p : Pointer) (k : Kind) :
 /-- Reporting a component change once gives each occurrence's verdict: for a
 `$ref` sitting in schema position at `pre` in an operation's schema (not
 under `not`), the component change at `p` gets the verdict the inlined change
-at `pre ++ p` gets. The component's root (`p = []`) is the exception: there
-the root rules apply (`bodyDropped` fires when the component's schema becomes
-`null`) where the inlined change sits at `pre`. -/
+at `pre ++ p` gets. The component's root (`p = []`) is the exception, for two
+reasons. First, the response root rule applies there (`bodyDropped` fires when
+the component's schema becomes `null`) but not at the inlined `pre`. Second,
+`locate []` is `other` while `locate pre` can be a keyword location: a request
+component change at `[]` to `false` is Review, but the same change inlined
+at `["additionalProperties"]` is Breaking. The second cannot happen today,
+because the parser rejects boolean component schemas. -/
 theorem component_matches_inline (d : Direction) (pre p : Pointer) (k : Kind)
     (h : walk .schema pre = .schema) (hn : underNot pre = false) (hp : p ≠ []) :
     severity (.componentSchemaChanged d false p k) = severity (inline d (pre ++ p) k) := by

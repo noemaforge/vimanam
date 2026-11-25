@@ -11,8 +11,8 @@
   with random kinds (parameters: the random pairs only).
 * `severity` on every structural `ChangeKind` (all flag combinations).
 * `severity` on `ComponentSchemaChanged`, both directions, negated and plain:
-  the root pointer with every change kind, then the first 100 random
-  (pointer, kind) pairs.
+  the retarget record (`/$ref`, `changed other other`), the root pointer with
+  every change kind, then the first 100 random (pointer, kind) pairs.
 * `EnumReport.report` against `diff_values` on `{"enum": old}` vs
   `{"enum": new}` (an absent side is `{}`): the pointers and kinds in order,
   and each change's request and response verdict.
@@ -122,7 +122,10 @@ def directionName : Direction → String
 
 def componentCases (pairs : List (Pointer × Kind)) : List Json :=
   [Direction.request, .response].flatMap fun d => [false, true].flatMap fun negated =>
-    (allKinds.map (fun k => (([] : Pointer), k)) ++ pairs).map fun (p, k) =>
+    -- The retarget record (a `$ref` pointed at another component) is a
+    -- `Changed` at `/$ref`, pinned here as Review in every combination.
+    ((["$ref"], Kind.changed .other .other) ::
+        allKinds.map (fun k => (([] : Pointer), k)) ++ pairs).map fun (p, k) =>
       case (toJson #[toJson (directionName d), toJson negated, ptrJson p, kindJson k])
         (toJson (sevName (severity (.componentSchemaChanged d negated p k))))
 
@@ -157,7 +160,7 @@ def vectors : Vectors :=
         "Values: true, false, null as JSON; other is the string \"x\".",
         "A pointer is its tokens; none contains '~' or '/', so the Rust pointer is \"/\" + tokens joined by \"/\" (\"\" for []).",
         "request/response: every fixed pointer with every change kind, then 300 random (pointer, kind) pairs; parameter: the random pairs only (same Rust table as request).",
-        "component: [direction, negated, pointer, kind]; the pointer is relative to the component; the root with every kind, then the first 100 random pairs, for each direction and negated flag.",
+        "component: [direction, negated, pointer, kind]; the pointer is relative to the component; the retarget record ([\"$ref\"], changed other other), the root with every kind, then the first 100 random pairs, for each direction and negated flag.",
         "Changed with equal sides is included: diff_values never emits it, but severity must still agree.",
         "enum_report: the enum keyword of a root schema, old and new each absent (null) or a list of distinct integers; output is [pointer, kind, request verdict, response verdict] per reported change, in order."
       ]
