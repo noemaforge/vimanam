@@ -25,7 +25,10 @@
 //! per reference path. A reference met by an inline object on the other side
 //! is expanded in place, so moving a schema between inline and referenced form
 //! is an ordinary change of that operation; a schema without references is
-//! compared exactly as before.
+//! compared exactly as before. Keys beside a `$ref` (other than annotations)
+//! overlay its target: they are compared at the reference, and a target
+//! change under one is not listed for that use. A reference retargeted to a
+//! differently named component is always a Review `/$ref` change.
 //!
 //! Only a response's first media type is compared (the same one the renderer
 //! documents, see `response_schema`), and only the first request-body media
@@ -490,7 +493,17 @@ impl SpecDiff {
 ///
 /// So a narrowed `enum` on a component shared by a request and a response is
 /// a breaking request record plus a non-breaking response record, and
-/// `--fail-on-breaking` fires whenever any usage is breaking. The `not` and
+/// `--fail-on-breaking` fires whenever any usage is breaking.
+///
+/// | Component change | Severity |
+/// |---|---|
+/// | reference retargeted to a differently named component (`/$ref`, old and new names), even when the two have the same shape | Review |
+///
+/// The retarget is one record per direction for the pair, followed by the
+/// pair's structural differences, if any. A `$ref` with siblings other than
+/// annotations overlays them: those keys are compared at the reference with
+/// their effective values, and a change in the target under one of them is
+/// not listed for a use that reaches the target only through that overlay. The `not` and
 /// whole-`enum` rows apply to component pointers exactly as above. A
 /// component declared on one side only is compared against the literal
 /// `{"$ref": ...}` the other side leaves unresolved, as before.
@@ -1988,40 +2001,61 @@ mod tests {
     #[test]
     fn a_retargeted_reference_compares_the_two_components() {
         let r = |name: &str| json!({"$ref": format!("#/components/schemas/{name}")});
+        let doc = |schemas: &Value, target: &str| {
+            component_doc(
+                schemas.clone(),
+                json!({"/p": {"get": {"responses": ok(r(target))}}}),
+            )
+        };
         let schemas = json!({
             "Pet": {"type": "object", "properties": {"name": {"type": "string"}}},
             "Dog": {"type": "object", "required": ["name"], "properties": {"name": {"type": "string"}}}
         });
-        let old = component_doc(
-            schemas.clone(),
-            json!({"/p": {"get": {"responses": ok(r("Pet"))}}}),
-        );
-        let new = component_doc(schemas, json!({"/p": {"get": {"responses": ok(r("Dog"))}}}));
-        let result = diff(&old, &new);
-        assert_eq!(result.changes.len(), 1, "{result:#?}");
-        let ChangeKind::ComponentSchemaChanged {
-            component, change, ..
-        } = &result.changes[0].kind
-        else {
-            panic!("{result:#?}");
-        };
+        // The retarget itself (review: typed clients depend on the name),
+        // then the structural difference between the two components.
         assert_eq!(
-            (component.old.as_str(), component.new.as_str()),
-            ("Pet", "Dog")
+            rows(&diff(&doc(&schemas, "Pet"), &doc(&schemas, "Dog"))),
+            vec![
+                (
+                    "/p".into(),
+                    "component",
+                    "Pet->Dog/$ref".into(),
+                    Severity::Review
+                ),
+                (
+                    "/p".into(),
+                    "component",
+                    "Pet->Dog/required/name".into(),
+                    Severity::NonBreaking
+                ),
+            ]
         );
-        assert_eq!(change.pointer, "/required/name");
 
-        // Two names for the same shape: nothing to report, as before.
+        // Two names for the same shape: only the retarget.
         let same = json!({
             "Pet": {"type": "object"},
             "Dog": {"type": "object", "description": "a dog"}
         });
-        let old = component_doc(
-            same.clone(),
-            json!({"/p": {"get": {"responses": ok(r("Pet"))}}}),
+        let result = diff(&doc(&same, "Pet"), &doc(&same, "Dog"));
+        assert_eq!(
+            rows(&result),
+            vec![(
+                "/p".into(),
+                "component",
+                "Pet->Dog/$ref".into(),
+                Severity::Review
+            )]
         );
-        let new = component_doc(same, json!({"/p": {"get": {"responses": ok(r("Dog"))}}}));
-        assert!(diff(&old, &new).changes.is_empty());
+        let ChangeKind::ComponentSchemaChanged { change, .. } = &result.changes[0].kind else {
+            panic!("{result:#?}");
+        };
+        assert_eq!(
+            change.kind,
+            ValueChangeKind::Changed {
+                old: json!("Pet"),
+                new: json!("Dog")
+            }
+        );
     }
 
     #[test]
@@ -2162,8 +2196,9 @@ mod tests {
 
     #[test]
     fn a_recursive_component_behind_an_overriding_sibling_is_reported_once() {
-        // #182 review: the use expands `X` in place (its `nullable` sibling
-        // overrides it); X's own self-reference is that same pair again.
+        // #182 review: the use overlays `nullable` on X, and X references
+        // itself. With refs as edges the cycle is an ordinary graph cycle:
+        // X's change is reported once, at X.
         let x = |v: &str| {
             json!({"type": "object", "properties": {
                 "self": {"$ref": "#/components/schemas/X"}, "v": {"type": v}
@@ -2178,8 +2213,8 @@ mod tests {
             rows(&diff(&old, &new)),
             vec![(
                 "/x".into(),
-                "response",
-                "/properties/v/type".into(),
+                "component",
+                "X->X/properties/v/type".into(),
                 Severity::Breaking
             )]
         );
@@ -2205,12 +2240,12 @@ mod tests {
 
     #[test]
     fn an_indirect_cycle_behind_an_overriding_sibling_is_reported_once() {
-        // #182 round 2: X -> Y -> X, the use expands X in place; reaching X
-        // again through Y is resolution's cycle cut, not a second use of X.
+        // #182 rounds 2-3: X -> Y -> X behind an overlay, the self-reference
+        // spelled either way, and a self-reference that itself overlays a key.
         let x = |s: &str, self_ref: &str| {
             json!({
                 "X": {"type": "object", "properties": {"y": {"$ref": "#/components/schemas/Y"}, "s": {"type": s}}},
-                "Y": {"type": "object", "properties": {"x": {"$ref": self_ref}}}
+                "Y": {"type": "object", "properties": {"x": {"$ref": self_ref, "type": "object"}}}
             })
         };
         let paths = json!({"/a": {"get": {"responses": ok(
@@ -2218,8 +2253,8 @@ mod tests {
         )}}});
         let expected = vec![(
             "/a".into(),
-            "response",
-            "/properties/s/type".into(),
+            "component",
+            "X->X/properties/s/type".into(),
             Severity::Breaking,
         )];
         for self_ref in ["#/components/schemas/X", "#/definitions/X"] {
@@ -2227,40 +2262,106 @@ mod tests {
             let new = component_doc(x("integer", self_ref), paths.clone());
             assert_eq!(rows(&diff(&old, &new)), expected, "{self_ref}");
         }
-        // The self-reference spelled the other way, directly in X.
-        let direct = |s: &str| {
-            json!({"X": {"type": "object", "properties": {
-                "n": {"$ref": "#/definitions/X"}, "s": {"type": s}
+        // #182 round 3: a direct self-reference with an overlay, reached
+        // through a plain reference.
+        let page = |x: &str| {
+            json!({"Page": {"type": "object", "properties": {
+                "self": {"$ref": "#/components/schemas/Page", "type": "object"},
+                "x": {"type": x}
             }}})
         };
-        let old = component_doc(direct("string"), paths.clone());
-        let new = component_doc(direct("integer"), paths);
-        assert_eq!(rows(&diff(&old, &new)), expected);
+        let plain =
+            json!({"/a": {"get": {"responses": ok(json!({"$ref": "#/components/schemas/Page"}))}}});
+        let old = component_doc(page("object"), plain.clone());
+        let new = component_doc(page("boolean"), plain);
+        assert_eq!(
+            rows(&diff(&old, &new)),
+            vec![(
+                "/a".into(),
+                "component",
+                "Page->Page/properties/x/type".into(),
+                Severity::Breaking
+            )]
+        );
     }
 
     #[test]
-    fn a_retarget_at_a_cycle_cut_is_still_a_change() {
-        // #182 round 2: X and Y each reference themselves; the use moves from
-        // an expanded X to an expanded Y, so `p` meets (X, Y) at the cut.
-        let schemas = json!({
-            "X": {"type": "object", "properties": {"p": {"$ref": "#/components/schemas/X"}, "s": {"type": "string"}}},
-            "Y": {"type": "object", "properties": {"p": {"$ref": "#/components/schemas/Y"}, "s": {"type": "string"}}}
-        });
+    fn a_retarget_behind_an_overlay_compares_the_two_components() {
+        // #182 rounds 2-3: X and Y reference themselves; the use moves from an
+        // overlaid X to an overlaid Y.
+        let schemas = |y_type: &str| {
+            json!({
+                "X": {"type": "object", "properties": {"p": {"$ref": "#/components/schemas/X"}, "s": {"type": "string"}}},
+                "Y": {"type": "object", "properties": {"p": {"$ref": "#/components/schemas/Y"}, "s": {"type": y_type}}}
+            })
+        };
         let path = |name: &str| {
             json!({"/a": {"get": {"responses": ok(
                 json!({"$ref": format!("#/components/schemas/{name}"), "nullable": true})
             )}}})
         };
-        let old = component_doc(schemas.clone(), path("X"));
-        let new = component_doc(schemas, path("Y"));
+        let old = component_doc(schemas("string"), path("X"));
+        // Same shape: only the retarget, once, although the pair is reached
+        // again through its own self-reference.
+        let new = component_doc(schemas("string"), path("Y"));
         assert_eq!(
             rows(&diff(&old, &new)),
             vec![(
                 "/a".into(),
-                "response",
-                "/properties/p/$ref".into(),
+                "component",
+                "X->Y/$ref".into(),
                 Severity::Review
             )]
+        );
+        let new = component_doc(schemas("integer"), path("Y"));
+        assert_eq!(
+            rows(&diff(&old, &new)),
+            vec![
+                (
+                    "/a".into(),
+                    "component",
+                    "X->Y/$ref".into(),
+                    Severity::Review
+                ),
+                (
+                    "/a".into(),
+                    "component",
+                    "X->Y/properties/s/type".into(),
+                    Severity::Breaking
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn an_overlay_masks_the_targets_change_under_the_overridden_key() {
+        // The use pins `properties` wholesale: X's change under it (and the
+        // reference to Z it holds) is invisible there, but not at a plain use.
+        let r = |name: &str| json!({"$ref": format!("#/components/schemas/{name}")});
+        let x = |t: &str| json!({"type": "object", "properties": {"z": r("Z"), "t": {"type": t}}});
+        let paths = json!({
+            "/pinned": {"get": {"responses": ok(json!({"$ref": "#/components/schemas/X", "properties": {}}))}},
+            "/plain": {"get": {"responses": ok(r("X"))}}
+        });
+        let z = |t: &str| json!({"type": t});
+        let old = component_doc(json!({"X": x("string"), "Z": z("string")}), paths.clone());
+        let new = component_doc(json!({"X": x("integer"), "Z": z("integer")}), paths);
+        assert_eq!(
+            rows(&diff(&old, &new)),
+            vec![
+                (
+                    "/plain".into(),
+                    "component",
+                    "X->X/properties/t/type".into(),
+                    Severity::Breaking
+                ),
+                (
+                    "/plain".into(),
+                    "component",
+                    "Z->Z/type".into(),
+                    Severity::Breaking
+                ),
+            ]
         );
     }
 }

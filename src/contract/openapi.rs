@@ -833,7 +833,7 @@ fn compare_aligned(
     // use switched between inline and referenced form. The subject and
     // native coordinate remain use-site specific. A reference retargeted to a
     // differently named component is no type's own change, so the edges each
-    // use reaches are collected for `retarget_deprecation_facts`.
+    // use reaches are collected for `component_deprecation_facts`.
     let mut use_edges: Vec<(RefEdge, String)> = Vec::new();
     for before in &old.endpoints {
         let Some(&after) = new_by_key.get(&(before.method.as_str(), before.path.as_str())) else {
@@ -933,7 +933,7 @@ fn compare_aligned(
             );
         }
     }
-    retarget_deprecation_facts(&mut changes, resolver, use_edges);
+    component_deprecation_facts(&mut changes, resolver, use_edges);
     for e in &old.endpoints {
         if let Some(&next) = new_by_key.get(&(e.method.as_str(), e.path.as_str())) {
             let before = pagination(e, &resolver.old);
@@ -1054,13 +1054,15 @@ fn component_fact(
     fact
 }
 
-/// Deprecation changes across retargeted references (#181 review): where a
-/// use's `$ref` moved from component `A` to a differently named `B`, directly
-/// or through components it reaches, `A` against `B` is no type's own change,
-/// so the independent type facts cannot report it. Each such pair is compared
-/// once for `deprecated` keywords and reported at the new type, with
-/// `old_component` in details and the reaching uses as context.
-fn retarget_deprecation_facts(
+/// Deprecation changes inside the component pairs the uses reach (#181
+/// review). The independent type facts compare each type's declared schema,
+/// so they miss a deprecation that only the pair comparison sees: across a
+/// reference retargeted from `A` to a differently named `B`, or inside a
+/// reference that met an inline schema and was expanded in place. Each
+/// reached pair is compared once for `deprecated` keywords and reported at
+/// the new type (`old_component` in details when the names differ), with the
+/// reaching uses as context, unless the type's own fact already says it.
+fn component_deprecation_facts(
     changes: &mut Vec<Change>,
     resolver: &PairResolver,
     use_edges: Vec<(RefEdge, String)>,
@@ -1106,9 +1108,7 @@ fn retarget_deprecation_facts(
                 sources[target].push(next);
             }
         }
-        if old != new {
-            retargeted.push((next, left, right));
-        }
+        retargeted.push((next, left, right));
         next += 1;
     }
     for (index, before, after) in retargeted {
@@ -1168,13 +1168,16 @@ fn retarget_deprecation_facts(
                     false,
                 ),
                 native_kind: "schema_deprecation".into(),
-                details: json!({
-                    "component": new,
-                    "old_component": old,
-                    "pointer": value.pointer,
-                    "before": before,
-                    "after": after,
-                }),
+                details: {
+                    let mut details = json!({"component": new});
+                    if old != new {
+                        details["old_component"] = json!(old);
+                    }
+                    details["pointer"] = json!(value.pointer);
+                    details["before"] = before;
+                    details["after"] = after;
+                    details
+                },
                 uses: uses.clone(),
             };
             // The new type's own fact already says the same (B gained the

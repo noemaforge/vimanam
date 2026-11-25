@@ -23,6 +23,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     shared by a request and a response yields two records, and
     `--fail-on-breaking` exits 3 when either is breaking. `not` subtrees stay
     Review and a whole `enum` keyword is still classified by direction.
+  - **Retargets.** A reference retargeted to a differently named component
+    is a Review change at `/$ref` (old name → new name) even when the two
+    have the same shape, followed by their structural differences; before,
+    a same-shaped retarget reported nothing at an operation's root.
+  - **Overlays.** Keys beside a `$ref` other than annotations (`default`
+    included) are compared at the reference with their effective values, and
+    a target change under such a key is not listed for that use, matching
+    how resolution lets the sibling win. Changes in the target outside them
+    are reported at the component, no longer at the use.
   - **Markdown.** A component change is one `Component schema changed` row
     (for example `` component `Widget` `` / `response /properties/pricing
     added (3 operations)`), and a new `## Affected operations` section lists
@@ -42,8 +51,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     subject and a resolved pointer; suppression lists keyed on those IDs
     need the new IDs. A deprecation inside a shared component is now only the
     named type's own (unchanged) fact, not also one per use; a deprecation
-    across a reference retargeted from `A` to `B` is one `schema_deprecation`
-    fact at `B` with `old_component` and the reaching uses. A reference to a
+    that only the component comparison sees (across a reference retargeted
+    from `A` to `B`, or inside a reference expanded against an inline
+    schema) is one `schema_deprecation` fact at the new type, with
+    `old_component` when the names differ and the reaching uses. A reference to a
     component its document does not declare is compared at the use site, as
     before.
     `summary.operations_changed` counts the operations in `uses`.

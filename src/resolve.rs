@@ -343,16 +343,21 @@ impl<'a> PairResolver<'a> {
 /// each to a component its own document declares: `diff` compares each pair
 /// of target names once, instead of inlining both targets at every position
 /// that reaches them.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(crate) struct RefEdge {
     /// Old and new component names: the pair's identity.
     pub(crate) names: (String, String),
-    /// Pairs being expanded in place on the chain above this edge (behind
-    /// an overriding sibling, or against an inline schema), sorted. Resolution
-    /// would cut a cycle back into any of them, so reaching one from this
-    /// edge, directly or through other components, is not a use of it.
+    /// The top-level key of the walked schema under which the reference
+    /// sits, or `None` when the walked schema itself is the reference (an
+    /// alias). A mask on the way into that schema hides edges under a masked
+    /// key.
+    pub(crate) at: Option<String>,
+    /// The overlay: keys other than annotations that sit beside `$ref` on
+    /// either side, sorted. Resolution lays them over the target, so they are
+    /// compared at the reference with their effective values, and a change
+    /// in the target under one of them is invisible through this edge.
     /// Empty almost always.
-    pub(crate) blocked: Vec<(String, String)>,
+    pub(crate) mask: Vec<String>,
 }
 
 /// Keys whose values canonicalisation drops from a schema object; refs under
@@ -397,12 +402,12 @@ fn component_ref(map: &Map<String, Value>) -> Option<String> {
     }
 }
 
-/// Whether a `$ref` object carries sibling keys that change the merged schema
-/// (anything but annotations): [`DocResolver::resolve`] lays them over the
-/// target, so the effective schema is specific to this use.
-fn has_semantic_siblings(map: &Map<String, Value>) -> bool {
-    map.keys()
-        .any(|key| key != "$ref" && !key.starts_with("x-") && !ANNOTATIONS.contains(&key.as_str()))
+/// The keys beside `$ref` that change the merged schema (anything but
+/// annotations): [`DocResolver::resolve`] lays them over the target.
+fn overlay_keys(map: &Map<String, Value>) -> impl Iterator<Item = &String> {
+    map.keys().filter(|key| {
+        *key != "$ref" && !key.starts_with("x-") && !ANNOTATIONS.contains(&key.as_str())
+    })
 }
 
 /// The mutable state of one [`PairResolver::localize`] walk.
@@ -411,26 +416,11 @@ struct LocalWalk<'w> {
     /// (names, so differently spelled references to one component are one).
     old_stack: Vec<String>,
     new_stack: Vec<String>,
+    /// JSON depth below the walked schema, and the top-level key the walk is
+    /// under (see [`RefEdge::at`]).
+    depth: usize,
+    top: Option<String>,
     edges: &'w mut Vec<RefEdge>,
-}
-
-impl LocalWalk<'_> {
-    /// The pairs expanded in place above the current position: every old
-    /// name on the chain against every new one.
-    fn blocked(&self) -> Vec<(String, String)> {
-        let mut pairs: Vec<(String, String)> = self
-            .old_stack
-            .iter()
-            .flat_map(|old| {
-                self.new_stack
-                    .iter()
-                    .map(move |new| (old.clone(), new.clone()))
-            })
-            .collect();
-        pairs.sort();
-        pairs.dedup();
-        pairs
-    }
 }
 
 impl DocResolver<'_> {
@@ -493,18 +483,20 @@ impl PairResolver<'_> {
     ///
     /// Walking both in parallel, wherever both sides hold a component `$ref`
     /// whose target its own document declares, the pair of target names is
-    /// appended
-    /// to `edges` and the `$ref` keys are dropped from both sides, so the
-    /// local comparison sees only annotation siblings; the caller compares
-    /// the targets once per pair. Where only one side holds a component
-    /// `$ref` and the other is a plain object, or a `$ref` has siblings other
-    /// than annotations (which override its target), that reference is
-    /// expanded in place (as [`DocResolver::resolve`] would) and the walk
-    /// continues into it, so a schema moving between inline and referenced
-    /// form, or narrowed by a sibling, is still compared field by field. Everything else, including subtrees present
-    /// on one side only and references under annotation keywords, is kept as
-    /// written. Key order is preserved, and a value without component refs is
-    /// returned unchanged.
+    /// appended to `edges` and `$ref` is dropped from both sides; the caller
+    /// compares the targets once per pair. Siblings other than annotations
+    /// override the target in resolution, so they form an overlay: each such
+    /// key (from either side) is compared here with its effective value (the
+    /// sibling, else the target's own) and recorded as the edge's mask (see
+    /// [`RefEdge`]); annotation siblings are compared as written. Where only
+    /// one side holds a component `$ref` and the other is a plain object,
+    /// that reference is expanded in place (as [`DocResolver::resolve`]
+    /// would) and the walk continues into it, so a schema moving between
+    /// inline and referenced form is compared field by field; the inline side
+    /// shrinks at every step, so this terminates. Everything else, including
+    /// subtrees present on one side only and references under annotation
+    /// keywords, is kept as written. Key order is preserved, and a value
+    /// without component refs is returned unchanged.
     pub(crate) fn localize(
         &self,
         old: &Value,
@@ -514,6 +506,8 @@ impl PairResolver<'_> {
         let mut walk = LocalWalk {
             old_stack: Vec::new(),
             new_stack: Vec::new(),
+            depth: 0,
+            top: None,
             edges,
         };
         self.local(old, new, Role::Schema, &mut walk)
@@ -525,24 +519,6 @@ impl PairResolver<'_> {
         }
         match (old, new) {
             (Value::Object(before), Value::Object(after)) => {
-                // A reference whose siblings override its target is expanded
-                // in place, exactly as resolution merges it.
-                if component_ref(before).is_some()
-                    && has_semantic_siblings(before)
-                    && let Some(expanded) = self.old.expand_once(before, &mut walk.old_stack)
-                {
-                    let out = self.local(&expanded, new, role, walk);
-                    walk.old_stack.pop();
-                    return out;
-                }
-                if component_ref(after).is_some()
-                    && has_semantic_siblings(after)
-                    && let Some(expanded) = self.new.expand_once(after, &mut walk.new_stack)
-                {
-                    let out = self.local(old, &expanded, role, walk);
-                    walk.new_stack.pop();
-                    return out;
-                }
                 // Only a reference whose own document declares its target is
                 // a component reference; an undeclared one stays as written,
                 // exactly as resolution leaves it.
@@ -550,23 +526,50 @@ impl PairResolver<'_> {
                 let new_ref = component_ref(after).filter(|name| self.new.declares(name));
                 match (old_ref, new_ref) {
                     (Some(a), Some(b)) => {
-                        // Reaching a pair already being expanded in place on
-                        // this chain is a cycle: resolution keeps both
-                        // references literal here, so compare them as written
-                        // (a retarget at the cut is still a change).
-                        let blocked = walk.blocked();
-                        let names = (a, b);
-                        if blocked.contains(&names) {
-                            return self.local_maps(before, after, role, walk);
-                        }
-                        walk.edges.push(RefEdge { names, blocked });
-                        let strip = |map: &Map<String, Value>| -> Map<String, Value> {
-                            map.iter()
+                        // The overlay: keys beside `$ref` that override the
+                        // target are compared here with their effective
+                        // values (the sibling's, else the target's), and the
+                        // edge masks them; annotation siblings stay as they
+                        // are; `$ref` itself is the edge.
+                        let mut mask: Vec<String> = overlay_keys(before)
+                            .chain(overlay_keys(after))
+                            .cloned()
+                            .collect();
+                        mask.sort();
+                        mask.dedup();
+                        let effective = |map: &Map<String, Value>, target: &Value| {
+                            let mut out: Map<String, Value> = map
+                                .iter()
                                 .filter(|(key, _)| *key != "$ref")
                                 .map(|(key, value)| (key.clone(), value.clone()))
-                                .collect()
+                                .collect();
+                            for key in &mask {
+                                if !out.contains_key(key)
+                                    && let Some(value) = target.get(key)
+                                {
+                                    out.insert(key.clone(), value.clone());
+                                }
+                            }
+                            out
                         };
-                        self.local_maps(&strip(before), &strip(after), role, walk)
+                        let (old_effective, new_effective) = if mask.is_empty() {
+                            (
+                                effective(before, &Value::Null),
+                                effective(after, &Value::Null),
+                            )
+                        } else {
+                            (
+                                effective(before, &self.old.component_value(&a)),
+                                effective(after, &self.new.component_value(&b)),
+                            )
+                        };
+                        let at = (walk.depth > 0).then(|| walk.top.clone()).flatten();
+                        walk.edges.push(RefEdge {
+                            names: (a, b),
+                            at,
+                            mask,
+                        });
+                        self.local_maps(&old_effective, &new_effective, role, walk)
                     }
                     (Some(_), None) => match self.old.expand_once(before, &mut walk.old_stack) {
                         Some(expanded) => {
@@ -591,11 +594,13 @@ impl PairResolver<'_> {
                 let common = before.len().min(after.len());
                 let child = role.child("");
                 let (mut left, mut right) = (Vec::new(), Vec::new());
+                walk.depth += 1;
                 for index in 0..common {
                     let (a, b) = self.local(&before[index], &after[index], child, walk);
                     left.push(a);
                     right.push(b);
                 }
+                walk.depth -= 1;
                 left.extend(before[common..].iter().cloned());
                 right.extend(after[common..].iter().cloned());
                 (Value::Array(left), Value::Array(right))
@@ -613,10 +618,16 @@ impl PairResolver<'_> {
     ) -> (Value, Value) {
         let mut left = Map::new();
         let mut shared: HashMap<&str, Value> = HashMap::new();
+        let outer_top = walk.top.clone();
         for (key, old_child) in before {
             match after.get(key) {
                 Some(new_child) => {
+                    if walk.depth == 0 {
+                        walk.top = Some(key.clone());
+                    }
+                    walk.depth += 1;
                     let (a, b) = self.local(old_child, new_child, role.child(key), walk);
+                    walk.depth -= 1;
                     left.insert(key.clone(), a);
                     shared.insert(key.as_str(), b);
                 }
@@ -625,6 +636,7 @@ impl PairResolver<'_> {
                 }
             }
         }
+        walk.top = outer_top;
         let right = after
             .iter()
             .map(|(key, new_child)| {
@@ -898,27 +910,38 @@ mod tests {
     }
 
     #[test]
-    fn localize_expands_refs_whose_siblings_override_the_target() {
+    fn localize_overlays_siblings_that_override_the_target() {
         let (old, new) = (graph("string"), graph("integer"));
         let pair = PairResolver::new(&old, &new);
-        // `C` changed type, but this use pins `type` itself: the merged schema
-        // is unchanged here, so there is no edge and nothing to report.
+        // `C` changed type, but this use pins `type` itself: the overlay
+        // compares the effective `type` here (equal) and masks it on the edge.
         let mut pinned = reference("C");
         pinned["type"] = json!("string");
-        let (left, right, edges) = localized(&pair, pinned.clone(), pinned);
-        assert!(edges.is_empty());
-        assert_eq!((left.clone(), right), (json!({"type": "string"}), left));
-        // A sibling on one side only meets the other side's plain reference,
-        // which is then expanded too.
+        let mut edges = Vec::new();
+        let (left, right) = pair.localize(&pinned, &pinned, &mut edges);
+        assert_eq!(
+            (left, right),
+            (json!({"type": "string"}), json!({"type": "string"}))
+        );
+        assert_eq!(
+            edges,
+            vec![super::RefEdge {
+                names: ("C".into(), "C".into()),
+                at: None,
+                mask: vec!["type".into()],
+            }]
+        );
+        // A sibling on one side only compares against the other side's
+        // target value of that key (here: absent).
         let mut nullable = reference("A");
         nullable["nullable"] = json!(true);
-        let (left, right, edges) = localized(&pair, reference("A"), nullable);
-        assert_eq!(edges, vec![("B".to_string(), "B".to_string())]);
-        assert_eq!(left, json!({"type": "object", "properties": {"b": {}}}));
-        assert_eq!(
-            right,
-            json!({"type": "object", "properties": {"b": {}}, "nullable": true})
-        );
+        let wrapped = |value: Value| json!({"properties": {"a": value}});
+        let mut edges = Vec::new();
+        let (left, right) = pair.localize(&wrapped(reference("A")), &wrapped(nullable), &mut edges);
+        assert_eq!(left, json!({"properties": {"a": {}}}));
+        assert_eq!(right, json!({"properties": {"a": {"nullable": true}}}));
+        assert_eq!(edges[0].at.as_deref(), Some("properties"));
+        assert_eq!(edges[0].mask, vec!["nullable".to_string()]);
     }
 
     #[test]

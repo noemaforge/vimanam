@@ -860,3 +860,29 @@ fn a_retarget_to_a_newly_deprecated_type_is_reported_once() {
         matches!(&facts[0].native, NativeLocation::Openapi { pointer, .. } if pointer == "/types/B/deprecated")
     );
 }
+
+#[test]
+fn deprecations_seen_only_by_in_place_expansion_inside_a_component_are_kept() {
+    // #182 round 3: W.f moves from `$ref D` (deprecated) to an inline schema.
+    // W's declared schema has no `deprecated` change, but its effective one
+    // does.
+    let mut old = spec();
+    old["components"]["schemas"]["D"] = json!({"type":"string","deprecated":true});
+    old["components"]["schemas"]["W"] =
+        json!({"type":"object","properties":{"f":{"$ref":"#/components/schemas/D"}}});
+    old["paths"]["/widgets"]["get"]["responses"]["200"]["content"]["application/json"]["schema"] =
+        json!({"$ref":"#/components/schemas/W"});
+    let mut new = old.clone();
+    new["components"]["schemas"]["W"]["properties"]["f"] = json!({"type":"string"});
+    let facts: Vec<_> = openapi_diff(&parse(&old), &parse(&new))
+        .into_iter()
+        .filter(|c| {
+            c.kind == ChangeKind::DeprecatedChanged && c.native_kind == "schema_deprecation"
+        })
+        .collect();
+    assert_eq!(facts.len(), 1, "{facts:#?}");
+    assert_eq!(facts[0].details["component"], "W");
+    assert!(facts[0].details.get("old_component").is_none());
+    assert_eq!(facts[0].details["pointer"], "/properties/f/deprecated");
+    assert_eq!(facts[0].uses.len(), 1);
+}

@@ -11,7 +11,10 @@ use std::collections::HashSet;
 use indexmap::{IndexMap, IndexSet};
 use serde_json::Value;
 
-use super::{Change, ChangeKind, ComponentRef, Direction, SchemaUse, ValueChange, value_changes};
+use super::{
+    Change, ChangeKind, ComponentRef, Direction, SchemaUse, ValueChange, ValueChangeKind,
+    value_changes,
+};
 use crate::resolve::{PairResolver, RefEdge};
 use crate::utils::canonicalize_schema_value;
 
@@ -49,7 +52,7 @@ impl<'r, 'a> Components<'r, 'a> {
                      names: (old, new), ..
                  }| old != new || !self.resolver.is_stable(old),
             )
-            .filter(|edge| seen.insert((edge.names.clone(), edge.blocked.clone())))
+            .filter(|edge| seen.insert(edge.clone()))
             .collect()
     }
 
@@ -83,10 +86,10 @@ impl<'r, 'a> Components<'r, 'a> {
     /// reaches the pair.
     pub(super) fn finish(self) -> Vec<Change> {
         let mut pairs: IndexSet<(String, String)> = IndexSet::new();
-        // An edge's target pair and the names of the pairs it must not reach
-        // (resolved to indices once every pair is interned).
-        let intern = |edge: RefEdge, pairs: &mut IndexSet<(String, String)>| {
-            (pairs.insert_full(edge.names).0, edge.blocked)
+        let intern = |edge: RefEdge, pairs: &mut IndexSet<(String, String)>| Target {
+            to: pairs.insert_full(edge.names).0,
+            at: edge.at,
+            mask: edge.mask,
         };
         let use_targets: Targets = self
             .use_edges
@@ -111,6 +114,22 @@ impl<'r, 'a> Components<'r, 'a> {
                 &self.resolver.old.component_value(old),
                 &self.resolver.new.component_value(new),
             );
+            // A reference retargeted to a differently named component is a
+            // change even when the two shapes match: generated clients and
+            // typed consumers depend on the name. Review either way.
+            let mut changes = changes;
+            if old != new {
+                changes.insert(
+                    0,
+                    ValueChange {
+                        pointer: "/$ref".to_string(),
+                        kind: ValueChangeKind::Changed {
+                            old: Value::String(old.clone()),
+                            new: Value::String(new.clone()),
+                        },
+                    },
+                );
+            }
             pair_changes.push(changes);
             pair_targets.push(
                 edges
@@ -146,30 +165,25 @@ impl<'r, 'a> Components<'r, 'a> {
                 old: old.clone(),
                 new: new.clone(),
             };
-            let reaching = reach.uses_of(index);
-            let by_direction: Vec<(Direction, Vec<SchemaUse>)> =
-                [Direction::Request, Direction::Response]
-                    .into_iter()
-                    .map(|direction| {
-                        let uses = reaching
-                            .iter()
-                            .map(|&use_index| &self.uses[use_index])
-                            .filter(|use_| use_.location.direction() == direction)
-                            .cloned()
-                            .collect::<Vec<_>>();
-                        (direction, uses)
-                    })
-                    .filter(|(_, uses)| !uses.is_empty())
-                    .collect();
             for change in &pair_changes[index] {
-                for (direction, uses) in &by_direction {
+                let reaching = reach.uses_of(index, &change.pointer);
+                for direction in [Direction::Request, Direction::Response] {
+                    let uses: Vec<SchemaUse> = reaching
+                        .iter()
+                        .map(|&use_index| &self.uses[use_index])
+                        .filter(|use_| use_.location.direction() == direction)
+                        .cloned()
+                        .collect();
+                    if uses.is_empty() {
+                        continue;
+                    }
                     out.push(Change {
                         endpoint: uses[0].endpoint.clone(),
                         kind: ChangeKind::ComponentSchemaChanged {
                             component: component.clone(),
-                            direction: *direction,
+                            direction,
                             change: change.clone(),
-                            uses: uses.clone(),
+                            uses,
                         },
                     });
                 }
@@ -179,22 +193,40 @@ impl<'r, 'a> Components<'r, 'a> {
     }
 }
 
+/// One edge as the reachability search sees it (see [`RefEdge`]).
+struct Target {
+    to: usize,
+    at: Option<String>,
+    mask: Vec<String>,
+}
+
+type Targets = Vec<Vec<Target>>;
+
+/// The first decoded token of a pointer into a component, or `None` at the
+/// root.
+fn top_key(pointer: &str) -> Option<String> {
+    pointer
+        .split('/')
+        .nth(1)
+        .map(crate::utils::decode_json_pointer_token)
+}
+
 /// Which uses reach which pairs.
 ///
-/// Without cut constraints (the normal case) a pair is reached by every use
-/// whose edges lead to it, found by a reverse search per pair. An edge created
-/// beneath an in-place expansion carries the pairs resolution would cut a
-/// cycle at; then each use is searched forward, never entering a pair that is
-/// blocked on the path taken.
+/// Without overlays (the normal case) a pair is reached by every use whose
+/// edges lead to it, found by a reverse search per pair. With an overlay
+/// (a `$ref` whose siblings override its target), the keys it masks hide
+/// the target's changes under them through that edge, and the target's own
+/// edges under them; a forward search per use tracks the mask each pair is
+/// entered with. The states are (pair, mask), so the search is polynomial.
 enum Reach {
     Reverse {
         pair_sources: Vec<Vec<usize>>,
         use_sources: Vec<Vec<usize>>,
     },
-    Forward(Vec<Vec<usize>>),
+    /// Per pair, each reaching use with every mask it arrives with.
+    Forward(Vec<Vec<(usize, Vec<String>)>>),
 }
-
-type Targets = Vec<Vec<(usize, Vec<(String, String)>)>>;
 
 impl Reach {
     fn new(
@@ -202,22 +234,22 @@ impl Reach {
         use_targets: &Targets,
         pair_targets: &Targets,
     ) -> Self {
-        let constrained = use_targets
+        let masked = use_targets
             .iter()
             .chain(pair_targets)
             .flatten()
-            .any(|(_, blocked)| !blocked.is_empty());
-        if !constrained {
+            .any(|target| !target.mask.is_empty());
+        if !masked {
             let mut pair_sources = vec![Vec::new(); pairs.len()];
             for (from, targets) in pair_targets.iter().enumerate() {
-                for &(to, _) in targets {
-                    pair_sources[to].push(from);
+                for target in targets {
+                    pair_sources[target.to].push(from);
                 }
             }
             let mut use_sources = vec![Vec::new(); pairs.len()];
             for (use_index, targets) in use_targets.iter().enumerate() {
-                for &(to, _) in targets {
-                    use_sources[to].push(use_index);
+                for target in targets {
+                    use_sources[target.to].push(use_index);
                 }
             }
             return Reach::Reverse {
@@ -225,48 +257,58 @@ impl Reach {
                 use_sources,
             };
         }
-        let indices = |blocked: &[(String, String)]| -> Vec<usize> {
-            blocked
-                .iter()
-                .filter_map(|names| pairs.get_index_of(names))
-                .collect()
-        };
-        let mut reached: Vec<Vec<usize>> = vec![Vec::new(); pairs.len()];
+        let mut reached: Vec<Vec<(usize, Vec<String>)>> = vec![Vec::new(); pairs.len()];
         for (use_index, targets) in use_targets.iter().enumerate() {
-            // (pair, blocked pair indices on the path), sorted and deduplicated.
-            let mut seen: HashSet<(usize, Vec<usize>)> = HashSet::new();
-            let mut stack: Vec<(usize, Vec<usize>)> = targets
+            let mut seen: HashSet<(usize, Vec<String>)> = HashSet::new();
+            let mut stack: Vec<(usize, Vec<String>)> = targets
                 .iter()
-                .map(|(to, blocked)| (*to, indices(blocked)))
+                .map(|target| (target.to, target.mask.clone()))
                 .collect();
-            while let Some((pair, blocked)) = stack.pop() {
-                if blocked.contains(&pair) || !seen.insert((pair, blocked.clone())) {
+            while let Some((pair, mask)) = stack.pop() {
+                if !seen.insert((pair, mask.clone())) {
                     continue;
                 }
-                if reached[pair].last() != Some(&use_index) {
-                    reached[pair].push(use_index);
+                for target in &pair_targets[pair] {
+                    let next = match &target.at {
+                        // Under a masked key the overlay replaced it.
+                        Some(key) if mask.contains(key) => continue,
+                        Some(_) => target.mask.clone(),
+                        // An alias passes the overlay on to its target.
+                        None => {
+                            let mut next = mask.clone();
+                            next.extend(target.mask.iter().cloned());
+                            next.sort();
+                            next.dedup();
+                            next
+                        }
+                    };
+                    stack.push((target.to, next));
                 }
-                for (to, more) in &pair_targets[pair] {
-                    let mut next = blocked.clone();
-                    next.extend(indices(more));
-                    next.sort_unstable();
-                    next.dedup();
-                    stack.push((*to, next));
-                }
+                reached[pair].push((use_index, mask));
             }
         }
         Reach::Forward(reached)
     }
 
-    /// Every use (index into the collector's `uses`, ascending) that reaches
-    /// pair `target`.
-    fn uses_of(&self, target: usize) -> Vec<usize> {
+    /// Every use (index into the collector's `uses`, ascending) that sees a
+    /// change at `pointer` in pair `target`.
+    fn uses_of(&self, target: usize, pointer: &str) -> Vec<usize> {
         match self {
             Reach::Reverse {
                 pair_sources,
                 use_sources,
             } => reaching_uses(target, pair_sources, use_sources),
-            Reach::Forward(reached) => reached[target].clone(),
+            Reach::Forward(reached) => {
+                let key = top_key(pointer);
+                let mut uses: Vec<usize> = reached[target]
+                    .iter()
+                    .filter(|(_, mask)| key.as_ref().is_none_or(|key| !mask.contains(key)))
+                    .map(|(use_index, _)| *use_index)
+                    .collect();
+                uses.sort_unstable();
+                uses.dedup();
+                uses
+            }
         }
     }
 }
