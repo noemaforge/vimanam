@@ -735,6 +735,21 @@ def load_allowlist() -> list[dict]:
 REF_TOKEN = re.compile(r"ref:(\S+)")
 
 
+def node_at(v, ptr: str):
+    """The value at JSON pointer `ptr` in `v`, or `None`."""
+    if ptr == "":
+        return v
+    for t in ptr[1:].split("/"):
+        t = t.replace("~1", "/").replace("~0", "~")
+        if isinstance(v, dict) and t in v:
+            v = v[t]
+        elif isinstance(v, list) and t.isdigit() and int(t) < len(v):
+            v = v[int(t)]
+        else:
+            return None
+    return v
+
+
 def ref_values(rec) -> set[str]:
     """The component names a record's change values mention (`ref:NAME`)."""
     return set(REF_TOKEN.findall(rec[3]))
@@ -750,8 +765,12 @@ def q1_checker(gaps: "Gaps", m: dict):
       content is the loop, so a `$ref` record there is the artefact).
     A `ref:` value naming anything else, a loop the use does not reach, or
     an owner whose alias has content (a change in that content is real)
-    does not qualify."""
+    does not qualify. Structurally, too, the record must sit on a reference
+    to the loop: on one side, the node at the record's owner-relative
+    pointer without `/$ref` (in the use schema, or the owner's component) is
+    an object whose `$ref` names an alias-loop component."""
     comps = m["components"]
+    uses = {u["id"]: u for u in m["uses"]}
     loose = alias_loops(comps["old"], False) | alias_loops(comps["new"], False)
     pure = alias_loops(comps["old"], True) | alias_loops(comps["new"], True)
     def factory(found):
@@ -761,12 +780,25 @@ def q1_checker(gaps: "Gaps", m: dict):
                 if x is not None:
                     peers[x[:3]] |= ref_values(x)
 
+        def on_loop_ref(rec) -> bool:
+            if rec[0] not in uses:
+                return False
+            base = rec[2][: -len("/$ref")]
+            owner = rec[1].split("->", 1) if rec[1] != "use" else None
+            for i, side in enumerate(("old", "new")):
+                root = uses[rec[0]][side] if owner is None else comps[side].get(owner[i])
+                node = node_at(root, base)
+                if isinstance(node, dict) and ref_name(node.get("$ref")) in loose:
+                    return True
+            return False
+
         def is_q1(rec) -> bool:
             if not (rec[2].endswith("/$ref") and rec[4] == "review"):
                 return False
             reach = gaps.reaches(rec[0], "old") | gaps.reaches(rec[0], "new")
             owners = set(rec[1].split("->", 1)) if rec[1] != "use" else set()
-            return bool((ref_values(rec) | peers[rec[:3]]) & loose & reach or owners & pure & reach)
+            named = (ref_values(rec) | peers[rec[:3]]) & loose & reach or owners & pure & reach
+            return bool(named) and on_loop_ref(rec)
         return is_q1
     return factory
 

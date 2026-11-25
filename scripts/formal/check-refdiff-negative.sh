@@ -35,11 +35,11 @@ for i in $(seq 0 $((count - 1))); do
   eval "$(python3 -I - "$neg/checks.json" "$i" <<'PY'
 import json, shlex, sys
 c = json.load(open(sys.argv[1]))["checks"][int(sys.argv[2])]
-for k in ("case", "OP", "PTR", "TO"):
+for k in ("case", "OP", "PTR", "TO", "OWNER", "SEV"):
     print(f"{k}={shlex.quote(c.get(k, ''))}")
 PY
 )"
-  if REFDIFF_REAL_BIN="$bin" OP="$OP" PTR="$PTR" TO="$TO" run "$case" "$root/scripts/formal/refdiff-mutate.py"; then
+  if REFDIFF_REAL_BIN="$bin" OP="$OP" PTR="$PTR" TO="$TO" OWNER="$OWNER" SEV="$SEV" run "$case" "$root/scripts/formal/refdiff-mutate.py"; then
     echo "error: --ci accepted $case with OP=$OP PTR=$PTR TO=$TO" >&2
     status=1
   elif ! grep -qE '^[1-9][0-9]* disagreement\(s\) outside the allowlist, 0 error\(s\)$' "$tmp/log"; then
@@ -48,7 +48,7 @@ PY
     cat "$tmp/log" >&2
     status=1
   else
-    echo "ok: --ci rejects $case with OP=$OP PTR=$PTR${TO:+ TO=$TO}: $(grep 'not allowlisted' "$tmp/log" | head -1)"
+    echo "ok: --ci rejects $case with OP=$OP PTR=$PTR${TO:+ TO=$TO}${OWNER:+ OWNER=$OWNER}: $(grep 'not allowlisted' "$tmp/log" | head -1)"
   fi
 done
 exit $status

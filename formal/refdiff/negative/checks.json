@@ -1,11 +1,77 @@
 {
-  "comment": "Negative checks for scripts/formal/refdiff-harness.py --ci, run by scripts/formal/check-refdiff-negative.sh: each wraps the real binary with scripts/formal/refdiff-mutate.py (env OP, PTR, TO) on one case here, and --ci must exit 1. Each case must also pass --ci with the unmodified binary.",
+  "comment": "Negative checks for scripts/formal/refdiff-harness.py --ci, run by scripts/formal/check-refdiff-negative.sh: each wraps the real binary with scripts/formal/refdiff-mutate.py (env OP, PTR, TO, OWNER, SEV) on one case here, and --ci must exit 1. Each case must also pass --ci with the unmodified binary.",
   "checks": [
-    {"case": "q1a", "OP": "drop", "PTR": "/properties/x", "why": "A real $ref record inside an alias whose siblings carry content (A = {$ref: A, type, properties}) is not Q1."},
-    {"case": "q1b", "OP": "inject", "PTR": "/properties/zz/$ref", "TO": "L", "why": "A $ref record naming an alias loop L that the use does not reach is not Q1."},
-    {"case": "q1b", "OP": "rename", "PTR": "/properties/y", "TO": "L", "why": "Renaming a real $ref record's value to an unreached loop L does not make it Q1."},
-    {"case": "g1", "OP": "flip", "PTR": "/properties/q", "why": "P is reached through properties.a and through default: a verdict mismatch is never put down to #186."},
-    {"case": "g2", "OP": "flip", "PTR": "/type", "why": "Q is reached through the grammar and through D.default: not #186."},
-    {"case": "g4", "OP": "flip", "PTR": "/properties/q", "why": "P is reached through the grammar and through U (reached through default): not #186."}
+    {
+      "case": "q1a",
+      "OP": "drop",
+      "PTR": "/properties/x",
+      "why": "A real $ref record inside an alias whose siblings carry content (A = {$ref: A, type, properties}) is not Q1."
+    },
+    {
+      "case": "q1b",
+      "OP": "inject",
+      "PTR": "/properties/zz/$ref",
+      "TO": "L",
+      "why": "A $ref record naming an alias loop L that the use does not reach is not Q1."
+    },
+    {
+      "case": "q1b",
+      "OP": "rename",
+      "PTR": "/properties/y",
+      "TO": "L",
+      "why": "Renaming a real $ref record's value to an unreached loop L does not make it Q1."
+    },
+    {
+      "case": "g1",
+      "OP": "flip",
+      "PTR": "/properties/q",
+      "why": "P is reached through properties.a and through default: a verdict mismatch is never put down to #186."
+    },
+    {
+      "case": "g2",
+      "OP": "flip",
+      "PTR": "/type",
+      "why": "Q is reached through the grammar and through D.default: not #186."
+    },
+    {
+      "case": "g4",
+      "OP": "flip",
+      "PTR": "/properties/q",
+      "why": "P is reached through the grammar and through U (reached through default): not #186."
+    },
+    {
+      "case": "q1b",
+      "OP": "inject",
+      "PTR": "/$ref",
+      "TO": "Missing",
+      "OWNER": "L",
+      "why": "An owner that is a pure alias loop qualifies only when the use reaches it; L is unused."
+    },
+    {
+      "case": "q1d",
+      "OP": "inject",
+      "PTR": "/properties/zz/$ref",
+      "TO": "L",
+      "why": "L is a reachable loop, but no reference to it sits at /properties/zz in A on either side (the structural check)."
+    },
+    {
+      "case": "g1",
+      "OP": "drop-any",
+      "PTR": "/properties/q/type",
+      "why": "Dropping a Breaking record of a component the use reaches through the grammar (properties.a) is not #186, though default reaches it too."
+    },
+    {
+      "case": "g4",
+      "OP": "drop-any",
+      "PTR": "/properties/q/type",
+      "why": "As g1, with P reached through the grammar and through U behind default."
+    },
+    {
+      "case": "g5",
+      "OP": "rate",
+      "PTR": "/default/nullable",
+      "SEV": "breaking",
+      "why": "A record both sides report beneath an out-of-grammar reference (the overlay sibling at /default) with different verdicts is a verdict mismatch, never #186."
+    }
   ]
 }

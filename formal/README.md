@@ -464,12 +464,21 @@ alias-loop condition is enforced, not assumed: the record's use must reach,
 on either side, a component in an alias loop or leading into one, named by
 the record's `ref:` values (or its counterpart's at the same use, owner and
 pointer), or by its owner pair when that component is a pure alias (a
-`$ref` and nothing else; a change in an alias's other siblings is real).
+`$ref` and nothing else; a change in an alias's other siblings is real);
+and, on one side, the node at the record's owner-relative pointer without
+`/$ref` (in the use schema, or the owner's component) must be an object
+whose `$ref` names an alias-loop component. What this cannot tell apart: a
+record invented at a pointer that already holds an unchanged reference to a
+reachable loop. Such a record is Review, so it never changes exit 3.
 `scripts/formal/check-refdiff-negative.sh`, which the `lean` workflow runs
 after `--ci`, wraps the binary with `refdiff-mutate.py` to drop, rename,
-inject or re-rate records on the cases in `refdiff/negative/` as
-`checks.json` lists, and fails unless `--ci` rejects every one through the
-allowlist (each case first passes with the unmodified binary).
+inject (optionally under another owner) or re-rate records on the cases in
+`refdiff/negative/` as `checks.json` lists, and fails unless `--ci` rejects
+every one through the allowlist (each case first passes with the unmodified
+binary). Each tightening of the Q1 and #186 rules (use reach of a loop named
+by a value, use reach of a pure-alias owner, the structural check, the
+grammar-reached exclusion, the guard for records both sides report) has a
+check that fails when that tightening alone is reverted.
 
 `known-rust-bug-#187` is not allowlisted. #182's `expand_once` (and the
 resolver before #182) cuts one-sided expansion by component name: a
