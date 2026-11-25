@@ -43,6 +43,7 @@ import copy
 import json
 import os
 import random
+import re
 import shutil
 import subprocess
 import sys
@@ -217,11 +218,19 @@ def build_model() -> Path:
     return FORMAL / ".lake" / "build" / "bin" / "refdiff"
 
 
+# Seconds for one `refdiff --batch` run over every pair; a model that does not
+# terminate fails the run here instead of hanging it.
+MODEL_TIMEOUT = 1800
+
+
 def run_model(exe: Path, pairs: list[tuple[Path, Path]], work: Path) -> list[dict]:
     listing = work / "batch.tsv"
     outs = [work / f"model-{i}.json" for i in range(len(pairs))]
     listing.write_text("".join(f"{o}\t{n}\t{out}\n" for (o, n), out in zip(pairs, outs)))
-    subprocess.run([str(exe), "--batch", str(listing)], check=True)
+    try:
+        subprocess.run([str(exe), "--batch", str(listing)], check=True, timeout=MODEL_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        sys.exit(f"error: the reference model did not finish {len(pairs)} pairs in {MODEL_TIMEOUT}s")
     return [json.loads(p.read_text()) for p in outs]
 
 
@@ -413,12 +422,12 @@ def classify_grouped(model: Counter, model_neg: set[tuple], rust: Counter,
 
 def name_cuts(found: list, rust: Counter) -> list:
     """Renames the disagreements a component-name cut of one-sided expansion
-    explains. #182's `expand_once` stops when the component is already on its
+    explains (#187). #182's `expand_once` stops when the component is already on its
     side's expansion stack and compares the literal `{"$ref": X}` with the
     other side's inline schema (an added/removed `$ref` record at `P/$ref`);
     the model keeps expanding while the compared value pair is new. Every
     unmatched record of the same use and owner at or beneath `P` is then
-    `rust-one-sided-name-cut`, except Review records at a `$ref` key, which
+    `known-rust-bug-#187`, except Review records at a `$ref` key, which
     keep their class (Q1)."""
     cuts = {(r[0], r[1], r[2][: -len("/$ref")]) for r in rust
             if r[2].endswith("/$ref") and r[3].split(" ")[0] in ("added", "removed")}
@@ -428,7 +437,7 @@ def name_cuts(found: list, rust: Counter) -> list:
         if (kind.startswith(("missing-in-rust", "extra-in-rust"))
                 and not (rec[2].endswith("/$ref") and rec[4] == "review")
                 and any(u == rec[0] and o == rec[1] and under(rec[2], p) for u, o, p in cuts)):
-            kind = "rust-one-sided-name-cut"
+            kind = "known-rust-bug-#187"
         out.append((kind, m, r))
     return out
 
@@ -465,48 +474,119 @@ def ref_name(r) -> str | None:
     return None
 
 
-def refs_outside_grammar(doc: dict) -> bool:
-    """Whether a component reference sits where the model does not follow
-    references but #182 does (#186): anywhere outside the `diff_values`
-    schema grammar that is not an annotation, e.g. under `default`, `if`,
-    `prefixItems` or `$defs`."""
-    comps = (doc.get("definitions") if "swagger" in doc
-             else (doc.get("components") or {}).get("schemas")) or {}
-    found = False
+def encode(token: str) -> str:
+    return token.replace("~", "~0").replace("/", "~1")
 
-    def walk(v, node):
-        nonlocal found
-        if found:
-            return
-        if isinstance(v, dict):
-            if node != "schema" and ref_name(v.get("$ref")) in comps:
-                found = True
-                return
-            for k, c in v.items():
-                if node == "schema" and (k.startswith("x-") or k in ANNOTATIONS):
-                    continue
-                walk(c, node_child(node, k))
-        elif isinstance(v, list):
-            for i, c in enumerate(v):
-                walk(c, node_child(node, str(i)))
 
-    for c in comps.values():
-        walk(c, "schema")
+class Gaps:
+    """Where #182 follows a component `$ref` the model does not (#186), per
+    use, from the model's export of the use schemas and components.
 
-    def schemas(v):
-        if isinstance(v, dict):
-            for k, c in v.items():
-                if k == "schema":
-                    yield c
-                else:
-                    yield from schemas(c)
-        elif isinstance(v, list):
-            for c in v:
-                yield from schemas(c)
+    For each use and side, walking the use schema and every component it
+    reaches (through any reference, as #182 does): `positions[owner]` are the
+    owner-relative pointers of references outside the `diff_values` grammar
+    (owner `use`, or a component name), and `reached` is every component
+    reachable from such a reference's target. A record is #186's when its
+    owner pair has a side in `reached`, or its pointer is at or beneath one
+    of its owner's positions."""
 
-    for sch in schemas(doc.get("paths") or {}):
-        walk(sch, "schema")
-    return found
+    def __init__(self, m: dict):
+        self.by_use: dict[str, dict] = {}
+        comps = m["components"]
+        for u in m["uses"]:
+            sides = {}
+            for side in ("old", "new"):
+                sides[side] = self._side(u[side], comps[side])
+            self.by_use[u["id"]] = sides
+
+    @staticmethod
+    def _side(schema, comps: dict) -> dict:
+        positions: dict[str, set[str]] = defaultdict(set)
+        targets: set[str] = set()
+        seen: set[str] = set()
+        todo: list[tuple[str, object]] = [("use", schema)]
+
+        def walk(owner, v, node, ptr):
+            if isinstance(v, dict):
+                n = ref_name(v.get("$ref"))
+                if n is not None and n in comps:
+                    if node != "schema":
+                        positions[owner].add(ptr)
+                        targets.add(n)
+                    if n not in seen:
+                        seen.add(n)
+                        todo.append((n, comps[n]))
+                for k, c in v.items():
+                    if k == "$ref":
+                        continue
+                    if node == "schema" and (k.startswith("x-") or k in ANNOTATIONS):
+                        continue
+                    walk(owner, c, node_child(node, k), f"{ptr}/{encode(k)}")
+            elif isinstance(v, list):
+                for i, c in enumerate(v):
+                    walk(owner, c, node_child(node, str(i)), f"{ptr}/{i}")
+
+        while todo:
+            owner, v = todo.pop()
+            walk(owner, v, "schema", "")
+        reached: set[str] = set()
+        stack = list(targets)
+        while stack:
+            n = stack.pop()
+            if n in reached:
+                continue
+            reached.add(n)
+
+            def refs(v):
+                if isinstance(v, dict):
+                    r = ref_name(v.get("$ref"))
+                    if r is not None and r in comps:
+                        yield r
+                    for c in v.values():
+                        yield from refs(c)
+                elif isinstance(v, list):
+                    for c in v:
+                        yield from refs(c)
+
+            stack.extend(refs(comps[n]))
+        return {"positions": positions, "reached": reached}
+
+    def covers(self, rec) -> bool:
+        sides = self.by_use.get(rec[0])
+        if sides is None:
+            return False
+        if rec[1] == "use":
+            owners = {"old": "use", "new": "use"}
+        else:
+            o, n = rec[1].split("->", 1) if "->" in rec[1] else (rec[1], rec[1])
+            if o in sides["old"]["reached"] or n in sides["new"]["reached"]:
+                return True
+            owners = {"old": o, "new": n}
+        return any(under(rec[2], p) for side in ("old", "new")
+                   for p in sides[side]["positions"].get(owners[side], ()))
+
+    def any(self) -> bool:
+        return any(sides[s]["positions"] for sides in self.by_use.values() for s in ("old", "new"))
+
+
+def alias_loops(comps: dict) -> set[str]:
+    """Components from which a chain of component references, each a whole
+    component `{"$ref": ..., <siblings>}`, comes back to a component already
+    on it: alias loops, and the aliases leading into them (Q1)."""
+    out = set()
+    for start in comps:
+        seen = [start]
+        cur = comps[start]
+        while isinstance(cur, dict):
+            n = ref_name(cur.get("$ref"))
+            if n is None or n not in comps:
+                break
+            if n in seen:
+                out.update(seen)
+                break
+            seen.append(n)
+            cur = comps[n]
+    return out
 
 
 # ── per-path cuts of the pre-#182 resolver ──────────────────────────────────
@@ -633,8 +713,26 @@ def load_allowlist() -> list[dict]:
     return json.loads(ALLOWLIST.read_text())["rules"]
 
 
-def allowed(kind: str, mrec, rrec, rules: list[dict]) -> str | None:
-    """The allowlist rule a disagreement falls under, if any."""
+REF_TOKEN = re.compile(r"ref:(\S+)")
+
+
+def record_names(rec) -> set[str]:
+    """The component names a record mentions: its owner pair and `ref:`
+    values."""
+    names = set(REF_TOKEN.findall(rec[3]))
+    if rec[1] != "use":
+        names.update(rec[1].split("->", 1))
+    return names
+
+
+def allowed(kind: str, mrec, rrec, rules: list[dict], loops: set[str] = frozenset(),
+            peers: set[str] = frozenset()) -> str | None:
+    """The allowlist rule a disagreement falls under, if any. A rule with
+    `"requires": "alias-loop"` only covers a record that names (as its owner
+    pair or a `ref:` value), or whose counterpart disagreement at the same
+    use, owner and pointer names (`peers`), a component in an alias loop or
+    leading into one on either side (`loops`): the harness checks the Q1
+    condition, it does not assume it."""
     rec = mrec if mrec is not None else rrec
     for rule in rules:
         if kind not in rule["classes"]:
@@ -644,6 +742,9 @@ def allowed(kind: str, mrec, rrec, rules: list[dict]) -> str | None:
         if "pointer_suffix" in rule and not rec[2].endswith(rule["pointer_suffix"]):
             continue
         if "verdict" in rule and not all(x is None or x[4] == rule["verdict"] for x in (mrec, rrec)):
+            continue
+        names = set(peers).union(*(record_names(x) for x in (mrec, rrec) if x is not None))
+        if rule.get("requires") == "alias-loop" and not names & loops:
             continue
         return rule["name"]
     return None
@@ -723,16 +824,29 @@ def main() -> int:
     main_agree = 0
     errors = []
     for (name, o, n), m, pr, mn in zip(pairs, models, prs, mains):
-        gap = refs_outside_grammar(json.loads(o.read_text())) or refs_outside_grammar(json.loads(n.read_text()))
+        gaps = Gaps(m)
+        gap = gaps.any()
+        loops = alias_loops(m["components"]["old"]) | alias_loops(m["components"]["new"])
         if pr is None or "error" in pr:
             errors.append((name, "rust", pr))
         else:
             mg, mneg = model_grouped(m)
             rg, rneg = rust_records(pr, True)
-            for kind, mrec, rrec in classify_grouped(mg, mneg, rg, rneg):
+            found = classify_grouped(mg, mneg, rg, rneg)
+            # The component names every disagreement at one (use, owner,
+            # pointer) mentions: a Q1 record's alias loop may be named only
+            # by its counterpart on the other side.
+            peers: dict[tuple, set[str]] = defaultdict(set)
+            for _, mrec, rrec in found:
+                for x in (mrec, rrec):
+                    if x is not None:
+                        peers[x[:3]] |= record_names(x)
+            for kind, mrec, rrec in found:
                 # The model does not follow references outside the schema
                 # grammar; #182 does, and rates what it finds there (#186).
-                by_class["known-rust-bug-#186" if gap else kind].append((name, o, n, mrec, rrec))
+                rec = mrec if mrec is not None else rrec
+                by_class["known-rust-bug-#186" if gaps.covers(rec) else kind].append(
+                    (name, o, n, mrec, rrec, loops, peers[rec[:3]]))
         if mn is not None:
             if "error" in mn:
                 errors.append((name, "per-path", mn))
@@ -746,7 +860,7 @@ def main() -> int:
                                            sorted((rp - mp).elements())))
 
     unallowed = [(kind, i) for kind, items in sorted(by_class.items()) for i in items
-                 if allowed(kind, i[3], i[4], rules) is None]
+                 if allowed(kind, i[3], i[4], rules, i[5], i[6]) is None]
 
     # Shrink one representative per class.
     repro_dir = out / "repro"
@@ -755,7 +869,7 @@ def main() -> int:
     tmp = out / "work" / "shrink"
     tmp.mkdir()
     for kind, items in sorted(by_class.items()):
-        name, o, n, mrec, rrec = items[0]
+        name, o, n, mrec, rrec, *_ = items[0]
         old, new = json.loads(o.read_text()), json.loads(n.read_text())
         counter = [0]
 
@@ -787,7 +901,7 @@ def main() -> int:
     write_report(out, args, pairs, by_class, main_by_class, errors, shrunk, main_agree, rules, unallowed)
     print(out / "report.md")
     if args.ci:
-        for kind, (name, o, n, mrec, rrec) in unallowed[:20]:
+        for kind, (name, o, n, mrec, rrec, *_) in unallowed[:20]:
             print(f"not allowlisted: {kind} in {name}: model {fmt(mrec)}; rust {fmt(rrec)}", file=sys.stderr)
         for n_, w, e in errors[:20]:
             print(f"error: {n_} ({w}): {e}", file=sys.stderr)
@@ -816,7 +930,7 @@ def write_report(out, args, pairs, by_class, main_by_class, errors, shrunk, main
               "| Class | Records | Pairs | Allowlisted | Repro |", "| --- | ---: | ---: | ---: | --- |"]
     for kind, items in sorted(by_class.items()):
         rep = shrunk.get(kind)
-        ok = sum(1 for i in items if allowed(kind, i[3], i[4], rules) is not None)
+        ok = sum(1 for i in items if allowed(kind, i[3], i[4], rules, i[5], i[6]) is not None)
         lines.append(f"| `{kind}` | {len(items)} | {len({i[0] for i in items})} | {ok} | "
                      f"{rep[1].name if rep else ''} |")
     lines += ["", f"Outside the allowlist (`formal/refdiff/allowlist.json`): {len(unallowed)} records.", ""]
@@ -827,7 +941,7 @@ def write_report(out, args, pairs, by_class, main_by_class, errors, shrunk, main
         for _, m, r in diffs[:6]:
             lines += [f"- model: {fmt(m)}", f"  rust:  {fmt(r)}"]
         lines += ["", "First occurrences:", ""]
-        for name, o, n, m, r in items[:5]:
+        for name, o, n, m, r, *_ in items[:5]:
             lines += [f"- `{name}`: model {fmt(m)}; rust {fmt(r)}"]
         lines.append("")
     if args.main:

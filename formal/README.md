@@ -35,7 +35,7 @@ python3 -I scripts/formal/check-model-drift.py
 | `VimanamProofs/RefDiff.lean` | The `$ref`-aware schema diff reference model (#181): executable, no theorems. See "Reference semantics of `$ref` diffs". |
 | `VimanamProofs/Audit.lean` | `#print axioms` for every theorem. |
 | `OracleExport/` | `lake exe oracle`: writes `oracle/*.json` from the model definitions. `lake exe refdiff`: evaluates `RefDiff.lean` on spec pairs. |
-| `refdiff/cases/`, `refdiff/expected/` | Fixed spec pairs for the `$ref` model (#182's review-round repros `r1`–`r3`, #185's `r4`) and the model's pinned grouped output on them. |
+| `refdiff/cases/`, `refdiff/expected/` | Fixed spec pairs for the `$ref` model (#182's review-round repros `r1`–`r3`, #185's `r4`–`r5`, including 62- to 66-hop alias chains around the 64-hop cap) and the model's pinned grouped output on them. |
 | `refdiff/allowlist.json` | The known disagreements `refdiff-harness.py --ci` accepts. |
 | `oracle/` | The committed oracle vectors. |
 | `models.toml` | Which Rust each model reads, with a fingerprint of it. |
@@ -279,8 +279,10 @@ the same specification in prose.
 
 ### Inputs
 
-* **Components** are the document's `components.schemas` (OpenAPI 3) or
-  `definitions` (Swagger 2). A `$ref` names a component when it is
+* **Components** are, in either OpenAPI version, every `components.schemas`
+  entry, then every top-level `definitions` entry whose name is not taken
+  (`parser::extract_schemas`; the Rust also skips a `definitions` entry it
+  cannot parse as a schema, which is not specified here). A `$ref` names a component when it is
   `#/components/schemas/NAME` or `#/definitions/NAME`, in either kind of
   document, with the token decoded (`~1` is `/`, `~0` is `~`). The two
   spellings are the same name everywhere below. Any other `$ref`, or one
@@ -362,9 +364,12 @@ Schema 2020-12 has a subschema (`if`/`then`/`else`, `prefixItems`, `$defs`,
 every non-annotation position and rates what it finds there by the direction
 table, which can be Breaking (#186; before #182 such changes were Review,
 at their opaque pointer). The model does not follow them, so for such a
-reference it reports nothing, the `refdiff/cases/r4-ref-*` cases pin that,
-and the harness puts every disagreement of a pair with such a reference in
-`known-rust-bug-#186`.
+reference it reports nothing, and the `refdiff/cases/r4-ref-*` cases pin
+that. The intended output is to be decided in the Lean model with the fix
+for #186. The harness puts a disagreement in `known-rust-bug-#186` only when
+it is reached through such a reference: its owner pair has a side reachable
+from the target of an out-of-grammar reference that the use reaches, or its
+pointer is at or beneath such a reference in its owner.
 
 ### Owners, states and reach
 
@@ -439,7 +444,7 @@ far a side was expanded is not observable through the table) and `$ref`
 strings compare by component name. Each disagreement is classified
 (`verdict`, `verdict-under-not`, `retarget-fact-missing`, `attribution-*`,
 `under-not-flag-{extra,missing}-in-rust`, `extra-in-rust-*`,
-`missing-in-rust-*`, `rust-one-sided-name-cut`, `known-rust-bug-#186`), and
+`missing-in-rust-*`, `known-rust-bug-#187`, `known-rust-bug-#186`), and
 one pair per class is shrunk by delta debugging into `DIR/repro/`. The report
 is `DIR/report.md`.
 
@@ -449,7 +454,21 @@ timeout and on any disagreement `refdiff/allowlist.json` does not cover. The
 allowlist holds the known limits: Q1, a Review record at a `$ref` key from a
 content-free alias loop (`C = {"$ref": C}`, possibly with siblings, facing an
 undeclared reference or inline schema: the model takes the fixpoint, the
-Rust compares the literal `$ref`), and `known-rust-bug-#186`.
+Rust compares the literal `$ref`), and `known-rust-bug-#186`. The Q1 rule's
+alias-loop condition is enforced, not assumed: the record must name, as its
+owner pair or a `ref:` value, a component that is in an alias loop or leads
+into one, on either side.
+
+`known-rust-bug-#187` is not allowlisted. #182's `expand_once` (and the
+resolver before #182) cuts one-sided expansion by component name: a
+component already on that side's expansion stack, facing deeper inline
+content on the other side, is compared as the literal `{"$ref": X}`. The
+model keeps expanding while the compared value pair is new. The Rust then
+misses changes beneath the cut, Breaking ones included, and can also report
+false ones: a recursive component unrolled inline, with nothing changed,
+exits 3. The class names every unmatched record of a use and owner at or
+beneath a pointer `P` where the Rust has an added/removed record at
+`P/$ref`, except Review records at a `$ref` key.
 
 ### Not covered
 
@@ -462,8 +481,15 @@ reads documents through `Lean.Json`, which sorts object keys, so "the first
 media type" (of a request body, or of a response without `schema`) is the
 first in sorted order, where the Rust takes the first in the document; a
 pair whose media types differ in that order can disagree for that reason
-alone (the generator writes one media type). Inputs the Rust rejects
-(`type` not a string or array of strings, ...) are not specified.
+alone (the generator writes one media type). Numbers: `Lean.Json` parses
+a number and renders it again, so the model compares numbers by that
+rendering, which is not `serde_json`'s identity: the Rust tells `1` from
+`1.0` (an `enum` `[1, 2]` → `[1.0, 2]` is a removal and an addition there,
+nothing here) and may tell `100` from `1e2` or `10` from `10.0`, and it
+reads integers past `u64` as lossy `f64` (`2^64` and `2^64 + 1` are equal
+there, a change here). Neither is intended semantics; the generator writes
+small integers only. Inputs the Rust rejects (`type` not a string or array
+of strings, ...) are not specified.
 
 ## Next candidates
 

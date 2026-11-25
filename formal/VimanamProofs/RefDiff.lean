@@ -58,9 +58,12 @@ owner (or its owner was so reached); verdicts there are Review, as
 * JSON objects keep the order they were given, but the CLI front end
   (`OracleExport/RefDiffMain.lean`) reads them through `Lean.Json`, which
   sorts keys; only "first media type" depends on order.
-* Component names come from `#/components/schemas/NAME` and
-  `#/definitions/NAME` (decoded), in either kind of document, as in
+* Components are `components.schemas` then unclaimed `definitions`, in
+  either kind of document (`side`). Component names come from
+  `#/components/schemas/NAME` and `#/definitions/NAME` (decoded), as in
   `resolve::reference_name`.
+* Numbers compare by `Lean.Json`'s rendering, not `serde_json`'s identity
+  (`1` vs `1.0`, integers past `u64`): not specified.
 * Endpoints match on `(METHOD, path)` only (moves are not paired, as in
   v1 output). A use is a non-body parameter (by `(name, in)`, then a
   location change), the request body, or a response status present on both
@@ -82,7 +85,11 @@ open Vimanam.Severity (Pointer Kind Val Severity Node Loc locate underNot
 
 /-! ## JSON -/
 
-/-- A JSON value; numbers keep their source text. -/
+/-- A JSON value. A number is the text `Lean.Json` renders for it after
+parsing (`OracleExport/RefDiffMain.lean`), which is not the Rust's
+`serde_json` identity: `1` and `1.0`, or `100` and `1e2`, may compare equal
+here and differ there, and integers past `u64` are exact here where
+`serde_json` rounds them to `f64`. See formal/README.md, Not covered. -/
 inductive J where
   | null
   | bool (b : Bool)
@@ -576,15 +583,18 @@ def endpoints (doc : J) : List Endpoint :=
         (item.field? m).map fun op => ⟨m.toUpper, path, op, pp⟩
   | _ => []
 
-def isOas2 (doc : J) : Bool := (doc.field? "swagger").isSome
-
-/-- The document's components, as deserialised, canonicalised. -/
+/-- The document's components (`parser::extract_schemas`): every
+`components.schemas` entry, then every top-level `definitions` entry whose
+name is not taken, in either OpenAPI version; as deserialised,
+canonicalised. (The Rust skips a `definitions` entry `models::Schema` cannot
+parse; such inputs are not specified.) -/
 def side (doc : J) : Side :=
-  let raw := if isOas2 doc then doc.field? "definitions"
-    else (doc.field? "components").bind (·.field? "schemas")
-  match raw with
-  | some (.obj kvs) => ⟨kvs.map fun (k, v) => (k, canon (schemaNorm v))⟩
-  | _ => ⟨[]⟩
+  let entries (j : Option J) : List (String × J) := match j with
+    | some (.obj kvs) => kvs
+    | _ => []
+  let comps := entries ((doc.field? "components").bind (·.field? "schemas"))
+  let defs := (entries (doc.field? "definitions")).filter fun (k, _) => (comps.lookup k).isNone
+  ⟨(comps ++ defs).map fun (k, v) => (k, canon (schemaNorm v))⟩
 
 /-- Endpoint matching: exact `(METHOD, path)`. Move pairing (operationId,
 `v<digits>` segments) only renames the use in Markdown and v2 output; the v1

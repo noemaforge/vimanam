@@ -66,7 +66,7 @@ rust = [
 [[model]]
 lean = "formal/VimanamProofs/RefDiff.lean"
 read_against = "d147bb1fc5dc"
-read_digest = "v1:sha256:d02ab092e2d1a69fdbfa86a4af5733bc6856c80132dbc51f90d1d857fe19ff98"
+read_digest = "v1:sha256:c5b046f02fb2b24b8b80ab6ec79822d6aa4b2e0e98ac615484b3c1beab6d8721"
 rust = [
   "src/resolve.rs#reference_name",
   "src/resolve.rs#DocResolver",
@@ -96,6 +96,12 @@ rust = [
   "src/parser.rs#extract_endpoints",
   "src/parser.rs#dedup_parameters",
   "src/markdown/schema.rs#response_schema",
+  "src/resolve.rs#MAX_RESOLVE_DEPTH",
+  "src/resolve.rs#ANNOTATIONS",
+  "src/resolve.rs#Role",
+  "src/resolve.rs#component_ref",
+  "src/resolve.rs#overlay_keys",
+  "src/parser.rs#extract_schemas",
   "src/resolve.rs#RefEdge",
   "src/resolve.rs#PairResolver",
   "src/diff/components.rs",
