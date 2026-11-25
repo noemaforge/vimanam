@@ -1,0 +1,39 @@
+{
+ "swagger": "2.0",
+ "info": {
+  "title": "T",
+  "version": "1"
+ },
+ "paths": {
+  "/a": {
+   "get": {
+    "responses": {
+     "200": {
+      "description": "ok",
+      "schema": {
+       "$ref": "#/definitions/Alias"
+      }
+     }
+    }
+   }
+  }
+ },
+ "definitions": {
+  "Alias": {
+   "type": "object",
+   "properties": {
+    "b": {
+     "$ref": "#/definitions/Base"
+    }
+   }
+  },
+  "Base": {
+   "type": "object",
+   "properties": {
+    "a": {
+     "type": "integer"
+    }
+   }
+  }
+ }
+}

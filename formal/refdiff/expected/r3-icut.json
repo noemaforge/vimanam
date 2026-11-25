@@ -1,0 +1,7 @@
+[
+{"change": {"after": "Y", "before": "X", "op": "retargeted"}, "dir": "response", "neg": false, "owner": {"new": "Y", "old": "X"}, "ptr": "", "severity": "review", "use": "GET /a response:200"},
+{"change": {"after": {"$ref": "#/components/schemas/W"}, "op": "added"}, "dir": "response", "neg": false, "owner": {"new": "Y", "old": "X"}, "ptr": "/properties/r", "severity": "non_breaking", "use": "GET /a response:200"},
+{"change": {"after": {"type": "integer"}, "op": "added"}, "dir": "response", "neg": false, "owner": {"new": "Y", "old": "X"}, "ptr": "/properties/y", "severity": "non_breaking", "use": "GET /a response:200"},
+{"change": {"before": {"$ref": "#/components/schemas/Y", "type": "object"}, "op": "removed"}, "dir": "response", "neg": false, "owner": {"new": "Y", "old": "X"}, "ptr": "/properties/q", "severity": "breaking", "use": "GET /a response:200"},
+{"change": {"before": {"type": "string"}, "op": "removed"}, "dir": "response", "neg": false, "owner": {"new": "Y", "old": "X"}, "ptr": "/properties/x", "severity": "breaking", "use": "GET /a response:200"}
+]

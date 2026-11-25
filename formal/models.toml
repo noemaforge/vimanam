@@ -54,3 +54,57 @@ rust = [
   "src/diff/value.rs#set_element_segment",
   "src/diff/value.rs#push_segment",
 ]
+
+# The `$ref` diff reference model. It specifies #181's intended semantics,
+# so it is a reference for #182 rather than a transcription of this Rust. The
+# refs are what it reproduces (resolution, canonicalisation, the
+# companion-`required` rule, ref names, `diff_values`, the uses: parameter
+# pairing and schemas, bodies, responses, `models::Schema` deserialisation)
+# and the edge diff and its v1 JSON records, which
+# scripts/formal/refdiff-harness.py compares with the grouped view: when they
+# drift, re-run the harness.
+[[model]]
+lean = "formal/VimanamProofs/RefDiff.lean"
+read_against = "d147bb1fc5dc"
+read_digest = "v1:sha256:c5b046f02fb2b24b8b80ab6ec79822d6aa4b2e0e98ac615484b3c1beab6d8721"
+rust = [
+  "src/resolve.rs#reference_name",
+  "src/resolve.rs#DocResolver",
+  "src/utils.rs#ANNOTATION_KEYS",
+  "src/utils.rs#SCHEMA_MAP_KEYS",
+  "src/utils.rs#SCHEMA_KEYS",
+  "src/utils.rs#SCHEMA_LIST_KEYS",
+  "src/utils.rs#canonicalize_schema",
+  "src/utils.rs#canonicalize_type_union",
+  "src/diff/mod.rs#value_changes",
+  "src/diff/render.rs#required_member_pointer",
+  "src/diff/value.rs#diff_values",
+  "src/diff/value.rs#diff_nodes",
+  "src/diff/value.rs#diff_sets",
+  "src/diff/value.rs#empty_counterpart",
+  "src/diff/mod.rs#diff_parameters",
+  "src/diff/mod.rs#find_parameter",
+  "src/diff/mod.rs#is_body",
+  "src/diff/mod.rs#diff_parameter_pair",
+  "src/diff/mod.rs#parameter_schema_json",
+  "src/diff/mod.rs#schema_changes",
+  "src/diff/mod.rs#diff_request_body",
+  "src/diff/mod.rs#diff_responses",
+  "src/models.rs#Schema",
+  "src/models.rs#deserialize_optional_type",
+  "src/models.rs#TYPE_UNION_SEPARATOR",
+  "src/parser.rs#extract_endpoints",
+  "src/parser.rs#dedup_parameters",
+  "src/markdown/schema.rs#response_schema",
+  "src/resolve.rs#MAX_RESOLVE_DEPTH",
+  "src/resolve.rs#ANNOTATIONS",
+  "src/resolve.rs#Role",
+  "src/resolve.rs#component_ref",
+  "src/resolve.rs#overlay_keys",
+  "src/parser.rs#extract_schemas",
+  "src/resolve.rs#RefEdge",
+  "src/resolve.rs#PairResolver",
+  "src/diff/components.rs",
+  "src/diff/json.rs#component_kind_and_details",
+  "src/diff/json.rs#component_entries",
+]

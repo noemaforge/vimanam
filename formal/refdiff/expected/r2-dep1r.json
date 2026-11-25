@@ -1,0 +1,8 @@
+[
+{"change": {"after": "B", "before": "A", "op": "retargeted"}, "dir": "request", "neg": false, "owner": {"new": "B", "old": "A"}, "ptr": "", "severity": "review", "use": "POST /x body"},
+{"change": {"after": "B", "before": "A", "op": "retargeted"}, "dir": "response", "neg": false, "owner": {"new": "B", "old": "A"}, "ptr": "", "severity": "review", "use": "GET /y response:200"},
+{"change": {"after": "B", "before": "A", "op": "retargeted"}, "dir": "response", "neg": false, "owner": {"new": "B", "old": "A"}, "ptr": "", "severity": "review", "use": "POST /x response:200"},
+{"change": {"after": "D", "before": "C", "op": "retargeted"}, "dir": "request", "neg": false, "owner": {"new": "D", "old": "C"}, "ptr": "", "severity": "review", "use": "POST /x body"},
+{"change": {"after": "D", "before": "C", "op": "retargeted"}, "dir": "response", "neg": false, "owner": {"new": "D", "old": "C"}, "ptr": "", "severity": "review", "use": "GET /y response:200"},
+{"change": {"after": "D", "before": "C", "op": "retargeted"}, "dir": "response", "neg": false, "owner": {"new": "D", "old": "C"}, "ptr": "", "severity": "review", "use": "POST /x response:200"}
+]

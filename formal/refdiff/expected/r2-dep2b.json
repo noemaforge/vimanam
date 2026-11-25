@@ -1,0 +1,4 @@
+[
+{"change": {"after": "B", "before": "A", "op": "retargeted"}, "dir": "response", "neg": false, "owner": {"new": "B", "old": "A"}, "ptr": "", "severity": "review", "use": "GET /y response:200"},
+{"change": {"after": {"type": "string"}, "op": "added"}, "dir": "response", "neg": false, "owner": {"new": "Wrap", "old": "Wrap"}, "ptr": "/properties/z", "severity": "non_breaking", "use": "GET /y response:200"}
+]

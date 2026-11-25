@@ -11,12 +11,22 @@ on:
     branches: [main]
     paths:
       - 'src/diff/**'
+      - 'src/resolve.rs'
+      - 'src/utils.rs'
+      - 'src/models.rs'
+      - 'src/parser.rs'
+      - 'src/markdown/schema.rs'
       - 'formal/**'
       - 'scripts/formal/**'
       - '.github/workflows/model-drift.yml'
   pull_request:
     paths:
       - 'src/diff/**'
+      - 'src/resolve.rs'
+      - 'src/utils.rs'
+      - 'src/models.rs'
+      - 'src/parser.rs'
+      - 'src/markdown/schema.rs'
       - 'formal/**'
       - 'scripts/formal/**'
       - '.github/workflows/model-drift.yml'

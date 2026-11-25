@@ -1,0 +1,5 @@
+[
+{"change": {"after": "integer", "before": "string", "op": "changed"}, "dir": "request", "neg": false, "owner": {"new": "a/b", "old": "a/b"}, "ptr": "/properties/x/type", "severity": "breaking", "use": "POST /a body"},
+{"change": {"before": "q", "op": "removed"}, "dir": "request", "neg": false, "owner": {"new": "t~z", "old": "t~z"}, "ptr": "/properties/e/enum/q", "severity": "breaking", "use": "POST /a body"},
+{"change": {"before": "q", "op": "removed"}, "dir": "response", "neg": false, "owner": {"new": "t~z", "old": "t~z"}, "ptr": "/properties/e/enum/q", "severity": "non_breaking", "use": "POST /a response:200"}
+]

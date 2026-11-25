@@ -1,0 +1,16 @@
+{
+  "comment": "Known disagreements scripts/formal/refdiff-harness.py --ci accepts. Each rule names the harness classes it covers; `pointer` (exact), `pointer_suffix` and `verdict`, when present, must match the record (`verdict`: both records'); `requires: alias-loop` is checked by the harness (q1_checker): the record's use must reach, on either side, a component in an alias loop or leading into one that is named by the record's ref: values or its counterpart's at the same use, owner and pointer, or by its owner pair when that component is a pure alias ({$ref} and nothing else after canonicalisation); and the node at the record's owner-relative pointer without /$ref must, on one side, be an object whose $ref names an alias-loop component. formal/refdiff/negative/ holds corruptions this must reject. See formal/README.md, \"Reference semantics of `$ref` diffs\", Known limits.",
+  "rules": [
+    {
+      "name": "Q1: content-free alias loop (C = {\"$ref\": C}, or a ref cycle with no content) facing an undeclared ref or inline schema: the model takes the fixpoint, the Rust compares the literal $ref; one Review record at a $ref key either way",
+      "classes": ["missing-in-rust-at-use", "missing-in-rust-masked-reach", "extra-in-rust-at-use", "extra-in-rust-component"],
+      "pointer_suffix": "/$ref",
+      "verdict": "review",
+      "requires": "alias-loop"
+    },
+    {
+      "name": "#186: the Rust follows component references outside the schema grammar (default, if, prefixItems, $defs, ...) and rates what it finds there by the direction table; the model does not follow them",
+      "classes": ["known-rust-bug-#186"]
+    }
+  ]
+}

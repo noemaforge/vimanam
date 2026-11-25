@@ -1,0 +1,5 @@
+[
+{"change": {"after": "object", "op": "added"}, "dir": "request", "neg": false, "owner": {"new": "Outer", "old": "Outer"}, "ptr": "/properties/x/type", "severity": "breaking", "use": "POST /a body"},
+{"change": {"after": {"type": "string"}, "op": "added"}, "dir": "request", "neg": false, "owner": {"new": "Outer", "old": "Outer"}, "ptr": "/properties/x/properties/a", "severity": "non_breaking", "use": "POST /a body"},
+{"change": {"before": "#/components/schemas/Inner", "op": "removed"}, "dir": "request", "neg": false, "owner": {"new": "Outer", "old": "Outer"}, "ptr": "/properties/x/$ref", "severity": "review", "use": "POST /a body"}
+]

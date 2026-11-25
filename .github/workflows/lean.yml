@@ -9,16 +9,23 @@ name: lean
 #
 # The Rust replay of the oracle vectors (src/diff/formal_oracle.rs) runs in
 # ci.yml with the rest of `cargo test`; model drift is reported by
-# model-drift.yml.
+# model-drift.yml. The `$ref` diff reference model is compared with a release
+# build of the Rust here, so the workflow also runs on Rust changes.
 on:
   push:
     branches: [main]
     paths:
+      - 'src/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
       - 'formal/**'
       - 'scripts/formal/**'
       - '.github/workflows/lean.yml'
   pull_request:
     paths:
+      - 'src/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
       - 'formal/**'
       - 'scripts/formal/**'
       - '.github/workflows/lean.yml'
@@ -37,7 +44,7 @@ env:
 jobs:
   proofs:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -93,6 +100,41 @@ jobs:
       # the Rust replay reads from the old model.
       - name: Check the oracle vectors
         run: scripts/formal/check-oracle.sh
+
+      - name: Check the $ref diff reference model's outputs
+        run: scripts/formal/check-refdiff.sh
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # master 2026-06-20
+        with:
+          toolchain: stable
+
+      - name: Cache Rust dependencies and build outputs
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      # The reference model against the Rust on the fixed cases and a fixed
+      # seed range: fails on a Rust error or timeout, or on any disagreement
+      # formal/refdiff/allowlist.json does not cover.
+      - name: Compare the $ref diff reference model with the Rust
+        run: |
+          set -euo pipefail
+          cargo build --release --locked
+          python3 -I scripts/formal/refdiff-harness.py --ci --jobs 2 \
+            --rust target/release/vimanam --seeds 60 --out "$RUNNER_TEMP/refdiff"
+
+      # The allowlist must not excuse corrupted records: each entry of
+      # formal/refdiff/negative/checks.json wraps the binary and --ci must fail.
+      - name: Check the $ref diff harness rejects corrupted records
+        run: scripts/formal/check-refdiff-negative.sh target/release/vimanam
+
+      - name: Upload the $ref diff report
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: refdiff-report
+          path: ${{ runner.temp }}/refdiff/
 
       - name: Drift checker's self-test
         run: python3 -I scripts/formal/check-model-drift.py --self-test

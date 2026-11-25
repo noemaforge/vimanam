@@ -1,0 +1,3 @@
+[
+{"change": {"after": false, "before": true, "op": "changed"}, "dir": "response", "neg": false, "owner": null, "ptr": "/nullable", "severity": "non_breaking", "use": "GET /a response:200"}
+]
