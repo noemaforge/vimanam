@@ -58,7 +58,6 @@ struct Session {
     /// Path-limited regular-file lookups per (commit, path).
     entries: HashMap<(String, PathBuf), Option<Entry>>,
     edges: HashMap<(String, String), Vec<u8>>,
-    shallow: Option<Vec<u8>>,
     /// Answer path lookups from one full listing per commit (set when the
     /// caller will need full listings anyway, such as protobuf imports).
     full_listings: bool,
@@ -307,6 +306,8 @@ impl Repository {
     fn resolve(&self, reference: &str) -> Result<String> {
         // Only a full object ID always names the same commit; refs move and
         // an abbreviation can become ambiguous, so those are re-resolved.
+        // Entries are only ever stored under IDs of this repository's hash
+        // length (see below), so a ref-shaped lookup here never hits.
         let key = is_oid(reference).then(|| reference.to_ascii_lowercase());
         if let Some(commit) = key
             .as_ref()
@@ -331,8 +332,12 @@ impl Repository {
         }
         let commit = std::str::from_utf8(&output.stdout)?.trim().to_owned();
         let mut session = self.session();
-        if let Some(key) = key {
-            // A full tag object ID peels to a fixed commit.
+        // A full tag object ID peels to a fixed commit. Hex of the other
+        // hash length (64 in a SHA-1 repository, 40 in SHA-256) is not an
+        // object ID there: Git resolves it as a ref name, which can move.
+        if let Some(key) = key
+            && key.len() == commit.len()
+        {
             session.commits.insert(key, commit.clone());
         }
         // A full commit ID resolves to itself, so later lookups by the ID
@@ -381,6 +386,7 @@ impl Repository {
 
     /// Read whole-commit listings (once per commit) instead of path-limited
     /// ones, for callers that will enumerate those commits anyway.
+    #[cfg(feature = "cli")]
     pub(crate) fn prefer_full_listings(&self) {
         self.session().full_listings = true;
     }
@@ -456,19 +462,12 @@ impl Repository {
     // Only optimize backward comparisons whose complete interval is linear.
     // Path-limited log simplification is not equivalent to our merge semantics.
     fn follow_linear(&self, base: &str, tip: &str, path: &Path) -> Result<Option<PathBuf>> {
-        let shallow = self.session().shallow.clone();
-        let shallow = match shallow {
-            Some(shallow) => shallow,
-            None => {
-                let shallow = self.git(
-                    ["rev-parse", "--is-shallow-repository"],
-                    "check shallow history",
-                )?;
-                self.session().shallow = Some(shallow.clone());
-                shallow
-            }
-        };
-        if shallow != b"false\n" {
+        // Not cached: a long-lived repository can be deepened or unshallowed.
+        if self.git(
+            ["rev-parse", "--is-shallow-repository"],
+            "check shallow history",
+        )? != b"false\n"
+        {
             return Ok(None);
         }
         let range = format!("{base}..{tip}");

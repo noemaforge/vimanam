@@ -135,7 +135,7 @@ impl Input {
         // resolver below finds each file's blob without another `ls-tree`.
         let listing = repo
             .listing(commit)
-            .map_err(|_| anyhow::anyhow!("Failed to enumerate committed protobuf imports"))?;
+            .context("Failed to enumerate committed protobuf imports")?;
         let mut committed_protos = HashSet::new();
         for record in listing.split(|b| *b == 0).filter(|r| !r.is_empty()) {
             let tab = record

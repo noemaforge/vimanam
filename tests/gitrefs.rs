@@ -729,3 +729,24 @@ fn a_long_lived_repository_re_resolves_moving_refs() {
         );
     }
 }
+
+#[test]
+fn hex_ref_names_of_the_other_hash_length_are_not_cached_as_ids() {
+    let Some(repo) = Repo::new() else {
+        return;
+    };
+    repo.write("api.json", SPEC);
+    let first = repo.commit("one");
+    if first.len() != 40 {
+        return; // The scenario needs a SHA-1 repository.
+    }
+    // In a SHA-1 repository 64 hex digits are a ref name, not an object ID.
+    let branch = "a".repeat(64);
+    repo.git(&["branch", &branch]);
+    let api = repo.api();
+    assert_eq!(api.materialize(&branch, "api.json").unwrap().commit, first);
+    repo.write("api.json", &SPEC.replace("\"1\"", "\"2\""));
+    let second = repo.commit("two");
+    repo.git(&["branch", "-f", &branch, &second]);
+    assert_eq!(api.materialize(&branch, "api.json").unwrap().commit, second);
+}
