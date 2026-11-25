@@ -16,15 +16,20 @@ whole `enum` keyword added or removed, and a boolean `nullable` or
 `additionalProperties` whose effective value changes (absent means `false`
 and `true` respectively).
 
-Every other change has no direction here, and the tables rate it Review (or,
-for `type` and properties, Breaking/Non-breaking by convention), even where
-JSON Schema would call it a narrowing or a widening: `maxLength`,
-`minLength`, `minimum`, `maximum`, `exclusiveMinimum`, `exclusiveMaximum`,
-`multipleOf`, `pattern`, `format`, `minItems`, `maxItems`, `uniqueItems`,
-`additionalProperties` between a boolean and a schema, `items` shape,
-`allOf`/`oneOf`/`anyOf` variants, `const`, `default`, and `type` (including
-adding `"null"` to a 3.1 `type` array). A theorem's "every change that
-narrows" means every change `effect` calls a narrowing.
+Every other change has no direction here. The tables rate `type` changes
+and property additions/removals by convention (a `patternProperties` entry
+counts as a property), and everything else falls through to Review
+(`Location::Other`, the tables' `_ => Review`), even where JSON Schema would
+call it a narrowing or a widening. For example: `maxLength`, `minLength`,
+`minimum`, `maximum`, `exclusiveMinimum`, `exclusiveMaximum`, `multipleOf`,
+`pattern`, `format`, `minItems`, `maxItems`, `uniqueItems`,
+`minProperties`, `maxProperties`, `readOnly`, `writeOnly`, `prefixItems`,
+`contains`, `propertyNames`, `dependentRequired`, `if`/`then`/`else`,
+`unevaluatedProperties`/`unevaluatedItems`, `additionalProperties` between a
+boolean and a schema, `items` shape, `allOf`/`oneOf`/`anyOf` variants,
+`const`, `default`, and `type` (including adding `"null"` to a 3.1 `type`
+array). A theorem's "every change that narrows" means every change `effect`
+calls a narrowing.
 -/
 import VimanamProofs.Severity
 

@@ -157,17 +157,69 @@ def normalize(text: str, lit: list[bool]) -> str:
     return "".join(out)
 
 
-def git_text(commit: str, path: str) -> str | None:
-    """The file at `commit`, or None when git cannot give it."""
+def git(*args: str) -> str | None:
+    """Run git in the repository; its stdout, or None when it fails."""
     try:
-        out = subprocess.run(
-            ["git", "-C", str(ROOT), "show", f"{commit}:{path}"],
-            capture_output=True,
-            check=True,
-        )
+        out = subprocess.run(["git", "-C", str(ROOT), *args], capture_output=True, check=True)
     except (OSError, subprocess.CalledProcessError):
         return None
     return out.stdout.decode("utf-8", errors="replace")
+
+
+_GIT_TEXT: dict[tuple[str, str, str], str | None] = {}
+
+
+def git_text(commit: str, path: str) -> str | None:
+    """The file at `commit`, or None when git cannot give it."""
+    key = (str(ROOT), commit, path)
+    if key not in _GIT_TEXT:
+        _GIT_TEXT[key] = git("show", f"{commit}:{path}")
+    return _GIT_TEXT[key]
+
+
+def commit_exists(commit: str) -> bool:
+    return git("rev-parse", "--verify", "--quiet", f"{commit}^{{commit}}") is not None
+
+
+def digest_at(refs: list[str], commit: str) -> tuple[str | None, str]:
+    """The digest of `refs` at `commit`, or None and the reason it has none."""
+    if not commit_exists(commit):
+        return None, f"{commit} is not in this clone"
+    try:
+        return digest(refs, commit), ""
+    except ManifestError as err:
+        return None, f"at {commit}: {err}"
+
+
+# How many commits that touched a model's Rust files to search for the state
+# its digest was taken at, when `read_against` does not give it.
+HISTORY_SEARCH = 100
+
+
+def digest_state(entry: dict) -> tuple[str | None, str]:
+    """A commit whose refs fingerprint to the entry's `read_digest`: its
+    `read_against` when that works, else the newest such commit among the
+    last HISTORY_SEARCH commits that touched its files (this survives a squash
+    merge, whose commit has the bumped branch's tree). None, with the reason,
+    when there is none."""
+    refs = entry["rust"]
+    reasons = []
+    commit = entry.get("read_against")
+    if commit:
+        got, why = digest_at(refs, commit)
+        if got == entry["read_digest"]:
+            return commit, ""
+        reasons.append(why or f"read_against {commit} is not the digest's state")
+    else:
+        reasons.append("no read_against")
+    paths = sorted({ref.partition("#")[0] for ref in refs})
+    log = git("log", f"-n{HISTORY_SEARCH}", "--format=%H", "HEAD", "--", *paths)
+    for candidate in (log or "").split():
+        got, _ = digest_at(refs, candidate)
+        if got == entry["read_digest"]:
+            return candidate[:12], ""
+    reasons.append(f"no commit in the last {HISTORY_SEARCH} that touched {', '.join(paths)} has the digest's state")
+    return None, "; ".join(reasons)
 
 
 def ref_code(ref: str, commit: str | None = None) -> str:
@@ -254,30 +306,54 @@ def bump(names: list[str]) -> None:
             raise ManifestError(f"no model called {name}")
         entry = matches[0]
         new = digest(entry["rust"])
-        block = re.compile(
-            rf'(lean = "{re.escape(entry["lean"])}"\n(?:[^\[]*?\n)?read_digest = ")[^"]*(")'
-        )
-        text, count = block.subn(rf"\g<1>{new}\g<2>", text, count=1)
+        anchor, note = bump_anchor(entry["rust"], new)
+        start = text.find(f'lean = "{entry["lean"]}"\n')
+        end = text.find("rust = [", start)
+        if start < 0 or end < 0:
+            raise ManifestError(f"{entry['lean']}: cannot find its entry")
+        head = text[start:end]
+        head = re.sub(r'read_against = "[^"]*"\n', "", head)
+        head, count = re.subn(r'read_digest = "[^"]*"', f'read_digest = "{new}"', head)
         if count != 1:
             raise ManifestError(f"{entry['lean']}: cannot find its read_digest line")
-        print(f"bumped {entry['lean']} to {new}")
+        if anchor:
+            head = head.replace("read_digest = ", f'read_against = "{anchor}"\nread_digest = ', 1)
+        text = text[:start] + head + text[end:]
+        print(f"bumped {entry['lean']} to {new}; {note}")
     MANIFEST.write_text(text, encoding="utf-8")
 
 
+def bump_anchor(refs: list[str], new: str) -> tuple[str | None, str]:
+    """The commit `--bump` records as `read_against`: HEAD when its refs are
+    the working tree's (the usual case after committing), else the merge-base
+    with origin/main when its refs are. A branch commit can leave the history
+    after a squash merge; the drift report then finds the state by searching
+    history, so the anchor is a hint, not a requirement."""
+    for label, rev in (("HEAD", "HEAD"), ("merge-base with origin/main", None)):
+        if rev is None:
+            base = git("merge-base", "HEAD", "origin/main")
+            if not base:
+                continue
+            rev = base.strip()
+        sha = git("rev-parse", "--verify", "--quiet", f"{rev}^{{commit}}")
+        if sha and digest_at(refs, sha.strip())[0] == new:
+            return sha.strip()[:12], f"read_against set to {sha.strip()[:12]} ({label})"
+    return None, (
+        "read_against removed: no commit has these refs yet (commit the Rust, then bump "
+        "again); until then a drift report searches history or lists every ref"
+    )
+
+
 def changed_refs(entry: dict) -> tuple[list[str], str]:
-    """The refs that changed since `read_against`, when that commit is in the
-    clone and is the state `read_digest` was taken at; otherwise every ref,
-    with the reason."""
-    commit = entry.get("read_against")
-    if not commit:
-        return entry["rust"], "; no read_against, so every ref is listed"
-    try:
-        if digest(entry["rust"], commit) != entry["read_digest"]:
-            return entry["rust"], f"; read_against {commit} is not the digest's state, so every ref is listed"
-        changed = [ref for ref in entry["rust"] if ref_code(ref, commit) != ref_code(ref)]
-    except ManifestError:
-        return entry["rust"], f"; read_against {commit} is not in this clone, so every ref is listed"
-    return changed, f"; changed since {commit}, see git diff {commit} -- src/diff"
+    """The refs that changed since the state `read_digest` was taken at
+    (`digest_state`); every ref, with the reason, when that state is not
+    found."""
+    commit, why = digest_state(entry)
+    if commit is None:
+        return entry["rust"], f"; every ref is listed: {why}"
+    changed = [ref for ref in entry["rust"] if ref_code(ref, commit) != ref_code(ref)]
+    paths = " ".join(sorted({ref.partition("#")[0] for ref in changed}))
+    return changed, f"; changed since {commit}, see git diff {commit} -- {paths}"
 
 
 def check(strict: bool) -> int:
@@ -296,8 +372,8 @@ def check(strict: bool) -> int:
             f"the change matters, then run: python3 -I scripts/formal/check-model-drift.py --bump {stem}"
         )
         if gha:
-            for ref in changed:
-                print(f"::warning file={ref.partition('#')[0]}::{msg}")
+            for path in sorted({ref.partition("#")[0] for ref in changed}):
+                print(f"::warning file={path}::{msg}")
         else:
             print(f"warning: {msg}", file=sys.stderr)
     if not drifted:
@@ -318,7 +394,65 @@ def self_test() -> None:
     assert len(regions) == 1 and "mod tests" in code[regions[0][0] : regions[0][1]]
     end = item_end(code, lit, code.index("fn a"))
     assert normalize(code[:end], lit[:end]) == "fn a() { let s = \"} // {\"; let c = '}'; }"
+    self_test_bump()
     print("self-test passed")
+
+
+def self_test_bump() -> None:
+    """Bump, change one ref, check the report names only it; then bump again
+    after a squash-merge-like rewrite (the anchor commit leaves history) and
+    check the report still narrows."""
+    import tempfile
+
+    global ROOT, MANIFEST, MODELS_DIR
+    saved = (ROOT, MANIFEST, MODELS_DIR)
+    with tempfile.TemporaryDirectory() as tmp:
+        ROOT = Path(tmp)
+        MANIFEST = ROOT / "formal" / "models.toml"
+        MODELS_DIR = ROOT / "formal" / "VimanamProofs"
+        try:
+            MODELS_DIR.mkdir(parents=True)
+            (MODELS_DIR / "M.lean").write_text("-- model\n")
+            (ROOT / "src").mkdir()
+            rs = ROOT / "src" / "a.rs"
+            rs.write_text("fn one() { 1 }\nfn two() { 2 }\n")
+            zero = "v1:sha256:" + "0" * 64
+            MANIFEST.write_text(
+                f'[[model]]\nlean = "formal/VimanamProofs/M.lean"\nread_digest = "{zero}"\n'
+                'rust = ["src/a.rs#one", "src/a.rs#two"]\n'
+            )
+            ident = ["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false"]
+
+            def commit(msg: str) -> None:
+                assert git("add", "-A") is not None
+                assert git(*ident, "commit", "-qm", msg) is not None
+
+            assert git("init", "-q") is not None
+            commit("init")
+            bump(["M"])
+            entry = load_manifest()[0]
+            assert entry.get("read_against"), "bump sets read_against"
+            assert digest(entry["rust"]) == entry["read_digest"]
+            commit("bump")
+            rs.write_text("fn one() { 1 }\nfn two() { 3 }\n")
+            changed, why = changed_refs(load_manifest()[0])
+            assert changed == ["src/a.rs#two"], (changed, why)
+            # A bump on a branch, then a squash merge: the anchor commit is
+            # gone, but history still has a commit with the digest's state.
+            commit("change two")
+            bump(["M"])
+            commit("bump again")
+            tree = git("rev-parse", "HEAD^{tree}").strip()
+            squashed = git(*ident, "commit-tree", tree, "-p", "HEAD~3", "-m", "squash").strip()
+            assert git("reset", "-q", "--hard", squashed) is not None
+            assert git("reflog", "expire", "--expire=now", "--all") is not None
+            assert git("gc", "-q", "--prune=now") is not None
+            rs.write_text("fn one() { 9 }\nfn two() { 3 }\n")
+            changed, why = changed_refs(load_manifest()[0])
+            assert changed == ["src/a.rs#one"], (changed, why)
+        finally:
+            ROOT, MANIFEST, MODELS_DIR = saved
+            _GIT_TEXT.clear()
 
 
 def main() -> int:

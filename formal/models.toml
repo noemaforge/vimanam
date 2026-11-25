@@ -9,7 +9,9 @@
 # History.lean, which read no Rust of their own:
 #
 #   lean          the model file, from the repository root.
-#   read_against  the commit the model was last read against (for people).
+#   read_against  set by --bump: a commit with the bumped refs, so a drift
+#                 report can name only the refs that changed (a hint; the
+#                 report searches history when it is gone).
 #   read_digest   `v1:sha256:` over the refs, sorted, and each ref's code with
 #                 comments and #[cfg(test)] items blanked and whitespace
 #                 collapsed outside literals. Never edit it by hand: after

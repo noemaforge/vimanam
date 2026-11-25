@@ -56,14 +56,18 @@ direction there. A table theorem then says, for example, that every change
 `effect` calls a narrowing is Breaking on the request side.
 
 `effect` gives a direction to those changes only. Every other change has
-none, and the tables rate it Review (`type` and properties excepted: Breaking
-or Non-breaking by convention), even where JSON Schema would call it a
-narrowing or a widening: `maxLength`, `minLength`, `minimum`, `maximum`,
-`exclusiveMinimum`, `exclusiveMaximum`, `multipleOf`, `pattern`, `format`,
-`minItems`, `maxItems`, `uniqueItems`, `additionalProperties` between a
-boolean and a schema, `items` shape, `allOf`/`oneOf`/`anyOf` variants,
-`const`, `default`, and `type` (including adding `"null"` to a 3.1 `type`
-array). So "every narrowing" in a theorem below means every narrowing
+none. The tables rate `type` changes and property additions/removals by
+convention (a `patternProperties` entry counts as a property); everything
+else falls through to Review (`Location::Other`, `_ => Review`), even where
+JSON Schema would call it a narrowing or a widening. For example:
+`maxLength`, `minLength`, `minimum`, `maximum`, `exclusiveMinimum`,
+`exclusiveMaximum`, `multipleOf`, `pattern`, `format`, `minItems`,
+`maxItems`, `uniqueItems`, `minProperties`, `maxProperties`, `readOnly`,
+`writeOnly`, `prefixItems`, `contains`, `propertyNames`,
+`dependentRequired`, `if`/`then`/`else`, `unevaluated*`,
+`additionalProperties` between a boolean and a schema, `items` shape,
+`allOf`/`oneOf`/`anyOf` variants, `const`, `default`, and `type` (including
+adding `"null"` to a 3.1 `type` array). So "every narrowing" in a theorem below means every narrowing
 `effect` recognises; the others are left to a human as Review.
 
 Every theorem states a property of named Rust behaviour, and its doc comment
@@ -167,10 +171,14 @@ and whitespace normalised away.
 `scripts/formal/check-model-drift.py` recomputes it; the `model-drift`
 workflow runs it on every change to `src/diff/`, `formal/` or
 `scripts/formal/` and annotates the changed Rust with a warning when a model
-has drifted. When the model's `read_against` commit is in the clone and is
-the state its digest was taken at (CI checks out full history for this), the
-warning names only the refs that changed since it; otherwise it lists every
-ref of the model and says why. To clear a warning, re-read the model against the Rust, update
+has drifted, one annotation per changed file. The warning names only the refs
+that changed since the state the digest was taken at: `read_against` when it
+is that state, otherwise the newest of the last 100 commits touching the
+model's files that is (this survives a squash merge, whose commit has the
+bumped tree; CI checks out full history for it). When neither is found it
+lists every ref and says why. `--bump` sets `read_against` to `HEAD` when
+`HEAD` has the bumped refs (commit the Rust first), else to the merge-base
+with `origin/main` when that does, else removes it and says so. To clear a warning, re-read the model against the Rust, update
 it if the change matters, and run
 
 ```bash
@@ -194,11 +202,13 @@ reference: `lake exe oracle` evaluates them over fixed and generated inputs
 `under_not` and `diff_values`, and fails with the function, case index and
 input of every mismatch. Nothing in the comparison restates the table in
 Rust. The test also fails when a file in `oracle/` has no replay, and when a
-`ChangeKind` variant is rated by no case: its `variant` function matches
-`ChangeKind` exhaustively with no wildcard, so a new variant does not compile
-until the oracle lists it (and then fails until the Lean model covers it). If
+`ChangeKind` variant is rated by no case. Its `variant` function matches
+`ChangeKind` exhaustively with no wildcard, and each arm returns
+`ALL_VARIANTS[i]` with a literal index: a new variant does not compile until
+it has an arm, and the arm does not compile (index out of bounds) until its
+name is in `ALL_VARIANTS`, which the test requires some case to rate. If
 `formal/oracle/` is absent (a packaged crate that excludes `formal/`), the
-test skips with a message.
+test skips with a message, except under `CI`, where it fails.
 
 Covered: every fixed pointer (keyword lookalikes, `not` at several depths)
 with every change kind in both tables, random pointers over a keyword
