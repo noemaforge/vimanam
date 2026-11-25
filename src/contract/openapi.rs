@@ -572,6 +572,7 @@ fn compare_aligned(
             component,
             direction,
             change: value,
+            negated,
             uses,
         } = &change.kind
         {
@@ -581,6 +582,7 @@ fn compare_aligned(
                 changes.push(component_fact(
                     component,
                     *direction,
+                    *negated,
                     value,
                     uses,
                     diff::severity(change),
@@ -977,6 +979,7 @@ fn compare_aligned(
 fn component_fact(
     component: &diff::ComponentRef,
     direction: diff::Direction,
+    negated: bool,
     change: &ValueChange,
     uses: &[diff::SchemaUse],
     severity: diff::Severity,
@@ -996,7 +999,7 @@ fn component_fact(
     };
     let coordinate = format!("/types/{}", escape(name));
     let mut entries = serde_json::Map::new();
-    for (key, value) in diff::json::component_entries(component) {
+    for (key, value) in diff::json::component_entries(component, negated) {
         entries.insert(key.into(), value);
     }
     entries.insert("direction".into(), json!(direction.as_str()));

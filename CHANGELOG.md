@@ -23,6 +23,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     shared by a request and a response yields two records, and
     `--fail-on-breaking` exits 3 when either is breaking. `not` subtrees stay
     Review and a whole `enum` keyword is still classified by direction.
+  - **`not`.** A component reached through a `not` keyword (directly, via
+    aliases, or inside another component) is reported for those uses as a
+    separate Review record with `under_not: true` in JSON details, like any
+    change under `not`; plain uses of the same component keep their verdict.
   - **Retargets.** A reference retargeted to a differently named component
     is a Review change at `/$ref` (old name → new name) even when the two
     have the same shape, followed by their structural differences; before,

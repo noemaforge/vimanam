@@ -358,6 +358,10 @@ pub(crate) struct RefEdge {
     /// in the target under one of them is invisible through this edge.
     /// Empty almost always.
     pub(crate) mask: Vec<String>,
+    /// Whether the reference sits at or beneath a `not` keyword of the
+    /// walked schema. `not` reverses every compatibility direction, so a
+    /// change reached through it is Review, as one written under it is.
+    pub(crate) negated: bool,
 }
 
 /// Keys whose values canonicalisation drops from a schema object; refs under
@@ -420,6 +424,8 @@ struct LocalWalk<'w> {
     /// under (see [`RefEdge::at`]).
     depth: usize,
     top: Option<String>,
+    /// Whether the walk is at or beneath a schema `not` keyword.
+    negated: bool,
     edges: &'w mut Vec<RefEdge>,
 }
 
@@ -530,6 +536,7 @@ impl PairResolver<'_> {
             new_stack: Vec::new(),
             depth: 0,
             top: None,
+            negated: false,
             edges,
         };
         self.local(old, new, Role::Schema, &mut walk)
@@ -582,6 +589,7 @@ impl PairResolver<'_> {
                             names: (a, b),
                             at,
                             mask,
+                            negated: walk.negated,
                         });
                         self.local_maps(&old_effective, &new_effective, role, walk)
                     }
@@ -639,9 +647,14 @@ impl PairResolver<'_> {
                     if walk.depth == 0 {
                         walk.top = Some(key.clone());
                     }
+                    // The same grammar `under_not` walks: a `not` keyword of
+                    // a schema object (never a property named `not`).
+                    let outer_negated = walk.negated;
+                    walk.negated |= role == Role::Schema && key == "not";
                     walk.depth += 1;
                     let (a, b) = self.local(old_child, new_child, role.child(key), walk);
                     walk.depth -= 1;
+                    walk.negated = outer_negated;
                     left.insert(key.clone(), a);
                     shared.insert(key.as_str(), b);
                 }
@@ -943,6 +956,7 @@ mod tests {
                 names: ("C".into(), "C".into()),
                 at: None,
                 mask: vec!["type".into()],
+                negated: false,
             }]
         );
         // A sibling on one side only compares against the other side's

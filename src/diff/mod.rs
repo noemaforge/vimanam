@@ -223,6 +223,10 @@ pub enum ChangeKind {
         direction: Direction,
         /// The field-level change; its pointer is relative to the component.
         change: ValueChange,
+        /// Whether `uses` reach the component through a `not` keyword. `not`
+        /// reverses every compatibility direction, so such a record is
+        /// Review; uses that reach it plainly are a separate record.
+        negated: bool,
         /// Every parameter, request body or response of this direction that
         /// reaches the component, directly or through other components, in
         /// report order.
@@ -491,6 +495,10 @@ impl SpecDiff {
 /// | responses only | one, `response` | the response table |
 /// | both | two, `request` then `response` | each its own table |
 ///
+/// A use that reaches the component through a `not` keyword (at the use or
+/// in any component on the way) gets its own record, which is Review, like
+/// any change under `not`; uses reaching it plainly keep their verdict.
+///
 /// So a narrowed `enum` on a component shared by a request and a response is
 /// a breaking request record plus a non-breaking response record, and
 /// `--fail-on-breaking` fires whenever any usage is breaking.
@@ -538,6 +546,7 @@ pub fn severity(change: &Change) -> Severity {
         ChangeKind::OperationIdChanged { .. } => Severity::Breaking,
         ChangeKind::DeprecatedChanged { .. } => Severity::NonBreaking,
         ChangeKind::ResponseSchemaChanged { change, .. } => response_schema_severity(change),
+        ChangeKind::ComponentSchemaChanged { negated: true, .. } => Severity::Review,
         ChangeKind::ComponentSchemaChanged {
             direction, change, ..
         } => match direction {
@@ -1306,6 +1315,7 @@ pub(crate) mod test_support {
             },
             direction,
             change,
+            negated: false,
             uses: vec![SchemaUse {
                 endpoint: endpoint(),
                 location: UseLocation::Response {
@@ -1975,6 +1985,7 @@ mod tests {
                     direction,
                     change: value,
                     uses,
+                    ..
                 } => {
                     assert_eq!(component.old, "Status");
                     assert!(!component.renamed());
@@ -2436,6 +2447,89 @@ mod tests {
                 "/type Added(String(\"string\"))".to_string(),
                 "/type Added(String(\"string\"))".to_string()
             ]
+        );
+    }
+
+    /// `(negated, severity, pointer)` of every component record.
+    fn negation_rows(result: &SpecDiff) -> Vec<(bool, Severity, String)> {
+        result
+            .changes
+            .iter()
+            .map(|change| match &change.kind {
+                ChangeKind::ComponentSchemaChanged {
+                    negated,
+                    change: value,
+                    ..
+                } => (*negated, severity(change), value.pointer.clone()),
+                other => panic!("unexpected {other:?}"),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_component_reached_through_not_is_review() {
+        // #182 reference-model F1: `not` sits above the hop, so the relative
+        // component pointer cannot show it; the reach carries it instead.
+        let r = |name: &str| json!({"$ref": format!("#/components/schemas/{name}")});
+        let e = |values: Value| json!({"type": "string", "enum": values});
+        let doc = |schemas: Value, body_schema: Value| {
+            component_doc(
+                schemas,
+                json!({"/x": {"post": {"requestBody": body(body_schema), "responses": ok(json!({"type": "string"}))}}}),
+            )
+        };
+        let narrowed = |body_schema: Value, extra: Value| {
+            let mut old = json!({"E": e(json!(["a", "b"]))});
+            let mut new = json!({"E": e(json!(["a"]))});
+            for (name, schema) in extra.as_object().unwrap() {
+                old[name] = schema.clone();
+                new[name] = schema.clone();
+            }
+            diff(&doc(old, body_schema.clone()), &doc(new, body_schema))
+        };
+        let review = vec![(true, Severity::Review, "/enum/b".to_string())];
+
+        // The F1 pair, and its inline twin for comparison.
+        let result = narrowed(json!({"not": r("E")}), json!({}));
+        assert_eq!(negation_rows(&result), review);
+        assert!(!result.has_breaking());
+        let inline = |values: Value| doc(json!({}), json!({"not": e(values)}));
+        let inline_result = diff(&inline(json!(["a", "b"])), &inline(json!(["a"])));
+        assert_eq!(inline_result.count(Severity::Review), 1);
+        assert!(!inline_result.has_breaking());
+
+        // The same component reached plainly and through `not` by one body:
+        // a breaking plain record and a review negated one.
+        let both = narrowed(
+            json!({"type": "object", "properties": {"p": r("E"), "q": {"not": r("E")}}}),
+            json!({}),
+        );
+        assert_eq!(
+            negation_rows(&both),
+            vec![
+                (false, Severity::Breaking, "/enum/b".to_string()),
+                (true, Severity::Review, "/enum/b".to_string()),
+            ]
+        );
+        assert!(both.has_breaking());
+
+        // `not` -> alias -> target.
+        assert_eq!(
+            negation_rows(&narrowed(json!({"not": r("A")}), json!({"A": r("E")}))),
+            review
+        );
+        // `not` inside a component the body reaches through a `$ref`.
+        assert_eq!(
+            negation_rows(&narrowed(r("W"), json!({"W": {"not": r("E")}}))),
+            review
+        );
+        // A property named `not` is not the keyword.
+        assert_eq!(
+            negation_rows(&narrowed(
+                json!({"type": "object", "properties": {"not": r("E")}}),
+                json!({})
+            )),
+            vec![(false, Severity::Breaking, "/enum/b".to_string())]
         );
     }
 }

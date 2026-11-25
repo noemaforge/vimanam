@@ -90,6 +90,7 @@ impl<'r, 'a> Components<'r, 'a> {
             to: pairs.insert_full(edge.names).0,
             at: edge.at,
             mask: edge.mask,
+            negated: edge.negated,
         };
         let use_targets: Targets = self
             .use_edges
@@ -168,24 +169,30 @@ impl<'r, 'a> Components<'r, 'a> {
             for change in &pair_changes[index] {
                 let reaching = reach.uses_of(index, &change.pointer);
                 for direction in [Direction::Request, Direction::Response] {
-                    let uses: Vec<SchemaUse> = reaching
-                        .iter()
-                        .map(|&use_index| &self.uses[use_index])
-                        .filter(|use_| use_.location.direction() == direction)
-                        .cloned()
-                        .collect();
-                    if uses.is_empty() {
-                        continue;
+                    // Plain uses keep the directional verdict; uses reaching
+                    // the pair through `not` are a separate, Review record.
+                    for negated in [false, true] {
+                        let uses: Vec<SchemaUse> = reaching
+                            .iter()
+                            .filter(|(_, through_not)| *through_not == negated)
+                            .map(|&(use_index, _)| &self.uses[use_index])
+                            .filter(|use_| use_.location.direction() == direction)
+                            .cloned()
+                            .collect();
+                        if uses.is_empty() {
+                            continue;
+                        }
+                        out.push(Change {
+                            endpoint: uses[0].endpoint.clone(),
+                            kind: ChangeKind::ComponentSchemaChanged {
+                                component: component.clone(),
+                                direction,
+                                change: change.clone(),
+                                negated,
+                                uses,
+                            },
+                        });
                     }
-                    out.push(Change {
-                        endpoint: uses[0].endpoint.clone(),
-                        kind: ChangeKind::ComponentSchemaChanged {
-                            component: component.clone(),
-                            direction,
-                            change: change.clone(),
-                            uses,
-                        },
-                    });
                 }
             }
         }
@@ -198,6 +205,7 @@ struct Target {
     to: usize,
     at: Option<String>,
     mask: Vec<String>,
+    negated: bool,
 }
 
 type Targets = Vec<Vec<Target>>;
@@ -224,8 +232,9 @@ enum Reach {
         pair_sources: Vec<Vec<usize>>,
         use_sources: Vec<Vec<usize>>,
     },
-    /// Per pair, each reaching use with every mask it arrives with.
-    Forward(Vec<Vec<(usize, Vec<String>)>>),
+    /// Per pair, each reaching use with every mask it arrives with and
+    /// whether that path passed through `not`.
+    Forward(Vec<Vec<(usize, Vec<String>, bool)>>),
 }
 
 impl Reach {
@@ -234,12 +243,12 @@ impl Reach {
         use_targets: &Targets,
         pair_targets: &Targets,
     ) -> Self {
-        let masked = use_targets
+        let plain = use_targets
             .iter()
             .chain(pair_targets)
             .flatten()
-            .any(|target| !target.mask.is_empty());
-        if !masked {
+            .all(|target| target.mask.is_empty() && !target.negated);
+        if plain {
             let mut pair_sources = vec![Vec::new(); pairs.len()];
             for (from, targets) in pair_targets.iter().enumerate() {
                 for target in targets {
@@ -257,15 +266,15 @@ impl Reach {
                 use_sources,
             };
         }
-        let mut reached: Vec<Vec<(usize, Vec<String>)>> = vec![Vec::new(); pairs.len()];
+        let mut reached: Vec<Vec<(usize, Vec<String>, bool)>> = vec![Vec::new(); pairs.len()];
         for (use_index, targets) in use_targets.iter().enumerate() {
-            let mut seen: HashSet<(usize, Vec<String>)> = HashSet::new();
-            let mut stack: Vec<(usize, Vec<String>)> = targets
+            let mut seen: HashSet<(usize, Vec<String>, bool)> = HashSet::new();
+            let mut stack: Vec<(usize, Vec<String>, bool)> = targets
                 .iter()
-                .map(|target| (target.to, target.mask.clone()))
+                .map(|target| (target.to, target.mask.clone(), target.negated))
                 .collect();
-            while let Some((pair, mask)) = stack.pop() {
-                if !seen.insert((pair, mask.clone())) {
+            while let Some((pair, mask, negated)) = stack.pop() {
+                if !seen.insert((pair, mask.clone(), negated)) {
                     continue;
                 }
                 for target in &pair_targets[pair] {
@@ -282,28 +291,34 @@ impl Reach {
                             next
                         }
                     };
-                    stack.push((target.to, next));
+                    // Once through `not`, always: any `not` on the path
+                    // reverses the directions beneath it.
+                    stack.push((target.to, next, negated || target.negated));
                 }
-                reached[pair].push((use_index, mask));
+                reached[pair].push((use_index, mask, negated));
             }
         }
         Reach::Forward(reached)
     }
 
     /// Every use (index into the collector's `uses`, ascending) that sees a
-    /// change at `pointer` in pair `target`.
-    fn uses_of(&self, target: usize, pointer: &str) -> Vec<usize> {
+    /// change at `pointer` in pair `target`, with whether it sees it through
+    /// `not` (a use reaching the pair both ways is listed both ways).
+    fn uses_of(&self, target: usize, pointer: &str) -> Vec<(usize, bool)> {
         match self {
             Reach::Reverse {
                 pair_sources,
                 use_sources,
-            } => reaching_uses(target, pair_sources, use_sources),
+            } => reaching_uses(target, pair_sources, use_sources)
+                .into_iter()
+                .map(|use_index| (use_index, false))
+                .collect(),
             Reach::Forward(reached) => {
                 let key = top_key(pointer);
-                let mut uses: Vec<usize> = reached[target]
+                let mut uses: Vec<(usize, bool)> = reached[target]
                     .iter()
-                    .filter(|(_, mask)| key.as_ref().is_none_or(|key| !mask.contains(key)))
-                    .map(|(use_index, _)| *use_index)
+                    .filter(|(_, mask, _)| key.as_ref().is_none_or(|key| !mask.contains(key)))
+                    .map(|(use_index, _, negated)| (*use_index, *negated))
                     .collect();
                 uses.sort_unstable();
                 uses.dedup();

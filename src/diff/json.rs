@@ -384,6 +384,7 @@ fn json_records(change: &Change) -> Vec<JsonChange> {
         ChangeKind::ComponentSchemaChanged {
             component,
             change: value,
+            negated,
             uses,
             ..
         } => uses
@@ -391,7 +392,7 @@ fn json_records(change: &Change) -> Vec<JsonChange> {
             .map(|use_| {
                 record(
                     &use_.endpoint,
-                    component_kind_and_details(component, value, &use_.location),
+                    component_kind_and_details(component, *negated, value, &use_.location),
                     level,
                 )
             })
@@ -440,9 +441,11 @@ fn details(entries: Vec<(&'static str, Value)>) -> JsonDetails {
 
 /// The `(kind, details)` of a shared-component change's record for one use:
 /// the kind that use's own schema changes have, plus `component` (and
-/// `old_component` for a retargeted reference) before `schema_change`.
+/// `old_component` for a retargeted reference, `under_not` when the use
+/// reaches it through `not`) before `schema_change`.
 pub(crate) fn component_kind_and_details(
     component: &ComponentRef,
+    negated: bool,
     change: &ValueChange,
     location: &UseLocation,
 ) -> (JsonChangeKind, JsonDetails) {
@@ -458,16 +461,24 @@ pub(crate) fn component_kind_and_details(
             vec![("status", json!(status))],
         ),
     };
-    entries.extend(component_entries(component));
+    entries.extend(component_entries(component, negated));
     entries.push(("schema_change", json!(json_schema_change(change))));
     (kind, details(entries))
 }
 
-/// `component`, plus `old_component` when the reference was retargeted.
-pub(crate) fn component_entries(component: &ComponentRef) -> Vec<(&'static str, Value)> {
+/// `component`, plus `old_component` when the reference was retargeted and
+/// `under_not: true` when the uses reach the component through `not` (only
+/// then, so other records keep their IDs).
+pub(crate) fn component_entries(
+    component: &ComponentRef,
+    negated: bool,
+) -> Vec<(&'static str, Value)> {
     let mut entries = vec![("component", Value::String(component.new.clone()))];
     if component.renamed() {
         entries.push(("old_component", Value::String(component.old.clone())));
+    }
+    if negated {
+        entries.push(("under_not", Value::Bool(true)));
     }
     entries
 }
@@ -586,9 +597,10 @@ pub(crate) fn json_kind_and_details(kind: &ChangeKind) -> (JsonChangeKind, JsonD
         ChangeKind::ComponentSchemaChanged {
             component,
             change,
+            negated,
             uses,
             ..
-        } => component_kind_and_details(component, change, &uses[0].location),
+        } => component_kind_and_details(component, *negated, change, &uses[0].location),
     }
 }
 

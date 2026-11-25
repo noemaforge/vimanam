@@ -276,6 +276,7 @@ fn change_detail(kind: &ChangeKind) -> String {
         ChangeKind::ComponentSchemaChanged {
             direction,
             change,
+            negated,
             uses,
             ..
         } => {
@@ -285,8 +286,9 @@ fn change_detail(kind: &ChangeKind) -> String {
                 .collect::<IndexSet<_>>()
                 .len();
             format!(
-                "{} {} ({})",
+                "{}{} {} ({})",
                 direction.as_str(),
+                if *negated { " under `not`" } else { "" },
                 describe_value_change(change),
                 pluralize(operations, "operation")
             )
