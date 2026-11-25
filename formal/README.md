@@ -176,9 +176,10 @@ that changed since the state the digest was taken at: `read_against` when it
 is that state, otherwise the newest of the last 100 commits touching the
 model's files that is (this survives a squash merge, whose commit has the
 bumped tree; CI checks out full history for it). When neither is found it
-lists every ref and says why. `--bump` sets `read_against` to `HEAD` when
-`HEAD` has the bumped refs (commit the Rust first), else to the merge-base
-with `origin/main` when that does, else removes it and says so. To clear a warning, re-read the model against the Rust, update
+lists every ref and says why. `--bump` sets `read_against` to the merge-base
+with `origin/main` when that has the bumped refs (it survives a squash
+merge), else to `HEAD` when that does (commit the Rust first), else removes
+it and says so. To clear a warning, re-read the model against the Rust, update
 it if the change matters, and run
 
 ```bash
@@ -202,11 +203,12 @@ reference: `lake exe oracle` evaluates them over fixed and generated inputs
 `under_not` and `diff_values`, and fails with the function, case index and
 input of every mismatch. Nothing in the comparison restates the table in
 Rust. The test also fails when a file in `oracle/` has no replay, and when a
-`ChangeKind` variant is rated by no case. Its `variant` function matches
-`ChangeKind` exhaustively with no wildcard, and each arm returns
-`ALL_VARIANTS[i]` with a literal index: a new variant does not compile until
-it has an arm, and the arm does not compile (index out of bounds) until its
-name is in `ALL_VARIANTS`, which the test requires some case to rate. If
+`ChangeKind` variant is rated by no case. One `variants!` macro invocation
+declares both `ALL_VARIANTS` and `variant`, an exhaustive match with no
+wildcard, so a name cannot be paired with the wrong arm: a new variant does
+not compile until it is in the invocation, and the test then fails until some
+case rates it. A name listed twice is an unreachable pattern, which
+`clippy -D warnings` (CI) rejects. If
 `formal/oracle/` is absent (a packaged crate that excludes `formal/`), the
 test skips with a message, except under `CI`, where it fails.
 

@@ -16,51 +16,45 @@ use super::{diff_values, locate, under_not};
 use crate::diff::value::Location;
 use crate::report::EndpointRef;
 
-/// Every `ChangeKind` variant's name, indexed by `variant`. The test fails
-/// unless the oracle rates each one at least once.
-const ALL_VARIANTS: [&str; 14] = [
-    "EndpointAdded",
-    "EndpointRemoved",
-    "EndpointMoved",
-    "ParameterAdded",
-    "ParameterRemoved",
-    "ParameterRequiredChanged",
-    "ParameterLocationChanged",
-    "ParameterSchemaChanged",
-    "ResponseAdded",
-    "ResponseRemoved",
-    "OperationIdChanged",
-    "DeprecatedChanged",
-    "RequestSchemaChanged",
-    "ResponseSchemaChanged",
-];
+/// Declares `ALL_VARIANTS` (every `ChangeKind` variant's name) and `variant`
+/// (a variant's name) from one list, so a name cannot be paired with the
+/// wrong arm. `variant` matches exhaustively with no wildcard: a new
+/// `ChangeKind` variant does not compile until it is added to the invocation
+/// below, and the test then fails until some oracle case rates it, which means
+/// adding it to the Lean model's `Change` and `severity`
+/// (`formal/VimanamProofs/Severity.lean`) and to the oracle's cases. A name
+/// listed twice is an unreachable pattern, which `clippy -D warnings` rejects.
+macro_rules! variants {
+    ($($name:ident),* $(,)?) => {
+        /// Every `ChangeKind` variant's name. The test fails unless the
+        /// oracle rates each one at least once.
+        const ALL_VARIANTS: &[&str] = &[$(stringify!($name)),*];
 
-/// The variant's name, as an index into `ALL_VARIANTS`. Deliberately
-/// exhaustive and wildcard-free, and every arm indexes `ALL_VARIANTS` with a
-/// literal: a new `ChangeKind` variant does not compile here until it gets an
-/// arm, and that arm's index is out of bounds (a compile error) until the
-/// variant's name is added to `ALL_VARIANTS`, which the test then requires
-/// some oracle case to rate. So covering a new variant means adding it to the
-/// Lean model's `Change` and `severity` (`formal/VimanamProofs/Severity.lean`)
-/// and to the oracle's cases.
-fn variant(kind: &ChangeKind) -> &'static str {
-    match kind {
-        ChangeKind::EndpointAdded => ALL_VARIANTS[0],
-        ChangeKind::EndpointRemoved { .. } => ALL_VARIANTS[1],
-        ChangeKind::EndpointMoved { .. } => ALL_VARIANTS[2],
-        ChangeKind::ParameterAdded { .. } => ALL_VARIANTS[3],
-        ChangeKind::ParameterRemoved { .. } => ALL_VARIANTS[4],
-        ChangeKind::ParameterRequiredChanged { .. } => ALL_VARIANTS[5],
-        ChangeKind::ParameterLocationChanged { .. } => ALL_VARIANTS[6],
-        ChangeKind::ParameterSchemaChanged { .. } => ALL_VARIANTS[7],
-        ChangeKind::ResponseAdded { .. } => ALL_VARIANTS[8],
-        ChangeKind::ResponseRemoved { .. } => ALL_VARIANTS[9],
-        ChangeKind::OperationIdChanged { .. } => ALL_VARIANTS[10],
-        ChangeKind::DeprecatedChanged { .. } => ALL_VARIANTS[11],
-        ChangeKind::RequestSchemaChanged { .. } => ALL_VARIANTS[12],
-        ChangeKind::ResponseSchemaChanged { .. } => ALL_VARIANTS[13],
-    }
+        /// The variant's name.
+        fn variant(kind: &ChangeKind) -> &'static str {
+            match kind {
+                $(ChangeKind::$name { .. } => stringify!($name),)*
+            }
+        }
+    };
 }
+
+variants!(
+    EndpointAdded,
+    EndpointRemoved,
+    EndpointMoved,
+    ParameterAdded,
+    ParameterRemoved,
+    ParameterRequiredChanged,
+    ParameterLocationChanged,
+    ParameterSchemaChanged,
+    ResponseAdded,
+    ResponseRemoved,
+    OperationIdChanged,
+    DeprecatedChanged,
+    RequestSchemaChanged,
+    ResponseSchemaChanged,
+);
 
 /// `diff::severity` on `kind`, recording which variant was rated.
 fn rate(kind: ChangeKind, seen: &mut BTreeSet<&'static str>) -> Severity {
@@ -299,8 +293,10 @@ fn oracle() {
     if !dir.is_dir() {
         // A packaged crate may leave formal/ out; the repository always has it,
         // so in CI a missing directory is a failure, not a skip.
+        let in_ci = std::env::var("CI")
+            .is_ok_and(|value| value.eq_ignore_ascii_case("true") || value == "1");
         assert!(
-            std::env::var_os("CI").is_none(),
+            !in_ci,
             "{} does not exist; the formal oracle replay cannot be skipped in CI",
             dir.display()
         );

@@ -214,11 +214,17 @@ def digest_state(entry: dict) -> tuple[str | None, str]:
         reasons.append("no read_against")
     paths = sorted({ref.partition("#")[0] for ref in refs})
     log = git("log", f"-n{HISTORY_SEARCH}", "--format=%H", "HEAD", "--", *paths)
-    for candidate in (log or "").split():
+    candidates = (log or "").split()
+    for candidate in candidates:
         got, _ = digest_at(refs, candidate)
         if got == entry["read_digest"]:
             return candidate[:12], ""
-    reasons.append(f"no commit in the last {HISTORY_SEARCH} that touched {', '.join(paths)} has the digest's state")
+    searched = (
+        f"the last {HISTORY_SEARCH} commits"
+        if len(candidates) == HISTORY_SEARCH
+        else f"the {len(candidates)} commit{'' if len(candidates) == 1 else 's'} in this clone"
+    )
+    reasons.append(f"none of {searched} that touched {', '.join(paths)} has the digest's state")
     return None, "; ".join(reasons)
 
 
@@ -324,12 +330,13 @@ def bump(names: list[str]) -> None:
 
 
 def bump_anchor(refs: list[str], new: str) -> tuple[str | None, str]:
-    """The commit `--bump` records as `read_against`: HEAD when its refs are
-    the working tree's (the usual case after committing), else the merge-base
-    with origin/main when its refs are. A branch commit can leave the history
-    after a squash merge; the drift report then finds the state by searching
-    history, so the anchor is a hint, not a requirement."""
-    for label, rev in (("HEAD", "HEAD"), ("merge-base with origin/main", None)):
+    """The commit `--bump` records as `read_against`: the merge-base with
+    origin/main when its refs are the working tree's (it survives a squash
+    merge), else HEAD when its refs are (the usual case after committing a
+    Rust change on a branch). A branch commit can leave the history after a
+    squash merge; the drift report then finds the state by searching history,
+    so the anchor is a hint, not a requirement."""
+    for label, rev in (("merge-base with origin/main", None), ("HEAD", "HEAD")):
         if rev is None:
             base = git("merge-base", "HEAD", "origin/main")
             if not base:
