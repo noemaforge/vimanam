@@ -796,3 +796,67 @@ fn retargeted_refs_keep_deprecation_facts() {
         );
     }
 }
+
+#[test]
+fn retargets_nested_in_same_named_components_keep_deprecation_facts() {
+    // #182 round 2: the use's only direct edge is (Wrap, Wrap) — or
+    // (Top, Top) one level further out — and the retarget sits inside it.
+    let a = json!({"type":"object","properties":{"s":{"type":"string"}}});
+    let mut b = a.clone();
+    b["deprecated"] = json!(true);
+    for (depth, extra_change) in [(1, false), (2, false), (1, true)] {
+        let wrap = |target: &str| {
+            let mut wrap = json!({"type":"object","properties":{"w":{"$ref":format!("#/components/schemas/{target}")}}});
+            if extra_change && target == "B" {
+                wrap["properties"]["z"] = json!({"type":"integer"});
+            }
+            wrap
+        };
+        let mut old = spec();
+        old["components"]["schemas"]["A"] = a.clone();
+        old["components"]["schemas"]["B"] = b.clone();
+        old["components"]["schemas"]["Wrap"] = wrap("A");
+        old["components"]["schemas"]["Top"] =
+            json!({"type":"object","properties":{"t":{"$ref":"#/components/schemas/Wrap"}}});
+        let root = if depth == 1 { "Wrap" } else { "Top" };
+        old["paths"]["/widgets"]["get"]["responses"]["200"]["content"]["application/json"]["schema"] =
+            json!({"$ref":format!("#/components/schemas/{root}")});
+        let mut new = old.clone();
+        new["components"]["schemas"]["Wrap"] = wrap("B");
+        let facts: Vec<_> = openapi_diff(&parse(&old), &parse(&new))
+            .into_iter()
+            .filter(|c| {
+                c.kind == ChangeKind::DeprecatedChanged && c.native_kind == "schema_deprecation"
+            })
+            .collect();
+        assert_eq!(facts.len(), 1, "depth {depth}: {facts:#?}");
+        assert_eq!(facts[0].details["old_component"], "A");
+        assert_eq!(facts[0].details["component"], "B");
+        assert_eq!(facts[0].details["pointer"], "/deprecated");
+        assert_eq!(facts[0].uses.len(), 1);
+    }
+}
+
+#[test]
+fn a_retarget_to_a_newly_deprecated_type_is_reported_once() {
+    // #182 round 2: B gains `deprecated` itself while a use moves from A to
+    // B; B's own type fact already says it.
+    let mut old = spec();
+    old["components"]["schemas"]["A"] = json!({"type":"object"});
+    old["components"]["schemas"]["B"] = json!({"type":"object"});
+    old["paths"]["/widgets"]["get"]["responses"]["200"]["content"]["application/json"]["schema"] =
+        json!({"$ref":"#/components/schemas/A"});
+    let mut new = old.clone();
+    new["components"]["schemas"]["B"]["deprecated"] = json!(true);
+    new["paths"]["/widgets"]["get"]["responses"]["200"]["content"]["application/json"]["schema"] =
+        json!({"$ref":"#/components/schemas/B"});
+    let facts: Vec<_> = openapi_diff(&parse(&old), &parse(&new))
+        .into_iter()
+        .filter(|c| c.kind == ChangeKind::DeprecatedChanged)
+        .collect();
+    assert_eq!(facts.len(), 1, "{facts:#?}");
+    assert_eq!(facts[0].native_kind, "surface_changed");
+    assert!(
+        matches!(&facts[0].native, NativeLocation::Openapi { pointer, .. } if pointer == "/types/B/deprecated")
+    );
+}

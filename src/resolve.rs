@@ -347,6 +347,12 @@ impl<'a> PairResolver<'a> {
 pub(crate) struct RefEdge {
     /// Old and new component names: the pair's identity.
     pub(crate) names: (String, String),
+    /// Pairs being expanded in place on the chain above this edge (behind
+    /// an overriding sibling, or against an inline schema), sorted. Resolution
+    /// would cut a cycle back into any of them, so reaching one from this
+    /// edge, directly or through other components, is not a use of it.
+    /// Empty almost always.
+    pub(crate) blocked: Vec<(String, String)>,
 }
 
 /// Keys whose values canonicalisation drops from a schema object; refs under
@@ -401,10 +407,30 @@ fn has_semantic_siblings(map: &Map<String, Value>) -> bool {
 
 /// The mutable state of one [`PairResolver::localize`] walk.
 struct LocalWalk<'w> {
-    /// References expanded on the current chain, per side.
+    /// Component names expanded in place on the current chain, per side
+    /// (names, so differently spelled references to one component are one).
     old_stack: Vec<String>,
     new_stack: Vec<String>,
     edges: &'w mut Vec<RefEdge>,
+}
+
+impl LocalWalk<'_> {
+    /// The pairs expanded in place above the current position: every old
+    /// name on the chain against every new one.
+    fn blocked(&self) -> Vec<(String, String)> {
+        let mut pairs: Vec<(String, String)> = self
+            .old_stack
+            .iter()
+            .flat_map(|old| {
+                self.new_stack
+                    .iter()
+                    .map(move |new| (old.clone(), new.clone()))
+            })
+            .collect();
+        pairs.sort();
+        pairs.dedup();
+        pairs
+    }
 }
 
 impl DocResolver<'_> {
@@ -423,17 +449,19 @@ impl DocResolver<'_> {
 
     /// The `$ref` object `map` with its target laid under it, exactly as
     /// [`Self::resolve`] expands one hop (siblings win), or `None` when it is
-    /// unresolvable, already on `stack`, or past [`MAX_RESOLVE_DEPTH`]. On
-    /// `Some`, the reference is pushed onto `stack` for the caller to pop.
+    /// unresolvable, its component already on `stack`, or past
+    /// [`MAX_RESOLVE_DEPTH`]. On `Some`, the component name is pushed onto
+    /// `stack` for the caller to pop.
     fn expand_once(&self, map: &Map<String, Value>, stack: &mut Vec<String>) -> Option<Value> {
         let Some(Value::String(reference)) = map.get("$ref") else {
             return None;
         };
-        if stack.len() >= MAX_RESOLVE_DEPTH || stack.iter().any(|on| on == reference) {
+        let name = reference_name(reference)?;
+        if stack.len() >= MAX_RESOLVE_DEPTH || stack.contains(&name) {
             return None;
         }
         let target = self.target(reference)?;
-        stack.push(reference.clone());
+        stack.push(name);
         Some(match target.as_ref() {
             target @ Value::Object(_) if map.len() == 1 => target.clone(),
             target => {
@@ -522,20 +550,16 @@ impl PairResolver<'_> {
                 let new_ref = component_ref(after).filter(|name| self.new.declares(name));
                 match (old_ref, new_ref) {
                     (Some(a), Some(b)) => {
-                        let reference = |map: &Map<String, Value>| {
-                            map.get("$ref")
-                                .and_then(Value::as_str)
-                                .unwrap_or_default()
-                                .to_string()
-                        };
-                        // A pair already being expanded in place on this chain
-                        // (behind an overriding sibling) is compared right
-                        // here; reaching it again is a cycle, as in resolution.
-                        let expanding = walk.old_stack.contains(&reference(before))
-                            && walk.new_stack.contains(&reference(after));
-                        if !expanding {
-                            walk.edges.push(RefEdge { names: (a, b) });
+                        // Reaching a pair already being expanded in place on
+                        // this chain is a cycle: resolution keeps both
+                        // references literal here, so compare them as written
+                        // (a retarget at the cut is still a change).
+                        let blocked = walk.blocked();
+                        let names = (a, b);
+                        if blocked.contains(&names) {
+                            return self.local_maps(before, after, role, walk);
                         }
+                        walk.edges.push(RefEdge { names, blocked });
                         let strip = |map: &Map<String, Value>| -> Map<String, Value> {
                             map.iter()
                                 .filter(|(key, _)| *key != "$ref")

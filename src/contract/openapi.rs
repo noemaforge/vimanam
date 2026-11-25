@@ -1087,7 +1087,7 @@ fn retarget_deprecation_facts(
             direct[index].push(subject);
         }
     }
-    if !pairs.iter().any(|(old, new)| old != new) {
+    if pairs.is_empty() {
         return;
     }
     let mut retargeted: Vec<(usize, Value, Value)> = Vec::new();
@@ -1177,8 +1177,20 @@ fn retarget_deprecation_facts(
                 }),
                 uses: uses.clone(),
             };
-            fact.refresh_id();
-            changes.push(fact);
+            // The new type's own fact already says the same (B gained the
+            // keyword and A never had it there): report it once.
+            let own = changes.iter().any(|existing| {
+                existing.kind == ChangeKind::DeprecatedChanged
+                    && existing.subject == fact.subject
+                    && existing.details.get("old_component").is_none()
+                    && ["pointer", "before", "after"]
+                        .iter()
+                        .all(|key| existing.details.get(*key) == fact.details.get(*key))
+            });
+            if !own {
+                fact.refresh_id();
+                changes.push(fact);
+            }
         }
     }
 }

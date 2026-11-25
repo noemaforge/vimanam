@@ -49,7 +49,7 @@ impl<'r, 'a> Components<'r, 'a> {
                      names: (old, new), ..
                  }| old != new || !self.resolver.is_stable(old),
             )
-            .filter(|edge| seen.insert(edge.names.clone()))
+            .filter(|edge| seen.insert((edge.names.clone(), edge.blocked.clone())))
             .collect()
     }
 
@@ -83,9 +83,12 @@ impl<'r, 'a> Components<'r, 'a> {
     /// reaches the pair.
     pub(super) fn finish(self) -> Vec<Change> {
         let mut pairs: IndexSet<(String, String)> = IndexSet::new();
-        let intern =
-            |edge: RefEdge, pairs: &mut IndexSet<(String, String)>| pairs.insert_full(edge.names).0;
-        let use_targets: Vec<Vec<usize>> = self
+        // An edge's target pair and the names of the pairs it must not reach
+        // (resolved to indices once every pair is interned).
+        let intern = |edge: RefEdge, pairs: &mut IndexSet<(String, String)>| {
+            (pairs.insert_full(edge.names).0, edge.blocked)
+        };
+        let use_targets: Targets = self
             .use_edges
             .iter()
             .map(|edges| {
@@ -99,7 +102,7 @@ impl<'r, 'a> Components<'r, 'a> {
         // Breadth-first over pairs: each is compared exactly once, so the
         // work is linear in the size of the changed components no matter how
         // many reference paths reach them.
-        let mut pair_targets: Vec<Vec<usize>> = Vec::new();
+        let mut pair_targets: Targets = Vec::new();
         let mut pair_changes: Vec<Vec<ValueChange>> = Vec::new();
         let mut next = 0;
         while next < pairs.len() {
@@ -118,19 +121,7 @@ impl<'r, 'a> Components<'r, 'a> {
             next += 1;
         }
 
-        // Reverse edges, to find every use that reaches a changed pair.
-        let mut pair_sources: Vec<Vec<usize>> = vec![Vec::new(); pairs.len()];
-        for (from, targets) in pair_targets.iter().enumerate() {
-            for &to in targets {
-                pair_sources[to].push(from);
-            }
-        }
-        let mut use_sources: Vec<Vec<usize>> = vec![Vec::new(); pairs.len()];
-        for (use_index, targets) in use_targets.iter().enumerate() {
-            for &to in targets {
-                use_sources[to].push(use_index);
-            }
-        }
+        let reach = Reach::new(&pairs, &use_targets, &pair_targets);
 
         let position = |schemas: &IndexMap<String, crate::models::Schema>, name: &str| {
             schemas.get_index_of(name).unwrap_or(usize::MAX)
@@ -155,7 +146,7 @@ impl<'r, 'a> Components<'r, 'a> {
                 old: old.clone(),
                 new: new.clone(),
             };
-            let reaching = reaching_uses(index, &pair_sources, &use_sources);
+            let reaching = reach.uses_of(index);
             let by_direction: Vec<(Direction, Vec<SchemaUse>)> =
                 [Direction::Request, Direction::Response]
                     .into_iter()
@@ -185,6 +176,98 @@ impl<'r, 'a> Components<'r, 'a> {
             }
         }
         out
+    }
+}
+
+/// Which uses reach which pairs.
+///
+/// Without cut constraints (the normal case) a pair is reached by every use
+/// whose edges lead to it, found by a reverse search per pair. An edge created
+/// beneath an in-place expansion carries the pairs resolution would cut a
+/// cycle at; then each use is searched forward, never entering a pair that is
+/// blocked on the path taken.
+enum Reach {
+    Reverse {
+        pair_sources: Vec<Vec<usize>>,
+        use_sources: Vec<Vec<usize>>,
+    },
+    Forward(Vec<Vec<usize>>),
+}
+
+type Targets = Vec<Vec<(usize, Vec<(String, String)>)>>;
+
+impl Reach {
+    fn new(
+        pairs: &IndexSet<(String, String)>,
+        use_targets: &Targets,
+        pair_targets: &Targets,
+    ) -> Self {
+        let constrained = use_targets
+            .iter()
+            .chain(pair_targets)
+            .flatten()
+            .any(|(_, blocked)| !blocked.is_empty());
+        if !constrained {
+            let mut pair_sources = vec![Vec::new(); pairs.len()];
+            for (from, targets) in pair_targets.iter().enumerate() {
+                for &(to, _) in targets {
+                    pair_sources[to].push(from);
+                }
+            }
+            let mut use_sources = vec![Vec::new(); pairs.len()];
+            for (use_index, targets) in use_targets.iter().enumerate() {
+                for &(to, _) in targets {
+                    use_sources[to].push(use_index);
+                }
+            }
+            return Reach::Reverse {
+                pair_sources,
+                use_sources,
+            };
+        }
+        let indices = |blocked: &[(String, String)]| -> Vec<usize> {
+            blocked
+                .iter()
+                .filter_map(|names| pairs.get_index_of(names))
+                .collect()
+        };
+        let mut reached: Vec<Vec<usize>> = vec![Vec::new(); pairs.len()];
+        for (use_index, targets) in use_targets.iter().enumerate() {
+            // (pair, blocked pair indices on the path), sorted and deduplicated.
+            let mut seen: HashSet<(usize, Vec<usize>)> = HashSet::new();
+            let mut stack: Vec<(usize, Vec<usize>)> = targets
+                .iter()
+                .map(|(to, blocked)| (*to, indices(blocked)))
+                .collect();
+            while let Some((pair, blocked)) = stack.pop() {
+                if blocked.contains(&pair) || !seen.insert((pair, blocked.clone())) {
+                    continue;
+                }
+                if reached[pair].last() != Some(&use_index) {
+                    reached[pair].push(use_index);
+                }
+                for (to, more) in &pair_targets[pair] {
+                    let mut next = blocked.clone();
+                    next.extend(indices(more));
+                    next.sort_unstable();
+                    next.dedup();
+                    stack.push((*to, next));
+                }
+            }
+        }
+        Reach::Forward(reached)
+    }
+
+    /// Every use (index into the collector's `uses`, ascending) that reaches
+    /// pair `target`.
+    fn uses_of(&self, target: usize) -> Vec<usize> {
+        match self {
+            Reach::Reverse {
+                pair_sources,
+                use_sources,
+            } => reaching_uses(target, pair_sources, use_sources),
+            Reach::Forward(reached) => reached[target].clone(),
+        }
     }
 }
 

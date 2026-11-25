@@ -2202,4 +2202,65 @@ mod tests {
         assert_eq!(uses.len(), 1);
         assert_eq!(uses[0].endpoint.path, "/q");
     }
+
+    #[test]
+    fn an_indirect_cycle_behind_an_overriding_sibling_is_reported_once() {
+        // #182 round 2: X -> Y -> X, the use expands X in place; reaching X
+        // again through Y is resolution's cycle cut, not a second use of X.
+        let x = |s: &str, self_ref: &str| {
+            json!({
+                "X": {"type": "object", "properties": {"y": {"$ref": "#/components/schemas/Y"}, "s": {"type": s}}},
+                "Y": {"type": "object", "properties": {"x": {"$ref": self_ref}}}
+            })
+        };
+        let paths = json!({"/a": {"get": {"responses": ok(
+            json!({"$ref": "#/components/schemas/X", "nullable": true})
+        )}}});
+        let expected = vec![(
+            "/a".into(),
+            "response",
+            "/properties/s/type".into(),
+            Severity::Breaking,
+        )];
+        for self_ref in ["#/components/schemas/X", "#/definitions/X"] {
+            let old = component_doc(x("string", self_ref), paths.clone());
+            let new = component_doc(x("integer", self_ref), paths.clone());
+            assert_eq!(rows(&diff(&old, &new)), expected, "{self_ref}");
+        }
+        // The self-reference spelled the other way, directly in X.
+        let direct = |s: &str| {
+            json!({"X": {"type": "object", "properties": {
+                "n": {"$ref": "#/definitions/X"}, "s": {"type": s}
+            }}})
+        };
+        let old = component_doc(direct("string"), paths.clone());
+        let new = component_doc(direct("integer"), paths);
+        assert_eq!(rows(&diff(&old, &new)), expected);
+    }
+
+    #[test]
+    fn a_retarget_at_a_cycle_cut_is_still_a_change() {
+        // #182 round 2: X and Y each reference themselves; the use moves from
+        // an expanded X to an expanded Y, so `p` meets (X, Y) at the cut.
+        let schemas = json!({
+            "X": {"type": "object", "properties": {"p": {"$ref": "#/components/schemas/X"}, "s": {"type": "string"}}},
+            "Y": {"type": "object", "properties": {"p": {"$ref": "#/components/schemas/Y"}, "s": {"type": "string"}}}
+        });
+        let path = |name: &str| {
+            json!({"/a": {"get": {"responses": ok(
+                json!({"$ref": format!("#/components/schemas/{name}"), "nullable": true})
+            )}}})
+        };
+        let old = component_doc(schemas.clone(), path("X"));
+        let new = component_doc(schemas, path("Y"));
+        assert_eq!(
+            rows(&diff(&old, &new)),
+            vec![(
+                "/a".into(),
+                "response",
+                "/properties/p/$ref".into(),
+                Severity::Review
+            )]
+        );
+    }
 }
