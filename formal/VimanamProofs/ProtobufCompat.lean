@@ -23,9 +23,15 @@ in source and in JSON/text. So:
 * `wireHazardEnum`: an evolution of `E` endangers binary peers when a number
   is vacated without being reserved, when a value appears at a number the
   old `E` reserved, or when a label present on both sides moves to another
-  number ("Existing enum label reassigned to another used number": an old
-  peer decodes the label's new number as whatever that number meant to it,
-  and the label's old number as unknown).
+  number that the old `E` used ("Existing enum label reassigned to another
+  used number": an old peer decodes the label's new number as the label that
+  number meant to it). A label moved to a fresh number is a value removed
+  plus a value added, a hazard only when its old number is vacated without
+  being reserved, as for a field.
+
+`wireHazardMsg` and `wireHazardEnum` restate the policy rows of the docs in
+terms of numbers and shapes, not encoding semantics derived independently:
+the theorems below protect those rows against regressions in the rules.
 * `sourceHazardMsg`, `sourceHazardEnum`: a name that existing source or JSON
   uses disappears or changes meaning: `M`, `E` or the oneof removed, a field
   name gone, a field renamed at its number or moved to another number, a
@@ -109,10 +115,13 @@ def wireHazardMsg (o g : Msg) : Bool :=
 def Enum.numOf (e : Enum) (l : ELabel) : Option Int :=
   (e.values.find? (·.label == l)).map (·.num)
 
-/-- Some label of the old `E` is at another number in the new one. -/
+/-- Some label of the old `E` is, in the new one, at another number that some
+label of the old `E` used: an old peer decodes the label's new number as a
+different label. (A move to a fresh number is a value removed plus a value
+added, rated by the vacated-number rule, as for fields.) -/
 def labelMoved (o g : Enum) : Bool :=
   o.values.any fun v => match g.numOf v.label with
-    | some n => n != v.num
+    | some n => n != v.num && o.values.any (·.num == n)
     | none => false
 
 /-- An evolution of a surviving `E` that endangers binary peers. -/
@@ -214,16 +223,23 @@ theorem classify_not_breaking_no_wire :
     (classify r k p).2.contains .wire = false ∧
       ((classify r k p).1 = .nonBreaking → (classify r k p).2 = [])) (by decide)
 
-/-- The attribute changes that supply wire evidence (`FIELD_SAME_TYPE`,
+/-- The pointers the docs' rule table names as wire rules: `FIELD_SAME_TYPE`,
 `FIELD_SAME_ONEOF`, `FIELD_SAME_GROUP_ENCODING`, the RPC streaming rules,
-`FIELD_SAME_CARDINALITY`, presence, RPC input/output, syntax): exactly these
-attribute pointers give a wire impact, and each is Breaking. -/
+`FIELD_SAME_CARDINALITY` and the RPC request/response types. -/
+def documentedWirePtrs : List Ptr :=
+  [.type, .oneof, .group, .clientStreaming, .serverStreaming, .cardinality, .input, .output]
+
+/-- Which attribute changes supply wire evidence: the documented wire rules,
+each Breaking, and, as current Rust behaviour with no documented row
+(#192, open), `presence` and `syntax` under `PROTOBUF_SURFACE_CHANGED`. No
+other attribute pointer gives a wire impact. This pins the behaviour; it does
+not certify the `presence` and `syntax` rows. -/
 theorem attribute_wire_evidence :
     ∀ r p, ((classify r (attributeKind p) p).2.contains .wire = true ↔
-      p ∈ [.type, .oneof, .group, .clientStreaming, .serverStreaming, .cardinality,
-           .presence, .input, .output, .syntax]) ∧
+      p ∈ documentedWirePtrs ∨ p ∈ [.presence, .syntax]) ∧
     ((classify r (attributeKind p) p).2.contains .wire = true →
-      (classify r (attributeKind p) p).1 = .breaking) := by
+      (classify r (attributeKind p) p).1 = .breaking) ∧
+    (p ∈ [.presence, .syntax] → rule (attributeKind p) p = "PROTOBUF_SURFACE_CHANGED") := by
   intro r p
   cases r <;> cases p <;> decide
 
@@ -584,7 +600,9 @@ theorem enum_wire_gate_sound (o g : Enum) (hg : g.valid = true)
     · refine Or.inr ⟨p, hp, ?_⟩
       simp at hpl hwn
       rw [hpl.1, enum_numOf_eq hg hw]
-      simp [Ne.symm hpl.2]
+      simp only [bne_iff_ne, ne_eq, Bool.and_eq_true, List.any_eq_true,
+        beq_iff_eq]
+      exact ⟨Ne.symm hpl.2, v, hv, hwn.symm⟩
   · rcases hnew with hadd | hres
     · exfalso; revert hadd; split <;> simp [neutral, classify, breakingGate, inScope]
     · rw [wire_valueReservedFacts] at hres

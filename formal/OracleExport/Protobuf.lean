@@ -422,6 +422,9 @@ def fixedPairs : List Pair := [
   onlyEnum (enm [(.A, 0)] [(2147483647, 2147483647)]) (enm [(.A, 0), (.B, 2147483647)]),
   onlyEnum (enm [(.A, 0)] [(-2147483648, -2)]) (enm [(.A, 0), (.B, -2147483648)]),
   onlyEnum (enm [(.A, 0), (.B, 2147483647)]) (enm [(.A, 0)] [(3, 2147483647)]),
+  -- A label moved to a fresh number, its old number reserved: a removal
+  -- with reservation plus an addition, not a wire hazard
+  onlyEnum (enm [(.A, 1), (.B, 2)]) (enm [(.A, 3), (.B, 2)] [(1, 1)]),
   -- Known gap: a label moved onto a number another label keeps
   onlyEnum (enm [(.A, 1), (.B, 2)]) (enm [(.B, 2), (.A, 2)] [(1, 1)]),
   onlyEnum (enm [(.A, 1), (.B, 1), (.C, 2)]) (enm [(.A, 1), (.B, 2), (.C, 2)]),

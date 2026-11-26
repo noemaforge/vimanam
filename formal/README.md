@@ -202,7 +202,8 @@ and whitespace normalised away.
 `scripts/formal/check-model-drift.py` recomputes it; the `model-drift`
 workflow runs it on every change to `src/diff/`, `src/resolve.rs`,
 `src/utils.rs`, the protobuf adapter (`src/contract/protobuf.rs`,
-`src/contract/mod.rs`, `src/cli/config.rs`), `formal/` or `scripts/formal/`
+`src/contract/mod.rs`, `src/cli/config.rs`, `src/cli/mod.rs`), `formal/` or
+`scripts/formal/`
 and annotates the changed Rust with a warning when a model
 has drifted, one annotation per changed file. The warning names only the refs
 that changed since the state the digest was taken at: `read_against` when it
@@ -638,10 +639,16 @@ specification written from protobuf's encoding and the policy in
 peers (a field number keeps a field whose type, label or oneof membership
 changes; a number is vacated without being reserved; a required field is
 removed or added to an existing message; a reserved number is reused; an
-enum label present on both sides moves to another number), a **source
+enum label present on both sides moves to another number that the old enum
+used, so an old peer decodes it as a different label), a **source
 hazard** breaks source or JSON (a message, enum or oneof removed; a field
 name gone, renamed at its number or moved; a field's shape changed; an enum
-label gone; a reserved name reused; a required field added).
+label gone; a reserved name reused; a required field added). The hazards
+restate the policy rows of the docs in terms of numbers and shapes; they are
+not encoding semantics derived independently, so the theorems protect those
+rows against regressions in the rules rather than justify the rows. A label
+moved to a fresh number is a value removed plus a value added, a wire hazard
+only when its old number is vacated without being reserved, as for a field.
 
 | Theorem | Rust behaviour |
 | --- | --- |
@@ -656,13 +663,13 @@ label gone; a reserved name reused; a required field added).
 | `doc_rows` | Pins of the docs' rule-table rows the fragment reaches. |
 | `enumReserved_inclusive` | The enum reserved-range test is inclusive at both ends (the Rust widens to 64 bits before adding one). |
 | `classify_breaking_gated`, `classify_not_breaking_no_wire` | Over every `classify` input: a Breaking verdict names a wire or source impact; Review and Non-breaking verdicts carry no wire impact, and Non-breaking none at all. |
-| `attribute_wire_evidence` | Exactly the `type`, `oneof`, `group`, streaming, `cardinality`, `presence`, `input`, `output` and `syntax` attribute changes supply wire evidence, each Breaking. |
+| `attribute_wire_evidence` | Exactly the documented wire rules (`type`, `oneof`, `group`, streaming, `cardinality`, `input`, `output`) and, as current behaviour pinned pending #192, `presence` and `syntax` (under `PROTOBUF_SURFACE_CHANGED`) supply wire evidence, each Breaking. |
 | `rename_source_only`, `structural_only_name` | A same-number rename and a JSON name change are Breaking in source/JSON only (`FIELD_SAME_NAME`, `FIELD_SAME_JSON_NAME`); no other structural difference is a fact. |
 | `type_change_wire`, `streaming_breaks_wire` | Every field type change, and every streaming change, is Breaking on the wire, in source and in JSON. |
 | `additions`, `removals_source`, `deprecation_default_review` | Additions are Non-breaking except a required field; removals are Breaking in source only; deprecation and default changes are Review. |
 | `gate_breaking_only`, `gate_scope_le_all`, `gate_outside_scope`, `gate_all_of_gated` | Only Breaking facts fail a gate, `all` fails whenever `wire` or `source` does, and no gate fails on a fact outside its scope. |
 
-### Finding
+### Findings
 
 #190 (open, not fixed here): `ENUM_VALUE_NUMBER_REUSED` fires only for a
 value entity that is gone *and* whose number now holds a label that had
@@ -673,7 +680,20 @@ gets no fact with a `wire` impact, so `--breaking wire --fail-on-breaking`
 exits 0. `docs/protobuf.md` rates this Breaking on the wire ("Existing enum
 label reassigned to another used number"). Once #190 is fixed,
 `enum_wire_gate_sound` should become an equivalence like
-`wire_gate_iff_hazard`, replacing the three finding theorems.
+`wire_gate_iff_hazard`, replacing the three finding theorems. A label moved
+to a fresh number with its old number reserved (`A = 1; B = 2` to
+`reserved 1; A = 3; B = 2`) is not this gap: it is a removal with
+reservation plus an addition, source-only, as for a field.
+
+#192 (open): a `presence` change (proto3 `int32 a` to `optional int32 a`)
+and a `syntax` change are rated Breaking on the wire and in source under the
+generic `PROTOBUF_SURFACE_CHANGED`, with no row in the docs. The fragment is
+proto2, where presence changes only with the label, so the model pins this
+behaviour in `attribute_wire_evidence` and does not certify it.
+
+The docs' table also names `DefaultChanged` in its native-rule column; that
+is the neutral kind, and the native rule `diff` reports for a default change
+is `PROTOBUF_SURFACE_CHANGED` (`deprecation_default_review`, the oracle).
 
 ### The oracle
 
@@ -682,10 +702,11 @@ exhaustively (every neutral kind with every listed pointer string, including
 lookalikes such as `/defaults` and `/file_options`, every `cardinality`
 attribute and removed type's `kind`; every scope, severity and impact list),
 then 625 fragment pairs (fixed ones for each docs row the fragment reaches,
-the #190 repros and the 32-bit reserved bounds, then generated ones, about
+the #190 repros, a label moved to a fresh number, and the 32-bit reserved bounds, then generated ones, about
 half by editing the old side one to three times). For each pair it records
 the model's fact set, the gate under each scope, the specification's hazards,
-and `known_gap`: the issue a wire hazard the wire gate misses is filed as.
+and `known_gap`: the issue a wire hazard the wire gate misses is filed as
+(3 cases, all #190-shaped).
 The exporter refuses invalid documents and a gap that is not a moved label.
 
 `src/contract/protobuf/formal_oracle.rs` (part of the default `cargo test`)
