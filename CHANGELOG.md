@@ -116,13 +116,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   segments are decoded without allocating, Markdown classifies each change
   once, finding the fail-closed region over a change is linear in its
   pointer (it was quadratic), and v2 change IDs hash the canonical JSON as
-  it is written. On #196's shape (9 and 10 mutually recursive components
+  it is written. The v2 deprecation pass deduplicates each fact against
+  the facts at its place instead of scanning every change reported so far,
+  which was quadratic on cut walks: with `deprecated` added inside such a
+  spec, `--format json` took 108 s and now takes 7.4 s (5.5 s without the
+  deprecations). On #196's shape (9 and 10 mutually recursive components
   used by N endpoints), Markdown takes 1.1 s / 1.4 s / 5.2 s at N = 1 / 5 /
   20 (was 5.2 s / 26.3 s / 105 s) and `--format json` 0.9 s / 3.6 s /
   15.4 s (was 3.6 s / 18.6 s / 77 s); with three media types per body,
   N = 5 takes 3.8 s (was 77.5 s). Output is byte-identical. Memory still
   grows with the number of uses: their records are all reported. Uses that
-  each compare a different pair still cost one budget per pair.
+  each compare a different pair still cost one budget per pair, and the
+  memo keeps one extra copy of each compared pair's records for the whole
+  diff: on adversarial specs whose walks are cut, 381 MB instead of 287 MB
+  with five distinct pairs, and 494 MB instead of 420 MB (Markdown) or
+  1,096 MB instead of 1,003 MB (v1 JSON) with one shared pair. Real specs
+  measured (Stripe, OpenAI, an Endor Swagger 2 to OpenAPI 3 pair) use the
+  same memory as before.
 - Git-ref `diff` reads committed blobs through one long-lived
   `git cat-file --batch` child per repository session instead of one
   `git show` per blob, and caches resolved refs, tree listings and rename

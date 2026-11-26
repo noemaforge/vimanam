@@ -570,6 +570,22 @@ pub(crate) struct ClosedRegions {
 /// of the bytes before `b`.
 const PREFIX_HASH_SEED: u64 = 0xcbf2_9ce4_8422_2325;
 
+#[cfg(test)]
+thread_local! {
+    /// Puts every region in one bucket ([`bucket_of`]), so tests reach the
+    /// pointer comparison that confirms a hash hit.
+    static ONE_BUCKET: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// The bucket a region whose pointer hashes to `state` is kept in.
+fn bucket_of(state: u64) -> u64 {
+    #[cfg(test)]
+    if ONE_BUCKET.with(std::cell::Cell::get) {
+        return 0;
+    }
+    state
+}
+
 fn prefix_hash(mut state: u64, bytes: &[u8]) -> u64 {
     for byte in bytes {
         state ^= u64::from(*byte);
@@ -584,7 +600,7 @@ impl ClosedRegions {
         let mut by_hash: HashMap<u64, Vec<(String, usize, FailClosed)>> = HashMap::new();
         for (order, (pointer, reason)) in closed.into_iter().enumerate() {
             let bucket = by_hash
-                .entry(prefix_hash(PREFIX_HASH_SEED, pointer.as_bytes()))
+                .entry(bucket_of(prefix_hash(PREFIX_HASH_SEED, pointer.as_bytes())))
                 .or_default();
             // The first close of a pointer is the one that counts.
             if !bucket.iter().any(|(known, ..)| *known == pointer) {
@@ -615,7 +631,7 @@ impl ClosedRegions {
         for end in ends {
             state = prefix_hash(state, &pointer.as_bytes()[hashed..end]);
             hashed = end;
-            let Some(bucket) = self.by_hash.get(&state) else {
+            let Some(bucket) = self.by_hash.get(&bucket_of(state)) else {
                 continue;
             };
             let prefix = &pointer[..end];
@@ -1489,6 +1505,21 @@ mod tests {
 
     #[test]
     fn closed_regions_cover_whole_tokens_and_keep_the_first_closed() {
+        check_closed_regions();
+    }
+
+    /// The same lookups with every region in one hash bucket, as if every
+    /// pointer collided: a hit counts only when the region's pointer is the
+    /// prefix looked up.
+    #[test]
+    fn closed_regions_confirm_hash_hits_by_pointer() {
+        super::ONE_BUCKET.with(|one| one.set(true));
+        let result = std::panic::catch_unwind(check_closed_regions);
+        super::ONE_BUCKET.with(|one| one.set(false));
+        result.expect("lookups with every region in one bucket");
+    }
+
+    fn check_closed_regions() {
         use super::ClosedRegions;
         use crate::diff::FailClosed::{ExpansionCut, UnparsedDefinition};
 
