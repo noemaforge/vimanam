@@ -886,3 +886,29 @@ fn deprecations_seen_only_by_in_place_expansion_inside_a_component_are_kept() {
     assert_eq!(facts[0].details["pointer"], "/properties/f/deprecated");
     assert_eq!(facts[0].uses.len(), 1);
 }
+
+/// `diff --omit-surfaces` (#159) in the library, without the CLI feature:
+/// the surface-free document is the full one minus `old/new.contract`, plus
+/// the marker, and round-trips through its own type.
+#[test]
+fn without_surfaces_keeps_everything_else() {
+    use vimanam::contract::json::{JsonDiffWithoutSurfaces, openapi};
+    let fixture = |name: &str| format!("{}/tests/fixtures/{name}", env!("CARGO_MANIFEST_DIR"));
+    let old = vimanam::parse_openapi(fixture("diff_old_oas3.json")).unwrap();
+    let new = vimanam::parse_openapi(fixture("diff_new_oas3.json")).unwrap();
+    let deltas = vimanam::diff::compute_deltas(&old, &new).unwrap();
+    let full = openapi(&old, &new, Some(&deltas), "a", "b").unwrap();
+    let mut expected = serde_json::to_value(&full).unwrap();
+    for side in ["old", "new"] {
+        expected[side].as_object_mut().unwrap().remove("contract");
+    }
+    expected["surfaces_omitted"] = Value::Bool(true);
+    let breaking = full.has_breaking();
+    let omitted = full.without_surfaces();
+    assert_eq!(omitted.has_breaking(), breaking);
+    let value = serde_json::to_value(&omitted).unwrap();
+    assert_eq!(value, expected);
+    // The surface-free shape round-trips through its own type.
+    let parsed: JsonDiffWithoutSurfaces = serde_json::from_value(value.clone()).unwrap();
+    assert_eq!(serde_json::to_value(parsed).unwrap(), value);
+}

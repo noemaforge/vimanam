@@ -4,7 +4,8 @@
 //! document of the same comparison (hashes, summary, changes and every ID in
 //! them, deltas), with the same exit code, for OpenAPI, GraphQL and protobuf,
 //! from file pairs and Git refs. Elsewhere the flag is rejected before any
-//! output exists.
+//! output exists. The library shape is tested ungated in
+//! tests/neutral_contract.rs.
 use assert_cmd::Command as AssertCommand;
 use serde_json::Value;
 use std::{fs, path::Path, path::PathBuf, process::Command};
@@ -357,26 +358,4 @@ fn rejected_outside_v2_json_before_any_output() {
             assert!(!out.exists(), "{args:?}: output created");
         }
     }
-}
-
-#[test]
-fn library_without_surfaces_keeps_everything_else() {
-    use vimanam::contract::json::{JsonDiffWithoutSurfaces, openapi};
-    let old = vimanam::parse_openapi(fixture("diff_old_oas3.json")).unwrap();
-    let new = vimanam::parse_openapi(fixture("diff_new_oas3.json")).unwrap();
-    let deltas = vimanam::diff::compute_deltas(&old, &new).unwrap();
-    let full = openapi(&old, &new, Some(&deltas), "a", "b").unwrap();
-    let mut expected = serde_json::to_value(&full).unwrap();
-    for side in ["old", "new"] {
-        expected[side].as_object_mut().unwrap().remove("contract");
-    }
-    expected["surfaces_omitted"] = Value::Bool(true);
-    let breaking = full.has_breaking();
-    let omitted = full.without_surfaces();
-    assert_eq!(omitted.has_breaking(), breaking);
-    let value = serde_json::to_value(&omitted).unwrap();
-    assert_eq!(value, expected);
-    // The surface-free shape round-trips through its own type.
-    let parsed: JsonDiffWithoutSurfaces = serde_json::from_value(value.clone()).unwrap();
-    assert_eq!(serde_json::to_value(parsed).unwrap(), value);
 }
