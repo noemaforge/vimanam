@@ -193,6 +193,21 @@ pub(crate) fn diff_set_member(
     diff_nodes(old, new, Node::Opaque, &mut path, out);
 }
 
+/// One `required`/`enum` member rewritten without changing what it resolves
+/// to (#186): `old` (the old side's member, which names it) became `new`, as
+/// a change at `set_pointer/<old>`, which neither table has a row for.
+pub(crate) fn set_member_rewritten(set_pointer: &str, old: &Value, new: &Value) -> ValueChange {
+    let mut path = set_pointer.to_string();
+    push_segment(&mut path, &set_element_segment(old));
+    ValueChange {
+        pointer: path,
+        kind: ValueChangeKind::Changed {
+            old: old.clone(),
+            new: new.clone(),
+        },
+    }
+}
+
 /// The pointer segment used for a member of a `required`/`enum` set: the bare
 /// string for string members, compact JSON otherwise.
 fn set_element_segment(value: &Value) -> String {

@@ -66,7 +66,9 @@ mod render;
 mod value;
 
 pub use render::write_diff;
-pub(crate) use value::{Location, diff_set_member, diff_values, locate, pointer_of, under_not};
+pub(crate) use value::{
+    Location, diff_set_member, diff_values, locate, pointer_of, set_member_rewritten, under_not,
+};
 pub use value::{ValueChange, ValueChangeKind};
 
 use std::collections::{HashMap, HashSet};
@@ -517,7 +519,10 @@ impl SpecDiff {
 /// holds it, and is Review like every change at such a pointer (#186). An
 /// `enum`/`required` member keeps its set rules for being added or removed as
 /// written; a component change behind a member written the same on both
-/// sides is reported inside it (`/enum/<member>/type`), Review.
+/// sides is reported inside it (`/enum/<member>/type`), Review, and a member
+/// rewritten without changing what it resolves to (retargeted to an
+/// identical component, inlined or extracted) is one Review change of the
+/// member.
 ///
 /// So a narrowed `enum` on a component shared by a request and a response is
 /// a breaking request record plus a non-breaking response record, and

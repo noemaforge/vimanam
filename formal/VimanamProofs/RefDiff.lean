@@ -52,9 +52,10 @@ inlined in full (`Side.inline`, components as deserialised, cut by name on
 the chain or after `maxResolveDepth`) and compared as plain JSON (`rawCmp`)
 at the current owner, where `locate` makes every change Review, as diffing
 did before #182. A `required`/`enum` set keeps its members as written
-(`setCmp`): membership is decided on them, and a member written the same on
-both sides that holds a reference is inlined and compared inside the member,
-Review.
+(`setCmp`): a member written the same on both sides that holds a reference
+is inlined and compared inside the member, Review; a member rewritten to the
+same canonical content (retargeted, inlined, extracted) is one Review change
+of the member; any other member is added or removed with the set's verdict.
 
 A hop is a *state* `(X, Y, mask, neg)`. The pair's content is visible at a
 state except under the masked top-level keys (overlay masking: a key a
@@ -505,17 +506,41 @@ def canonOutside (p : Pointer) (j : J) : J :=
   | some k, .obj m => if k == "$defs" || k == "definitions" then .obj (m.map fun (n, s) => (n, canon s)) else j
   | _, _ => j
 
-/-- A `required`/`enum` set at `p` (`Node.set`). Its members are values: one
-is in the set as written, so membership is decided on the written members,
-added or removed whole as `diff_sets` reports them. A member written the same
-on both sides that holds a reference is inlined per side and compared inside
-the member (`Node.opaq`, at `p/<member>/...`), where `locate` makes every
-change Review: the referenced component changed, not the set (#186). -/
+/-- Whether `j` holds a `$ref` object anywhere (`resolve::contains_ref`). -/
+partial def hasRef : J → Bool
+  | .obj kvs => (kvs.lookup "$ref").isSome || kvs.any fun (_, v) => hasRef v
+  | .arr xs => xs.any hasRef
+  | _ => false
+
+/-- A `required`/`enum` set at `p` (`Node.set`). Its members are values (#186):
+
+* a member written the same on both sides is in both; if it holds a
+  reference, it is inlined per side and compared inside the member
+  (`Node.opaq`, at `p/<member>/...`), where `locate` makes every change
+  Review: the referenced component changed, not the set;
+* a member only the old side writes is paired with the first unpaired member
+  only the new side writes when either holds a reference and both resolve to
+  the same content (inlined, then canonicalised): the member was rewritten
+  (a reference retargeted to an identical component, inlined, or
+  extracted), not replaced. That is one change of the member at
+  `p/<old member>`, which neither table has a row for (Review);
+* every other member is added or removed whole, as `diff_sets` reports it,
+  with the set's verdict. -/
 def setCmp (os ns : Side) (p : Pointer) (xs ys : List J) : W Unit := do
+  let oldOnly := (xs.filter fun x => !ys.contains x).eraseDups
+  let newOnly := (ys.filter fun y => !xs.contains y).eraseDups
+  let same (x y : J) : Bool :=
+    (hasRef x || hasRef y) && canon (os.inline [] x) == canon (ns.inline [] y)
+  let pairs := (oldOnly.foldl (fun (acc : List (J × J) × List J) x =>
+    match newOnly.find? fun y => !acc.2.contains y && same x y with
+    | some y => (acc.1 ++ [(x, y)], acc.2 ++ [y])
+    | none => acc) ([], [])).1
   for x in xs do
-    if !ys.contains x then emit (p ++ [setSegment x]) (.removed x)
+    if !ys.contains x && !(pairs.any (·.1 == x)) then emit (p ++ [setSegment x]) (.removed x)
   for y in ys do
-    if !xs.contains y then emit (p ++ [setSegment y]) (.added y)
+    if !xs.contains y && !(pairs.any (·.2 == y)) then emit (p ++ [setSegment y]) (.added y)
+  for (x, y) in pairs do
+    emit (p ++ [setSegment x]) (.changed x y)
   for x in (xs.filter ys.contains).eraseDups do
     rawCmp .opaq (p ++ [setSegment x]) (os.inline [] x) (ns.inline [] x)
 
@@ -1030,6 +1055,18 @@ private def oas3 (comps : List (String × J)) (resp : J) : J :=
     (oas3 [("P", obj1 "type" (.str "integer"))] r)
   g.length == 1 && g[0]!.ptr.length == 3 && g[0]!.ptr.getLast? == some "type"
     && g[0]!.severity == .review
+
+-- A member retargeted to an identically shaped component, or inlined, is
+-- one Review change of the member, not a member removed plus one added.
+#guard
+  let ab := [("A", obj1 "type" (.str "string")), ("B", obj1 "type" (.str "string"))]
+  let enum1 (m : J) := .obj [("type", .str "string"), ("enum", .arr [m])]
+  let g := grouped (oas3 ab (enum1 (ref "A"))) (oas3 ab (enum1 (ref "B")))
+  let h := grouped (oas3 ab (enum1 (ref "A"))) (oas3 ab (enum1 (obj1 "type" (.str "string"))))
+  let k := grouped (oas3 ab (enum1 (ref "A"))) (oas3 [("A", obj1 "type" (.str "integer"))] (enum1 (ref "A")))
+  g.length == 1 && g[0]!.severity == .review && g[0]!.ptr.length == 2
+    && h.length == 1 && h[0]!.severity == .review
+    && k.length == 1 && k[0]!.ptr.getLast? == some "type"
 
 -- An inlined self-reference stops at the component already on the chain.
 #guard

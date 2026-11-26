@@ -330,3 +330,83 @@ fn a_component_under_const_is_inlined_and_reviewed() {
         );
     }
 }
+
+/// `enum: ["x", old]` → `enum: ["x", new]` as the request body or the
+/// response, with `A` and `B` both strings.
+fn rewritten(
+    old: Value,
+    new: Value,
+    request: bool,
+) -> (Vec<(String, String, Option<String>)>, i32) {
+    let comps = json!({"A": {"type": "string"}, "B": {"type": "string"}});
+    let side = |member: &Value| {
+        let schema = json!({"type": "string", "enum": ["x", member]});
+        if request {
+            spec(schema, object(), comps.clone())
+        } else {
+            spec(object(), schema, comps.clone())
+        }
+    };
+    diff_records(&side(&old), &side(&new))
+}
+
+const MEMBER_A: &str = r##"/enum/{"$ref":"#~1components~1schemas~1A"}"##;
+
+#[test]
+fn an_enum_member_retargeted_to_an_identical_component_is_one_review() {
+    for request in [true, false] {
+        let (records, code) = rewritten(r("A"), r("B"), request);
+        assert_eq!(code, 0, "{records:?}");
+        assert_eq!(
+            records,
+            [(MEMBER_A.to_string(), "review".to_string(), None)]
+        );
+    }
+}
+
+#[test]
+fn an_enum_member_inlined_or_extracted_is_one_review() {
+    for request in [true, false] {
+        let (records, code) = rewritten(r("A"), json!({"type": "string"}), request);
+        assert_eq!(code, 0, "{records:?}");
+        assert_eq!(
+            records,
+            [(MEMBER_A.to_string(), "review".to_string(), None)]
+        );
+        let (records, code) = rewritten(json!({"type": "string"}), r("A"), request);
+        assert_eq!(code, 0, "{records:?}");
+        assert_eq!(
+            records,
+            [(
+                r#"/enum/{"type":"string"}"#.to_string(),
+                "review".to_string(),
+                None
+            )]
+        );
+    }
+}
+
+#[test]
+fn an_enum_member_retargeted_to_a_different_component_is_replaced() {
+    let comps = json!({"A": {"type": "string"}, "C": {"type": "integer"}});
+    let old = spec(json!({"enum": [r("A")]}), object(), comps.clone());
+    let new = spec(json!({"enum": [r("C")]}), object(), comps);
+    let (records, code) = diff_records(&old, &new);
+    assert_eq!(code, 3, "{records:?}");
+    let severities: Vec<&str> = records.iter().map(|(_, s, _)| s.as_str()).collect();
+    assert_eq!(severities, ["breaking", "non_breaking"], "{records:?}");
+}
+
+#[test]
+fn an_enum_member_whose_target_is_deleted_is_reviewed() {
+    let old = spec(
+        json!({"enum": [r("A")]}),
+        object(),
+        json!({"A": {"type": "string"}}),
+    );
+    let new = spec(json!({"enum": [r("A")]}), object(), json!({}));
+    let (records, code) = diff_records(&old, &new);
+    assert_eq!(code, 0, "{records:?}");
+    assert!(!records.is_empty());
+    assert!(records.iter().all(|(_, s, _)| s == "review"), "{records:?}");
+}

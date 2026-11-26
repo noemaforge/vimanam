@@ -28,9 +28,9 @@ use std::rc::Rc;
 use indexmap::IndexMap;
 use serde_json::{Map, Value};
 
-use crate::diff::{ValueChange, diff_set_member, pointer_of};
+use crate::diff::{ValueChange, diff_set_member, pointer_of, set_member_rewritten};
 use crate::models::Schema;
-use crate::utils::decode_json_pointer_token;
+use crate::utils::{canonicalize_schema_value, decode_json_pointer_token};
 
 /// Maximum number of `$ref` expansions on one chain in
 /// [`DocResolver::resolve`]. Termination is already guaranteed by the cycle
@@ -623,13 +623,25 @@ impl PairResolver<'_> {
         self.localize_with_members(old, new, edges, &mut Vec::new())
     }
 
-    /// The members of two `required`/`enum` sets written the same on both
-    /// sides that inline differently, compared inside the member.
-    fn set_members(&self, before: &[Value], after: &[Value], walk: &mut LocalWalk) {
+    /// Two `required`/`enum` sets whose members are values (#186), returning
+    /// the new set to compare. A member written the same on both sides that
+    /// holds a reference is compared inside the member. A member only the old
+    /// side writes is paired with the first unpaired member only the new side
+    /// writes when either holds a reference and both resolve to the same
+    /// canonical content: the member was rewritten (retargeted to an
+    /// identical component, inlined or extracted), which is one change of the
+    /// member, and the new member is replaced by the old one in the returned
+    /// set so that the set comparison does not report it added and removed.
+    /// Every other member is left to the set comparison.
+    fn set_members(&self, before: &[Value], after: &[Value], walk: &mut LocalWalk) -> Vec<Value> {
+        // Sets without references (almost all) need none of this.
+        if !(before.iter().any(contains_ref) || after.iter().any(contains_ref)) {
+            return after.to_vec();
+        }
         let pointer = pointer_of(&walk.path);
         let mut seen: Vec<&Value> = Vec::new();
-        for member in before {
-            if !after.contains(member) || seen.contains(&member) {
+        for member in before.iter().filter(|member| contains_ref(member)) {
+            if seen.contains(&member) || !after.contains(member) {
                 continue;
             }
             seen.push(member);
@@ -640,14 +652,60 @@ impl PairResolver<'_> {
             let new = self.new.inline(member, &mut Vec::new());
             diff_set_member(&pointer, member, &old, &new, walk.members);
         }
+
+        fn only<'v>(these: &'v [Value], those: &[Value]) -> Vec<&'v Value> {
+            let mut out: Vec<&Value> = Vec::new();
+            for member in these {
+                if !those.contains(member) && !out.contains(&member) {
+                    out.push(member);
+                }
+            }
+            out
+        }
+        let (old_only, new_only) = (only(before, after), only(after, before));
+        let canonical = |doc: &DocResolver, member: &Value| {
+            let mut value = doc.inline(member, &mut Vec::new());
+            canonicalize_schema_value(&mut value);
+            value
+        };
+        let new_canonical: Vec<Value> = new_only.iter().map(|m| canonical(&self.new, m)).collect();
+        let mut used = vec![false; new_only.len()];
+        let mut rewritten: Vec<(&Value, &Value)> = Vec::new();
+        for old in old_only {
+            let old_canonical = canonical(&self.old, old);
+            let found = (0..new_only.len()).find(|&index| {
+                !used[index]
+                    && (contains_ref(old) || contains_ref(new_only[index]))
+                    && new_canonical[index] == old_canonical
+            });
+            if let Some(index) = found {
+                used[index] = true;
+                walk.members
+                    .push(set_member_rewritten(&pointer, old, new_only[index]));
+                rewritten.push((new_only[index], old));
+            }
+        }
+        after
+            .iter()
+            .map(|member| {
+                rewritten
+                    .iter()
+                    .find(|(new, _)| *new == member)
+                    .map_or_else(|| member.clone(), |(_, old)| (*old).clone())
+            })
+            .collect()
     }
 
     fn local(&self, old: &Value, new: &Value, role: Role, walk: &mut LocalWalk) -> (Value, Value) {
         match role {
             Role::Annotation => return (old.clone(), new.clone()),
             Role::Set if old.is_array() && new.is_array() => {
+                if self.values_equal(old, new) {
+                    return (old.clone(), new.clone());
+                }
                 if let (Value::Array(before), Value::Array(after)) = (old, new) {
-                    self.set_members(before, after, walk);
+                    let after = self.set_members(before, after, walk);
+                    return (old.clone(), Value::Array(after));
                 }
                 return (old.clone(), new.clone());
             }
