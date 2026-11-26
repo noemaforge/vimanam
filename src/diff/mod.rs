@@ -40,7 +40,7 @@
 //! A request body and a response may declare several media types
 //! (`content` keys, #154). The two sides of one body, or of one response
 //! status present in both specs, are compared **media type by media type**,
-//! matched by [`media_key`]: the type, subtype and parameter names
+//! matched by `media_key`: the type, subtype and parameter names
 //! case-insensitively and without whitespace around `;` (RFC 9110 §8.3.1),
 //! parameter values and wildcards exactly (`application/json` and
 //! `application/json; charset=utf-8` are two media types, `*/*` matches only
