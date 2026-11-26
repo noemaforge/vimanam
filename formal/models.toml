@@ -127,8 +127,8 @@ rust = [
 # `adapt` decide which attributes a fragment change touches.
 [[model]]
 lean = "formal/VimanamProofs/Protobuf.lean"
-read_against = "fe4a238f8110"
-read_digest = "v1:sha256:4c9528834e99be6e7466926cc6dbdc871cc49d7f07ac8d560b56f83f1d17fb49"
+read_against = "506d8ab1cfdf"
+read_digest = "v1:sha256:9ee2ca0e6e8299fe48b2749cc058f472bbe1b4b2a121a74843ef8c9142facea6"
 rust = [
   "src/contract/protobuf.rs#ProtobufAdapter",
   "src/contract/protobuf.rs#rule",
