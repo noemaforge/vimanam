@@ -26,7 +26,7 @@
 
 [[model]]
 lean = "formal/VimanamProofs/Severity.lean"
-read_against = "b6a5e07cf104"
+read_against = "a0ff2d41b887"
 read_digest = "v1:sha256:9585a0d6daf14b371e7c187680d8cfe6082aec02fe6e57a9b522b6c83e462297"
 rust = [
   "src/diff/mod.rs#Severity",
@@ -68,7 +68,7 @@ rust = [
 # drift, re-run the harness.
 [[model]]
 lean = "formal/VimanamProofs/RefDiff.lean"
-read_against = "b6a5e07cf104"
+read_against = "a0ff2d41b887"
 read_digest = "v1:sha256:fae7c48fda573d7530c6c989929db04ee782673a9506f56fba0446948a48c99b"
 rust = [
   "src/resolve.rs#reference_name",
@@ -134,8 +134,8 @@ rust = [
 # `adapt` decide which attributes a fragment change touches.
 [[model]]
 lean = "formal/VimanamProofs/Protobuf.lean"
-read_against = "506d8ab1cfdf"
-read_digest = "v1:sha256:9ee2ca0e6e8299fe48b2749cc058f472bbe1b4b2a121a74843ef8c9142facea6"
+read_against = "a0ff2d41b887"
+read_digest = "v1:sha256:aac981b2d41259ef999c4446d90bebe0a0eb604446d430e78a4d6d707b2f00cb"
 rust = [
   "src/contract/protobuf.rs#ProtobufAdapter",
   "src/contract/protobuf.rs#rule",
