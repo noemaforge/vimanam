@@ -7,7 +7,7 @@ pub mod graphql;
 pub mod json;
 pub mod openapi;
 pub mod protobuf;
-use crate::diff::json::{canonical_json, sha256_hex};
+use crate::diff::json::{CanonicalField, canonical_json, canonical_object_sha256_hex};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -229,25 +229,32 @@ impl Change {
 
 /// Stable entity ID: SHA-256 of canonical {v:2, format, kind, coordinate}.
 pub fn entity_id(format: Format, kind: EntityKind, coordinate: &str) -> String {
+    let (format, kind) = (json!(format), json!(kind));
     format!(
         "ve2_{}",
-        sha256_hex(
-            canonical_json(&json!({"v":2,"format":format,"kind":kind,"coordinate":coordinate}))
-                .as_bytes()
-        )
+        canonical_object_sha256_hex(&[
+            ("coordinate", CanonicalField::Str(coordinate)),
+            ("format", CanonicalField::Value(&format)),
+            ("kind", CanonicalField::Value(&kind)),
+            ("v", CanonicalField::U64(2)),
+        ])
     )
 }
 
 /// Stable neutral change ID: SHA-256 of canonical {v:2, subject, kind, details}.
+///
+/// The canonical object is hashed as it is serialised, never built: a fact's
+/// details can hold a very long pointer (#196).
 pub fn change_id(change: &Change) -> String {
+    let kind = json!(change.kind);
     format!(
         "vc2_{}",
-        sha256_hex(
-            canonical_json(
-                &json!({"v":2,"subject":change.subject,"kind":change.kind,"details":change.details})
-            )
-            .as_bytes()
-        )
+        canonical_object_sha256_hex(&[
+            ("details", CanonicalField::Value(&change.details)),
+            ("kind", CanonicalField::Value(&kind)),
+            ("subject", CanonicalField::Str(&change.subject)),
+            ("v", CanonicalField::U64(2)),
+        ])
     )
 }
 

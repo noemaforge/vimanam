@@ -3196,3 +3196,137 @@ mod tests {
         );
     }
 }
+
+/// Specs whose uses all compare one schema pair (#196).
+#[cfg(test)]
+pub(crate) mod shared_pair {
+    use crate::models::ApiDocumentation;
+    use serde_json::{Value, json};
+
+    /// Two specs with `endpoints` operations whose request body and `200`
+    /// response both carry, under each of `media` media types, the same
+    /// schema: on the old side a reference into a cycle of two components,
+    /// on the new side an inline object referencing a cycle of three, so
+    /// every use's walk expands one-sided references. Every use compares the
+    /// same pair.
+    pub(crate) fn specs(endpoints: usize, media: usize) -> (ApiDocumentation, ApiDocumentation) {
+        let family = |prefix: &str, size: usize| -> Value {
+            (0..size)
+                .map(|i| {
+                    let next = format!("#/components/schemas/{prefix}{}", (i + 1) % size);
+                    (
+                        format!("{prefix}{i}"),
+                        json!({"type": "object", "properties": {
+                            "p": {"type": "object", "properties": {"q": {"$ref": next}}}
+                        }}),
+                    )
+                })
+                .collect::<serde_json::Map<_, _>>()
+                .into()
+        };
+        let spec = |schemas: Value, body: Value| -> ApiDocumentation {
+            let content: serde_json::Map<String, Value> =
+                ["application/json", "application/xml", "text/plain"][..media]
+                    .iter()
+                    .map(|media_type| (media_type.to_string(), json!({"schema": body})))
+                    .collect();
+            let paths: serde_json::Map<String, Value> = (0..endpoints)
+                .map(|k| {
+                    (
+                        format!("/x{k}"),
+                        json!({"post": {
+                            "requestBody": {"content": content},
+                            "responses": {"200": {"description": "ok", "content": content}}
+                        }}),
+                    )
+                })
+                .collect();
+            let doc = json!({
+                "openapi": "3.0.0",
+                "info": {"title": "t", "version": "1"},
+                "paths": paths,
+                "components": {"schemas": schemas}
+            });
+            crate::parse_openapi_bytes(doc.to_string().as_bytes(), "json", None)
+                .expect("test spec parses")
+        };
+        (
+            spec(family("A", 2), json!({"$ref": "#/components/schemas/A0"})),
+            spec(
+                family("B", 3),
+                json!({"type": "object", "properties": {"p": {"$ref": "#/components/schemas/B0"}}}),
+            ),
+        )
+    }
+}
+
+#[cfg(test)]
+mod shared_pair_tests {
+    use super::*;
+
+    /// Every use comparing the same schema pair shares one walk (#196): a
+    /// request and its response, each media type (#154), each endpoint.
+    /// Without the memo in `Components::compare` this makes one walk per use.
+    #[test]
+    fn uses_comparing_one_pair_share_one_walk() {
+        let (old, new) = shared_pair::specs(4, 3);
+        let resolver = PairResolver::for_docs(&old, &new);
+        let diff = diff_with_resolver(&old, &new, EndpointMatching::Exact, &resolver);
+        assert_eq!(resolver.walks.get(), 1, "one walk for 24 uses of one pair");
+
+        // Each use still gets the whole comparison, the same records.
+        let per_use = |path: &str, response: bool, media: &str| -> Vec<(String, Severity)> {
+            diff.changes
+                .iter()
+                .filter(|change| change.endpoint.path == path)
+                .filter_map(|change| match &change.kind {
+                    ChangeKind::RequestSchemaChanged {
+                        change: value,
+                        media_type,
+                        ..
+                    } if !response && media_type.as_deref() == Some(media) => {
+                        Some((value.pointer.clone(), severity(change)))
+                    }
+                    ChangeKind::ResponseSchemaChanged {
+                        change: value,
+                        media_type,
+                        ..
+                    } if response && media_type.as_deref() == Some(media) => {
+                        Some((value.pointer.clone(), severity(change)))
+                    }
+                    _ => None,
+                })
+                .collect()
+        };
+        let first = per_use("/x0", false, "application/json");
+        assert!(first.len() >= 2, "the pair differs: {first:?}");
+        for path in ["/x0", "/x1", "/x2", "/x3"] {
+            for response in [false, true] {
+                for media in ["application/json", "application/xml", "text/plain"] {
+                    assert_eq!(per_use(path, response, media), first, "{path} {media}");
+                }
+            }
+        }
+    }
+
+    /// Different pairs are still each walked: the memo keys on the pair.
+    #[test]
+    fn different_pairs_are_walked_separately() {
+        let (old, mut new) = shared_pair::specs(2, 1);
+        // One endpoint's new body gains a keyword, so its pair differs.
+        let body = new.endpoints[1]
+            .parameters
+            .iter_mut()
+            .find(|parameter| parameter.parameter_in == "body")
+            .and_then(|parameter| parameter.schema.as_mut())
+            .expect("body schema");
+        body.extensions.insert("maxProperties".into(), 3.into());
+        let resolver = PairResolver::for_docs(&old, &new);
+        let diff = diff_with_resolver(&old, &new, EndpointMatching::Exact, &resolver);
+        assert_eq!(resolver.walks.get(), 2);
+        assert!(diff.changes.iter().any(|change| matches!(
+            &change.kind,
+            ChangeKind::RequestSchemaChanged { change, .. } if change.pointer == "/maxProperties"
+        )));
+    }
+}

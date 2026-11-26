@@ -106,6 +106,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `diff` walks each (old, new) schema pair once, however many uses compare
+  it (#196). Before, every use (each endpoint's request body and responses,
+  and since #154 each media type) made its own walk with its own expansion
+  budget, so on adversarial recursive specs the cost grew with the number
+  of uses. A request and its response with the same schema, each media type
+  of one body, and every endpoint sharing a body now share one walk; each use
+  still gets its own records. The per-record work is cheaper too: pointer
+  segments are decoded without allocating, Markdown classifies each change
+  once, finding the fail-closed region over a change is linear in its
+  pointer (it was quadratic), and v2 change IDs hash the canonical JSON as
+  it is written. On #196's shape (9 and 10 mutually recursive components
+  used by N endpoints), Markdown takes 1.1 s / 1.4 s / 5.2 s at N = 1 / 5 /
+  20 (was 5.2 s / 26.3 s / 105 s) and `--format json` 0.9 s / 3.6 s /
+  15.4 s (was 3.6 s / 18.6 s / 77 s); with three media types per body,
+  N = 5 takes 3.8 s (was 77.5 s). Output is byte-identical. Memory still
+  grows with the number of uses: their records are all reported. Uses that
+  each compare a different pair still cost one budget per pair.
 - Git-ref `diff` reads committed blobs through one long-lived
   `git cat-file --batch` child per repository session instead of one
   `git show` per blob, and caches resolved refs, tree listings and rename

@@ -121,7 +121,7 @@ fn collect_examples(
 fn resolve_example<'a>(example: &'a Example, doc: &'a ApiDocumentation) -> Option<&'a Example> {
     if let Some(reference) = &example.reference {
         if let Some(name) = reference.strip_prefix("#/components/examples/") {
-            return doc.examples.get(&decode_json_pointer_token(name));
+            return doc.examples.get(&*decode_json_pointer_token(name));
         }
         return None;
     }

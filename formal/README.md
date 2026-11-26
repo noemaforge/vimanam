@@ -621,8 +621,14 @@ Known limits of one-sided expansion (#187):
   limit and fails closed: a Breaking `$ref` record, so it exits 3
   (`r9-cap`, `r9-budget-over`). Below the limits it reports nothing
   (`r9-budget-under`). The model has the same limits, so the harness agrees.
-* The budget is per walk, so a spec with many uses that each spend it does
-  that much work per use (#196).
+* The budget is per walk. Uses that compare the same (old, new) schema pair
+  share one walk (#196: a request and its response, each media type, every
+  endpoint sharing a body), so the work is bounded per distinct pair, not per
+  use; each use still gets its own records, as before. A spec whose uses
+  each compare a different pair that spends the budget still costs one
+  budget per pair. A document-wide budget would bound that too, but it would
+  cut uses that compare cheaply once others had spent it, failing them closed
+  by their position in the document.
 * An unparseable entry reached outside the schema grammar (under `default`,
   `if`, ...) is inlined and Review there, as every change outside the
   grammar is; and the v2 named-type surface lists valid schemas only, so it

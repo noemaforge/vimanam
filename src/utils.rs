@@ -9,8 +9,15 @@ use crate::models::{
 /// Decodes the escape sequences in a JSON Pointer reference token: `~1` → `/`
 /// and `~0` → `~` (RFC 6901). The order matters — `~1` must be decoded before
 /// `~0` so that an encoded `~1` is not corrupted.
-pub(crate) fn decode_json_pointer_token(token: &str) -> String {
-    token.replace("~1", "/").replace("~0", "~")
+///
+/// Borrows `token` when it holds no `~`, the usual case: `diff` decodes every
+/// segment of every reported pointer several times (#196).
+pub(crate) fn decode_json_pointer_token(token: &str) -> std::borrow::Cow<'_, str> {
+    if token.contains('~') {
+        std::borrow::Cow::Owned(token.replace("~1", "/").replace("~0", "~"))
+    } else {
+        std::borrow::Cow::Borrowed(token)
+    }
 }
 
 /// Resolves a JSON reference within a pre-serialized OpenAPI specification.
@@ -38,7 +45,7 @@ pub(crate) fn resolve_ref(
 
         current = match current {
             // Component not found -> None
-            serde_json::Value::Object(obj) => obj.get(&unescaped)?,
+            serde_json::Value::Object(obj) => obj.get(&*unescaped)?,
             // Invalid or out-of-bounds index -> None
             serde_json::Value::Array(arr) => arr.get(unescaped.parse::<usize>().ok()?)?,
             // Cannot navigate further
@@ -118,11 +125,11 @@ pub(crate) fn resolve_schema_reference<'a>(
     doc: &'a ApiDocumentation,
 ) -> Option<&'a Schema> {
     if let Some(name) = reference.strip_prefix("#/components/schemas/") {
-        return doc.schemas.get(&decode_json_pointer_token(name));
+        return doc.schemas.get(&*decode_json_pointer_token(name));
     }
 
     if let Some(name) = reference.strip_prefix("#/definitions/") {
-        return doc.schemas.get(&decode_json_pointer_token(name));
+        return doc.schemas.get(&*decode_json_pointer_token(name));
     }
 
     None

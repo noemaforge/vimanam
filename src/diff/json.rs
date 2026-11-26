@@ -781,7 +781,7 @@ fn target_and_member(pointer: &str) -> (JsonTarget, Option<String>) {
             .rsplit('/')
             .next()
             .filter(|segment| !segment.is_empty())
-            .map(decode_json_pointer_token)
+            .map(|segment| decode_json_pointer_token(segment).into_owned())
     };
 
     match locate(pointer) {
@@ -834,6 +834,85 @@ pub fn canonical_json(value: &Value) -> String {
     }
 
     canonical(value).to_string()
+}
+
+/// One value of [`canonical_object_sha256_hex`]'s object.
+pub(crate) enum CanonicalField<'a> {
+    /// A JSON string.
+    Str(&'a str),
+    /// A JSON number.
+    U64(u64),
+    /// Any JSON value, its object keys sorted on the way out.
+    Value(&'a Value),
+}
+
+/// [`sha256_hex`] of [`canonical_json`] of the object with `entries`, which
+/// are given with their keys in byte order, without building the object or
+/// its sorted copy: the canonical form is serialised straight into the hash
+/// (#196). The bytes hashed are exactly `canonical_json`'s.
+pub(crate) fn canonical_object_sha256_hex(entries: &[(&str, CanonicalField<'_>)]) -> String {
+    use serde::ser::{SerializeMap, SerializeSeq, Serializer};
+
+    /// `value` serialised as `canonical_json` serialises it.
+    struct Canonical<'v>(&'v Value);
+    impl Serialize for Canonical<'_> {
+        fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+            match self.0 {
+                Value::Object(map) => {
+                    let mut entries: Vec<(&String, &Value)> = map.iter().collect();
+                    entries.sort_by(|a, b| a.0.cmp(b.0));
+                    let mut out = serializer.serialize_map(Some(entries.len()))?;
+                    for (key, value) in entries {
+                        out.serialize_entry(key, &Canonical(value))?;
+                    }
+                    out.end()
+                }
+                Value::Array(items) => {
+                    let mut out = serializer.serialize_seq(Some(items.len()))?;
+                    for item in items {
+                        out.serialize_element(&Canonical(item))?;
+                    }
+                    out.end()
+                }
+                other => other.serialize(serializer),
+            }
+        }
+    }
+    struct Object<'e, 'a>(&'e [(&'e str, CanonicalField<'a>)]);
+    impl Serialize for Object<'_, '_> {
+        fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+            let mut out = serializer.serialize_map(Some(self.0.len()))?;
+            for (key, field) in self.0 {
+                match field {
+                    CanonicalField::Str(text) => out.serialize_entry(key, text)?,
+                    CanonicalField::U64(number) => out.serialize_entry(key, number)?,
+                    CanonicalField::Value(value) => out.serialize_entry(key, &Canonical(value))?,
+                }
+            }
+            out.end()
+        }
+    }
+    /// Feeds whatever is written into the hash.
+    struct Hashing(Sha256);
+    impl std::io::Write for Hashing {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0.update(bytes);
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    debug_assert!(entries.windows(2).all(|pair| pair[0].0 < pair[1].0));
+    let mut hashing = Hashing(Sha256::new());
+    serde_json::to_writer(&mut hashing, &Object(entries))
+        .expect("serialising JSON values into a hash cannot fail");
+    let mut hex = String::with_capacity(64);
+    for byte in hashing.0.finalize() {
+        write!(hex, "{byte:02x}").expect("writing to a String cannot fail");
+    }
+    hex
 }
 
 #[cfg(test)]
@@ -1337,6 +1416,41 @@ mod tests {
             fail_closed: None,
         });
         assert_ne!(a.id, b.id);
+    }
+
+    /// The streamed hash is the hash of `canonical_json` (#196): keys sorted
+    /// at every depth, arrays kept in order, strings escaped and numbers
+    /// written exactly as `canonical_json` writes them.
+    #[test]
+    fn canonical_object_hash_is_the_hash_of_canonical_json() {
+        let details = json!({
+            "z": [json!({"b": 1, "a": [2, 1.5, -3, null]}), "x"],
+            "pointer": "/properties/a~1b/\u{e9}/\"q\"\n\t\u{1}",
+            "a": {"y": true, "x": {"d": {}, "c": []}},
+            "big": u64::MAX,
+            "neg": i64::MIN,
+            "f": 1e300,
+        });
+        let kind = json!("constraint_changed");
+        let expected = sha256_hex(
+            canonical_json(
+                &json!({"v": 2, "subject": "ve2_s\u{2028}", "kind": kind, "details": details}),
+            )
+            .as_bytes(),
+        );
+        assert_eq!(
+            canonical_object_sha256_hex(&[
+                ("details", CanonicalField::Value(&details)),
+                ("kind", CanonicalField::Value(&kind)),
+                ("subject", CanonicalField::Str("ve2_s\u{2028}")),
+                ("v", CanonicalField::U64(2)),
+            ]),
+            expected
+        );
+        assert_eq!(
+            canonical_object_sha256_hex(&[]),
+            sha256_hex(canonical_json(&json!({})).as_bytes())
+        );
     }
 
     #[test]

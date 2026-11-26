@@ -1515,7 +1515,7 @@ pub(crate) fn short_schema_reference(reference: &str) -> String {
     reference
         .rsplit('/')
         .next()
-        .map(decode_json_pointer_token)
+        .map(|token| decode_json_pointer_token(token).into_owned())
         .unwrap_or_else(|| reference.to_string())
 }
 

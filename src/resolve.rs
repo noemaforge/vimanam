@@ -17,9 +17,13 @@
 //! - [`DocResolver::resolve_shallow`] resolves only the top few JSON levels for
 //!   readers (pagination inference) that never look deeper.
 //!
-//! Expansions are deliberately not memoized: the result is an owned tree, so a
-//! cache hit still clones the whole subtree, and on OpenAI's spec that made the
-//! diff slower and ~40% larger in memory.
+//! Expansions inside a walk are deliberately not memoized: the result is an
+//! owned tree, so a cache hit still clones the whole subtree, and on OpenAI's
+//! spec that made the diff slower and ~40% larger in memory. Whole walks are
+//! (#196): `diff::components::Components` and the v2 deprecation pass keep
+//! one result per (old, new) schema pair, so the many uses that compare the
+//! same pair (a request and its response, each media type, each endpoint
+//! sharing a body) share one walk and one [`EXPANSION_BUDGET`].
 
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
@@ -61,7 +65,7 @@ fn reference_name(reference: &str) -> Option<String> {
     reference
         .strip_prefix("#/components/schemas/")
         .or_else(|| reference.strip_prefix("#/definitions/"))
-        .map(decode_json_pointer_token)
+        .map(|name| decode_json_pointer_token(name).into_owned())
 }
 
 /// `schema` as JSON, the form every resolution and comparison starts from.
@@ -331,6 +335,10 @@ pub(crate) struct PairResolver<'a> {
     /// documents: present on one side only, serialized differently, or
     /// referencing (transitively) such a name.
     unstable: HashSet<String>,
+    /// Walks started ([`Self::localize_with_members`]), so tests can pin how
+    /// many walks a diff makes (#196).
+    #[cfg(test)]
+    pub(crate) walks: std::cell::Cell<usize>,
 }
 
 impl<'a> PairResolver<'a> {
@@ -389,6 +397,8 @@ impl<'a> PairResolver<'a> {
             old: old_resolver,
             new: new_resolver,
             unstable,
+            #[cfg(test)]
+            walks: std::cell::Cell::new(0),
         }
     }
 
@@ -543,32 +553,56 @@ impl LocalWalk<'_> {
 }
 
 /// The regions one walk closed, indexed by pointer, so that finding the
-/// region over a change looks up only the change pointer's ancestors
-/// (O(depth) per change, however many regions a large input closes).
+/// region over a change looks up only the change pointer's ancestors.
+///
+/// Each ancestor is looked up by a hash of its bytes carried along the
+/// pointer, so one lookup is linear in the pointer's length rather than
+/// hashing every prefix afresh, which on the deep pointers of a cut walk was
+/// quadratic (#196). A hash hit is confirmed by comparing the region's
+/// pointer, so a collision never attributes a region to a change.
 pub(crate) struct ClosedRegions {
-    /// Region pointer -> (the order it was first closed in, its reason).
-    by_pointer: HashMap<String, (usize, FailClosed)>,
+    /// Prefix hash of a region pointer -> the regions with that hash:
+    /// (pointer, the order it was first closed in, its reason).
+    by_hash: HashMap<u64, Vec<(String, usize, FailClosed)>>,
+}
+
+/// FNV-1a over bytes, resumable: `prefix_hash(state, b)` continues the hash
+/// of the bytes before `b`.
+const PREFIX_HASH_SEED: u64 = 0xcbf2_9ce4_8422_2325;
+
+fn prefix_hash(mut state: u64, bytes: &[u8]) -> u64 {
+    for byte in bytes {
+        state ^= u64::from(*byte);
+        state = state.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    state
 }
 
 impl ClosedRegions {
     /// The regions a walk recorded, in the order it closed them.
     pub(crate) fn new(closed: Vec<(String, FailClosed)>) -> Self {
-        let mut by_pointer = HashMap::with_capacity(closed.len());
+        let mut by_hash: HashMap<u64, Vec<(String, usize, FailClosed)>> = HashMap::new();
         for (order, (pointer, reason)) in closed.into_iter().enumerate() {
-            by_pointer.entry(pointer).or_insert((order, reason));
+            let bucket = by_hash
+                .entry(prefix_hash(PREFIX_HASH_SEED, pointer.as_bytes()))
+                .or_default();
+            // The first close of a pointer is the one that counts.
+            if !bucket.iter().any(|(known, ..)| *known == pointer) {
+                bucket.push((pointer, order, reason));
+            }
         }
-        ClosedRegions { by_pointer }
+        ClosedRegions { by_hash }
     }
 
     /// The reason a change at `pointer` fails closed: of the regions at or
     /// above it (whole tokens: `/a` covers `/a/b`, not `/ab`), the one
     /// closed first.
     pub(crate) fn at(&self, pointer: &str) -> Option<FailClosed> {
-        if self.by_pointer.is_empty() {
+        if self.by_hash.is_empty() {
             return None;
         }
         // The root, then each prefix ending before a `/`, then the pointer.
-        let ancestors = std::iter::once(0)
+        let ends = std::iter::once(0)
             .chain(
                 pointer
                     .match_indices('/')
@@ -576,10 +610,22 @@ impl ClosedRegions {
                     .filter(|&i| i > 0),
             )
             .chain(std::iter::once(pointer.len()));
-        ancestors
-            .filter_map(|end| self.by_pointer.get(&pointer[..end]))
-            .min_by_key(|(order, _)| *order)
-            .map(|(_, reason)| *reason)
+        let (mut state, mut hashed) = (PREFIX_HASH_SEED, 0);
+        let mut first: Option<(usize, FailClosed)> = None;
+        for end in ends {
+            state = prefix_hash(state, &pointer.as_bytes()[hashed..end]);
+            hashed = end;
+            let Some(bucket) = self.by_hash.get(&state) else {
+                continue;
+            };
+            let prefix = &pointer[..end];
+            if let Some((_, order, reason)) = bucket.iter().find(|(known, ..)| known == prefix)
+                && first.is_none_or(|(best, _)| *order < best)
+            {
+                first = Some((*order, *reason));
+            }
+        }
+        first.map(|(_, reason)| reason)
     }
 }
 
@@ -785,6 +831,8 @@ impl PairResolver<'_> {
         members: &mut Vec<ValueChange>,
         closed: &mut Vec<(String, FailClosed)>,
     ) -> (Value, Value) {
+        #[cfg(test)]
+        self.walks.set(self.walks.get() + 1);
         let mut walk = LocalWalk {
             chain: Vec::new(),
             expansions: 0,
@@ -1437,6 +1485,67 @@ mod tests {
         let (left, right, edges) = localized(&pair, reference("Gone"), reference("Missing"));
         assert!(edges.is_empty());
         assert_eq!((left, right), (reference("Gone"), reference("Missing")));
+    }
+
+    #[test]
+    fn closed_regions_cover_whole_tokens_and_keep_the_first_closed() {
+        use super::ClosedRegions;
+        use crate::diff::FailClosed::{ExpansionCut, UnparsedDefinition};
+
+        let none = ClosedRegions::new(Vec::new());
+        assert_eq!(none.at("/a"), None);
+
+        let regions = ClosedRegions::new(vec![
+            ("/a/b".into(), UnparsedDefinition),
+            ("/a".into(), ExpansionCut),
+            // Closing a pointer again keeps its first reason.
+            ("/a/b".into(), ExpansionCut),
+            ("/x~1y".into(), ExpansionCut),
+        ]);
+        // At and beneath a region, by whole tokens only.
+        assert_eq!(regions.at("/a"), Some(ExpansionCut));
+        assert_eq!(regions.at("/ab"), None);
+        assert_eq!(regions.at("/a/c"), Some(ExpansionCut));
+        // `/a/b` and `/a` both cover it; `/a/b` was closed first.
+        assert_eq!(regions.at("/a/b"), Some(UnparsedDefinition));
+        assert_eq!(regions.at("/a/b/c/d"), Some(UnparsedDefinition));
+        assert_eq!(regions.at("/a/bc"), Some(ExpansionCut));
+        assert_eq!(regions.at("/x~1y/z"), Some(ExpansionCut));
+        assert_eq!(regions.at("/x"), None);
+        assert_eq!(regions.at(""), None);
+        // The root region covers everything.
+        let root = ClosedRegions::new(vec![
+            ("/q".into(), UnparsedDefinition),
+            (String::new(), ExpansionCut),
+        ]);
+        assert_eq!(root.at(""), Some(ExpansionCut));
+        assert_eq!(root.at("/q/r"), Some(UnparsedDefinition));
+        assert_eq!(root.at("/r"), Some(ExpansionCut));
+    }
+
+    /// A lookup is linear in the pointer (#196): hashing every ancestor
+    /// prefix afresh made it quadratic, which on a cut walk's thousands of
+    /// pointers 64 references deep dominated the diff. 200 lookups of a
+    /// 20,000-segment (130 KB) pointer hash 26 MB linearly; quadratically
+    /// each lookup hashes 1.3 GB, so the quadratic lookup trips the bound
+    /// within a few lookups.
+    #[test]
+    fn closed_regions_lookup_is_linear_in_the_pointer() {
+        use super::ClosedRegions;
+        use crate::diff::FailClosed::ExpansionCut;
+
+        let deep: String = "/properties/p".repeat(10_000);
+        let regions = ClosedRegions::new(vec![(format!("{deep}/x"), ExpansionCut)]);
+        let started = std::time::Instant::now();
+        for _ in 0..200 {
+            assert_eq!(regions.at(&deep), None);
+            assert!(
+                started.elapsed() < std::time::Duration::from_secs(20),
+                "{:?}",
+                started.elapsed()
+            );
+        }
+        assert_eq!(regions.at(&format!("{deep}/x/y")), Some(ExpansionCut));
     }
 
     #[test]

@@ -43,6 +43,10 @@ pub fn write_diff<W: Write>(
     if diff.changes.is_empty() {
         writeln!(writer, "**Summary:** No changes.")?;
     } else {
+        // Each change's severity, classified once: classifying walks the
+        // change's pointer, which a cut walk makes very long (#196).
+        let levels: Vec<Severity> = diff.changes.iter().map(severity).collect();
+        let count = |level: Severity| levels.iter().filter(|&&each| each == level).count();
         // "N moved" appears only when moves were matched, so exact-path
         // reports keep their established summary line.
         let moved = match diff.endpoints_moved() {
@@ -55,9 +59,9 @@ pub fn write_diff<W: Write>(
             pluralize(diff.endpoints_added(), "endpoint"),
             diff.endpoints_removed(),
             diff.endpoints_changed(),
-            diff.count(Severity::Breaking),
-            diff.count(Severity::NonBreaking),
-            diff.count(Severity::Review),
+            count(Severity::Breaking),
+            count(Severity::NonBreaking),
+            count(Severity::Review),
         )?;
 
         let sections = [
@@ -69,7 +73,9 @@ pub fn write_diff<W: Write>(
             let rows: Vec<&Change> = diff
                 .changes
                 .iter()
-                .filter(|change| severity(change) == level)
+                .zip(&levels)
+                .filter(|&(_, &each)| each == level)
+                .map(|(change, _)| change)
                 .collect();
             if rows.is_empty() {
                 continue;
