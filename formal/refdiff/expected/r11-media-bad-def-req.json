@@ -1,0 +1,6 @@
+[
+{"change": {"after": 2, "op": "added"}, "dir": "request", "neg": false, "owner": {"new": "Bad", "old": "Bad"}, "ptr": "/minLength", "severity": "breaking", "use": "POST /a body media:application/json"},
+{"change": {"after": 2, "op": "added"}, "dir": "request", "neg": false, "owner": {"new": "Bad", "old": "Bad"}, "ptr": "/minLength", "severity": "breaking", "use": "POST /a body media:application/xml"},
+{"change": {"before": {"title": 1}, "op": "removed"}, "dir": "request", "neg": false, "owner": {"new": "Bad", "old": "Bad"}, "ptr": "/x", "severity": "breaking", "use": "POST /a body media:application/json"},
+{"change": {"before": {"title": 1}, "op": "removed"}, "dir": "request", "neg": false, "owner": {"new": "Bad", "old": "Bad"}, "ptr": "/x", "severity": "breaking", "use": "POST /a body media:application/xml"}
+]

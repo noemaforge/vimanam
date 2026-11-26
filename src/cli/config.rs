@@ -236,8 +236,9 @@ pub enum Commands {
     /// code. Schemas compare `$ref` targets as edges: each pair of referenced
     /// components is compared once, and a change inside a shared component is
     /// reported once per usage direction (request or response), listing every
-    /// operation that reaches it. Only the first media type of a body or
-    /// response is compared.
+    /// operation that reaches it. A body or response with several media
+    /// types is compared media type by media type, matched by exact key; a
+    /// removed media type is breaking.
     ///
     /// Example: `vimanam diff v1/openapi.json v2/openapi.json --fail-on-breaking`
     Diff(Box<DiffArgs>),

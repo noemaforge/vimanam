@@ -1,0 +1,4 @@
+[
+{"change": {"after": "integer", "before": "string", "op": "changed"}, "dir": "response", "neg": false, "owner": {"new": "W", "old": "W"}, "ptr": "/properties/id/type", "severity": "breaking", "use": "GET /a response:200 media:application/json"},
+{"change": {"after": "integer", "before": "string", "op": "changed"}, "dir": "response", "neg": false, "owner": {"new": "W", "old": "W"}, "ptr": "/properties/id/type", "severity": "breaking", "use": "GET /a response:200 media:application/xml"}
+]

@@ -96,6 +96,57 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `diff` compares every media type of a request body or response (#154).
+  Before, only the first one was compared, so a removed second media type,
+  or a breaking change in its schema, passed `--fail-on-breaking`. Media
+  types now match by exact `content` key (no case folding, parameter
+  stripping or wildcard matching, so `application/json` to
+  `application/json; charset=utf-8` is a removal plus an addition): each
+  media type both sides declare is compared as its own schema use, and one
+  side lacking a media type is a new change kind. Removing a request media
+  type (clients sending it fail) or a response media type (clients
+  negotiating it with `Accept` fail) is Breaking; adding one is
+  Non-breaking.
+  - **Unchanged output.** When each side has exactly one media type and it
+    is the same key, a side has none (a response gains or loses its whole
+    body), or a side is Swagger 2 (no media type per body or response;
+    `consumes`/`produces` are still not compared), the body or response is
+    compared by its first schema as before. On every consecutive Stripe
+    release pair of the last 16 commits, the Endor OpenAPI 3 and Swagger 2
+    specs (including 2 → 3) and every fixture pair, Markdown, v1 and v2
+    output is byte-identical.
+  - **Markdown.** New rows `Request media type removed`/`added` and
+    `Response media type removed`/`added`; a schema row of a body or
+    response compared per media type names it (`` 200 `application/xml`
+    /properties/id/type ... ``), and `## Affected operations` lists each
+    media-type use (`` response 200 `text/event-stream` ``).
+  - **v1 JSON (`vc1_` IDs).** New kinds `request_media_type_added`,
+    `request_media_type_removed`, `response_media_type_added` and
+    `response_media_type_removed` (details `media_type`, plus `status`).
+    A schema record of a body or response compared per media type has
+    `media_type` in its details, so its ID differs from a single-media
+    record's, and a component change reached through two media types is two
+    records. On OpenAI `a01e367..373f26a`, two component records of
+    `POST /completions` 200 become four (`application/json` and
+    `text/event-stream`); nothing else changes.
+  - **v2 JSON (`vc2_` IDs).** Surfaces are unchanged. A request media type
+    is `argument_removed`/`argument_added` on its body argument, a response
+    media type `result_removed`/`result_added` on the status's result, with
+    `media_type` in details (native kinds as in v1); a schema fact of one
+    media type adds `media_type`. Component facts keep their IDs (two media
+    types of one response are one use). Inline `deprecated` changes in a
+    later media type are now reported (they were omitted).
+  - **Library API break (#154).** `diff::ChangeKind::RequestSchemaChanged`
+    and `ResponseSchemaChanged` (released) and `diff::UseLocation::RequestBody`
+    and `Response` (new in this release) gained a `media_type:
+    Option<String>` field, and `models::Parameter` (released) a
+    `media_type: Option<String>` field (`#[serde(skip)]`, set on the
+    parser's synthetic OpenAPI 3 body parameters), which breaks struct
+    literals and field patterns without `..` of each. `ChangeKind` has four
+    new variants (`RequestMediaTypeAdded`, `RequestMediaTypeRemoved`,
+    `ResponseMediaTypeAdded`, `ResponseMediaTypeRemoved`; the enum is
+    `#[non_exhaustive]`), as does `diff::json::JsonChangeKind`. The CLI is
+    unaffected.
 - `diff` no longer stops expanding a recursive component by its name when
   only one side writes it as a `$ref` (#187). Expansion now stops where the
   compared pair of old and new values recurs, as the Lean reference model

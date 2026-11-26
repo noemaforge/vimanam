@@ -26,8 +26,8 @@
 
 [[model]]
 lean = "formal/VimanamProofs/Severity.lean"
-read_against = "1d7674c1a104"
-read_digest = "v1:sha256:15fd89249b180063c2b5d0738a0121c8f9e92cc1e78cb257ed2789b6beca3134"
+read_against = "a8b96d828b4a"
+read_digest = "v1:sha256:daeb6dd4c6e32c412d6196ce15a34207c7a804cd78895bdaa654b77e6f1597f0"
 rust = [
   "src/diff/mod.rs#Severity",
   "src/diff/mod.rs#ChangeKind",
@@ -69,8 +69,8 @@ rust = [
 # drift, re-run the harness.
 [[model]]
 lean = "formal/VimanamProofs/RefDiff.lean"
-read_against = "f6145f0b24bf"
-read_digest = "v1:sha256:f307cb8d10f91baf0490137c6dfb98e6770b7bf1751632bf40924e5705207276"
+read_against = "a8b96d828b4a"
+read_digest = "v1:sha256:3293431b92e84379800a91054008f18de0e7f3cdb9985de8ffd21a8c87460976"
 rust = [
   "src/resolve.rs#reference_name",
   "src/resolve.rs#DocResolver",
@@ -101,6 +101,15 @@ rust = [
   "src/diff/mod.rs#schema_changes",
   "src/diff/mod.rs#diff_request_body",
   "src/diff/mod.rs#diff_responses",
+  "src/diff/mod.rs#body_entries",
+  "src/diff/mod.rs#response_entries",
+  "src/diff/mod.rs#per_media",
+  "src/diff/mod.rs#MediaStep",
+  "src/diff/mod.rs#media_steps",
+  "src/diff/mod.rs#compare_body",
+  "src/diff/mod.rs#compare_response",
+  "src/diff/json.rs#with_media_type",
+  "src/diff/json.rs#json_kind_and_details",
   "src/models.rs#Schema",
   "src/models.rs#deserialize_optional_type",
   "src/models.rs#TYPE_UNION_SEPARATOR",

@@ -3,7 +3,8 @@
 # model (formal/VimanamProofs/RefDiff.lean) gives different output on the
 # fixed cases in formal/refdiff/cases/.
 #
-# The expected files (the grouped view) pin what the model says, so a change to the semantics
+# The expected files (the grouped view, and since #154 the one-sided media
+# types) pin what the model says, so a change to the semantics
 # shows up in review as a diff of concrete outputs. They are not compared
 # with the Rust here; scripts/formal/refdiff-harness.py does that.
 #
@@ -37,7 +38,9 @@ python3 -I - "$tmp" <<'PY'
 import json, pathlib, sys
 for f in pathlib.Path(sys.argv[1]).glob("*.json"):
     out = json.loads(f.read_text())
-    recs = sorted(json.dumps(r, sort_keys=True) for r in out["grouped"])
+    # #154: the media types one side lacks are pinned beside the grouped
+    # records (a case without any keeps its file unchanged).
+    recs = sorted(json.dumps(r, sort_keys=True) for r in out["grouped"] + out.get("media", []))
     f.write_text("[\n" + ",\n".join(recs) + ("\n" if recs else "") + "]\n")
 PY
 

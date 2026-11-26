@@ -171,8 +171,21 @@ fn write_affected_operations<W: Write>(writer: &mut W, diff: &SpecDiff) -> Resul
 fn use_label(location: &UseLocation) -> String {
     match location {
         UseLocation::Parameter { name, location } => format!("parameter `{name}` ({location})"),
-        UseLocation::RequestBody { .. } => "request body".to_string(),
-        UseLocation::Response { status } => format!("response {status}"),
+        UseLocation::RequestBody {
+            media_type: None, ..
+        } => "request body".to_string(),
+        UseLocation::RequestBody {
+            media_type: Some(media_type),
+            ..
+        } => format!("request body `{media_type}`"),
+        UseLocation::Response {
+            status,
+            media_type: None,
+        } => format!("response {status}"),
+        UseLocation::Response {
+            status,
+            media_type: Some(media_type),
+        } => format!("response {status} `{media_type}`"),
     }
 }
 
@@ -224,6 +237,10 @@ fn change_label(kind: &ChangeKind) -> &'static str {
         ChangeKind::DeprecatedChanged { now: false } => "Deprecation removed",
         ChangeKind::RequestSchemaChanged { .. } => "Request schema changed",
         ChangeKind::ResponseSchemaChanged { .. } => "Response schema changed",
+        ChangeKind::RequestMediaTypeAdded { .. } => "Request media type added",
+        ChangeKind::RequestMediaTypeRemoved { .. } => "Request media type removed",
+        ChangeKind::ResponseMediaTypeAdded { .. } => "Response media type added",
+        ChangeKind::ResponseMediaTypeRemoved { .. } => "Response media type removed",
         ChangeKind::ComponentSchemaChanged { .. } => "Component schema changed",
     }
 }
@@ -291,9 +308,33 @@ fn plain_detail(kind: &ChangeKind) -> String {
             format!("{} → {}", operation_id(old), operation_id(new))
         }
         ChangeKind::DeprecatedChanged { .. } => "-".to_string(),
-        ChangeKind::RequestSchemaChanged { change, .. } => describe_value_change(change),
-        ChangeKind::ResponseSchemaChanged { status, change, .. } => {
-            format!("{status} {}", describe_value_change(change))
+        ChangeKind::RequestSchemaChanged {
+            media_type: None,
+            change,
+            ..
+        } => describe_value_change(change),
+        ChangeKind::RequestSchemaChanged {
+            media_type: Some(media_type),
+            change,
+            ..
+        } => format!("`{media_type}` {}", describe_value_change(change)),
+        ChangeKind::ResponseSchemaChanged {
+            status,
+            media_type: None,
+            change,
+            ..
+        } => format!("{status} {}", describe_value_change(change)),
+        ChangeKind::ResponseSchemaChanged {
+            status,
+            media_type: Some(media_type),
+            change,
+            ..
+        } => format!("{status} `{media_type}` {}", describe_value_change(change)),
+        ChangeKind::RequestMediaTypeAdded { media_type }
+        | ChangeKind::RequestMediaTypeRemoved { media_type } => format!("`{media_type}`"),
+        ChangeKind::ResponseMediaTypeAdded { status, media_type }
+        | ChangeKind::ResponseMediaTypeRemoved { status, media_type } => {
+            format!("{status} `{media_type}`")
         }
         ChangeKind::ComponentSchemaChanged {
             direction,

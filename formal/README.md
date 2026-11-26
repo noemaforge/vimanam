@@ -108,6 +108,11 @@ to pointers through `locate` and `under_not`; nothing uses `native_decide`.
 | `parameter_required_like_schema_required` | A parameter's `required` flag is rated like a `required` schema member. |
 | `removal_breaking_addition_not` | Table pin: removing or moving an endpoint, removing a parameter or response code, or moving a parameter is Breaking; adding an endpoint, response code or optional parameter is Non-breaking. |
 | `operation_id` | Table pin: only gaining an `operationId` is Non-breaking. |
+| `media_type_removal_breaking_addition_not` | Removing a request or response media type (#154) is Breaking, adding one is Non-breaking: never Review, so the gate always decides it. |
+| `request_media_type_like_enum_member` | A request media type is rated like a request `enum` member: the server accepts a set, and narrowing it breaks senders. |
+| `response_media_type_like_property` | A response media type is rated like a response property: a client negotiates it with `Accept` and relies on it. |
+| `response_media_type_not_like_enum_member` | The deliberate asymmetry: unlike a response `enum` member (#169), a removed response media type is Breaking. |
+| `media_type_swap` | Swapping old and new turns each media-type verdict into its opposite, in both directions. |
 | `component_follows_direction` | `ComponentSchemaChanged` (#181) with a plain reach uses the table of its direction, so every theorem above holds for component changes too. |
 | `component_negated_review` | `ComponentSchemaChanged` reached through `not` (`negated`) is Review. |
 | `failClosed_never_review`, `failClosed_plain`, `failClosed_keeps_classified` | A change that fails closed (`diff::FailClosed`: inside a `definitions` entry that does not deserialise, #188, or at or beneath a one-sided `$ref` refused past the expansion budget or chain cap, #187) is never Review (`failClosed` makes Review Breaking); without the flag nothing changes, and a Breaking or Non-breaking verdict always stands. |
@@ -178,6 +183,14 @@ still rated Breaking (#167).
 * Response status codes: removing one is rated Breaking by convention
   (clients rely on documented statuses), which the model records but does not
   justify by variance.
+* Media types (#154): the add/remove rows are justified by content
+  negotiation, not by variance, and are table pins. Adding a response media
+  type is Non-breaking on the assumption that a server keeps answering an
+  `Accept` it answered before with the same type; a client that sends
+  `Accept: */*` (or none) to a server that then prefers the new type is not
+  modelled. Which media types match (exact keys, the single-media and
+  Swagger 2 fallbacks) is RefDiff's `perMedia`, checked against the Rust by
+  the harness rather than proved.
 * Shared components (#181): how `diff::components` and
   `resolve::PairResolver::localize` find components, their uses, directions
   and `negated` reaches. The model takes a `ComponentSchemaChanged` as given.
@@ -329,12 +342,22 @@ the same specification in prose.
     Its schema is `schema` when both sides have one, else, per side,
     `schema` or the inline `type`/`format`/`items`/`enum` keys (in either
     OpenAPI version), else nothing;
-  * the request body, when both sides have one: the first `in: body`
-    parameter, or else the first `requestBody` media type. Its schema may be
-    absent (a media type without `schema`), which compares as `null`: a
-    schema added there is one Review change at the use;
-  * each response status present on both sides: the response's `schema`,
-    else the first media type that has one.
+  * the request body, when both sides have one, and each response status
+    present on both sides, **per media type** (#154, `perMedia`): a body's
+    media types are its declared `in: body` parameters (no media type) then
+    one per `requestBody.content` key; a response's are its `schema` (no
+    media type), else one per `content` key; each in spec order, the first
+    per key winning. When both sides name their media types, neither side
+    is empty, and they are not the same single key, every key both sides
+    declare (matched exactly: no case folding, no parameter stripping, no
+    wildcards) is a use of its own (`METHOD path body media:TYPE`,
+    `... response:STATUS media:TYPE`), and every key one side lacks is a
+    `MediaRec` rated by `Severity.lean`'s media-type rows (removed:
+    Breaking; added: Non-breaking). Otherwise the body or response is one
+    use as before #154: the first body, or the response's `schema`, else
+    its first media type that has one. A schema may be absent (a media type
+    without `schema`), which compares as `null`: a schema added there is
+    one Review change at the use.
 
   Parameters and request bodies are the **request** direction, responses
   the **response** direction.
@@ -633,9 +656,22 @@ Known limits of inlining (each matches the resolver before #182):
   reordering is no change on either side (`r6-defs-*`).
 
 A `required`/`enum` member is addressed by its compact JSON text, so an
-inlined object member is written in each side's own key order (`Lean.Json`
-sorts keys on input, `serde_json` keeps insertion order); the harness
+inlined object member is written in each side's own key order; the harness
 re-renders such tokens with sorted keys before comparing.
+
+Media types (#154): two media types of one response are two uses in the
+same (response) direction, so a component change reached through both is
+one grouped record per use, as for any two uses; the expansion budget,
+the chain cap and fail-closed regions are per use (each media type is its
+own walk: `r11-media-budget`, `r11-media-bad-def-*`). The harness compares
+the model's `media` records with the Rust's `*_media_type_added`/`_removed`
+v1 records (owner `media` in the report), and the generator's `rmt` stream
+(30% of OpenAPI 3 seeds) gives bodies and responses extra media types,
+drops, adds, re-keys (`application/json; charset=utf-8`), reorders and
+mutates them. `refdiff/cases/r11-*` pin the semantics, including the
+fallbacks (`r11-media-empty-resp`, `r11-media-oas2-to-3-req`, the latter
+also pinning spec order: a sorted reading would pick another response
+schema).
 
 Before #187 the harness also named a `known-rust-bug-#187` class: records
 beneath a one-sided expansion the Rust cut by component name (88 records in
@@ -651,12 +687,11 @@ fails the gate where the cut's own records were not Breaking), and
 `$ref`s to `components/parameters`, `requestBodies` and `responses`,
 external references, non-object component targets beyond "compare as
 written", endpoint moves (v1 output never pairs them), and every structural
-change (endpoints, parameters, status codes). Key order: `lake exe refdiff`
-reads documents through `Lean.Json`, which sorts object keys, so "the first
-media type" (of a request body, or of a response without `schema`) is the
-first in sorted order, where the Rust takes the first in the document; a
-pair whose media types differ in that order can disagree for that reason
-alone (the generator writes one media type). Numbers: `Lean.Json` parses
+change (endpoints, parameters, status codes) except media types (#154).
+Key order: `lake exe refdiff` reads documents in spec order (its own
+reader, `Lean.Json`'s grammar without sorting keys), as `serde_json` with
+`preserve_order` does. Swagger 2 `consumes`/`produces` are not modelled
+(nor compared by the Rust). Numbers: `Lean.Json` parses
 a number and renders it again, so the model compares numbers by that
 rendering, which is not `serde_json`'s identity: the Rust tells `1` from
 `1.0` (an `enum` `[1, 2]` → `[1.0, 2]` is a removal and an addition there,

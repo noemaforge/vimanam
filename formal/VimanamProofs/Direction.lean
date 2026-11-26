@@ -415,6 +415,60 @@ theorem operation_id (o n : Bool) :
     severity (.operationIdChanged o n) = .nonBreaking ↔ (o = false ∧ n = true) := by
   cases o <;> cases n <;> simp [severity]
 
+/-! ## Media types (#154)
+
+A request body or response with several media types (`content` keys) is
+compared per media type, matched by exact key. A media type present on one
+side only is a structural row of its own. Request media types are what the
+server accepts: like an `enum` member of a request schema, dropping one
+breaks the clients that send it and adding one breaks nobody. Response media
+types are what a client can negotiate with `Accept`: the client picks one,
+so dropping it breaks the clients that ask for it (it behaves like a
+response property the client reads, not like a response `enum` member the
+server merely stops returning), and adding one leaves every negotiated
+exchange as it was. -/
+
+/-- A media type added (`true`) or removed (`false`) in a direction. -/
+def mediaChange : Direction → Bool → Change
+  | .request, true => .requestMediaTypeAdded
+  | .request, false => .requestMediaTypeRemoved
+  | .response, true => .responseMediaTypeAdded
+  | .response, false => .responseMediaTypeRemoved
+
+/-- Removing a media type is Breaking and adding one is Non-breaking, in
+both directions: never Review, so `--fail-on-breaking` always decides a
+media-type change. -/
+theorem media_type_removal_breaking_addition_not (d : Direction) :
+    severity (mediaChange d false) = .breaking ∧ severity (mediaChange d true) = .nonBreaking := by
+  cases d <;> simp [mediaChange, severity]
+
+/-- A request media type is rated like a member of a request `enum`: the
+server accepts a set, and narrowing it is Breaking. -/
+theorem request_media_type_like_enum_member (v : Val) :
+    severity .requestMediaTypeRemoved = requestRule .enumElement (.removed v) ∧
+    severity .requestMediaTypeAdded = requestRule .enumElement (.added v) := by
+  simp [severity, requestRule]
+
+/-- A response media type is rated like a response property: the client
+chooses it and relies on it being there, so removing it is Breaking. -/
+theorem response_media_type_like_property (v : Val) :
+    severity .responseMediaTypeRemoved = responseRule .property (.removed v) ∧
+    severity .responseMediaTypeAdded = responseRule .property (.added v) := by
+  simp [severity, responseRule]
+
+/-- The deliberate asymmetry: a response media type is not a response `enum`
+member, whose removal narrows what the server returns and is Non-breaking
+(#169). -/
+theorem response_media_type_not_like_enum_member (v : Val) :
+    severity .responseMediaTypeRemoved ≠ responseRule .enumElement (.removed v) := by
+  simp [severity, responseRule]
+
+/-- Swapping the two specs turns each media-type verdict into its opposite
+(Breaking ↔ Non-breaking), in both directions. -/
+theorem media_type_swap (d : Direction) (added : Bool) :
+    severity (mediaChange d added) = .breaking ↔ severity (mediaChange d !added) = .nonBreaking := by
+  cases d <;> cases added <;> simp [mediaChange, severity]
+
 /-! ## Shared components (#181)
 
 A change inside a shared `$ref` component is reported once per (component

@@ -18,6 +18,17 @@ Changes carry `subject` (an entity ID), a neutral `kind`, `severity`, compatibil
 
 Change IDs are `vc2_` plus SHA-256 of canonical `{v:2, subject, kind, details}`. Severity, impact dimensions, `uses`, generator version, raw-file hashes and native display attribution are excluded. Details are factual, not prose. Composite pagination evidence is part of the fact. Identity construction is versioned independently from a package release. Exact v1 output and IDs remain available through the original serializer.
 
+### OpenAPI media types
+
+A request body or response with several media types is compared media type by media type, matched by exact `content` key (#154; see the `diff` module docs, "Media types"). The surface is unchanged: the parser already makes one body argument per request media type (`requestBody` when there is one, `requestBody (TYPE)` when there are several), and a status's result holds its first schema. Facts map as follows:
+
+- A request media type one side lacks is `argument_removed` (subject the old body argument for it, breaking) or `argument_added` (the new one, non-breaking), native kind `request_media_type_removed`/`_added`, details `media_type`.
+- A response media type one side lacks is `result_removed` (breaking) or `result_added` (non-breaking) on the status's result, native kind `response_media_type_removed`/`_added`, details `status` and `media_type`.
+- A schema change of one media type keeps its kind and subject rules (the body argument of that media type; the status's result) and adds `media_type` to details. Component facts are unchanged: their `uses` name the body argument or result, so two media types of one response are one use.
+- Deprecation facts of a body or response compared per media type name the media type in details; one already reported at the same place without a media type (from the surface's first schema) is not repeated.
+
+When each side has exactly one media type and it is the same key, a side has none, or a side names none (Swagger 2), nothing changes: no `media_type` appears, so every ID of a single-media-type spec is the same as before #154. A body or response that goes from one media type to two is compared per media type from then on, so its schema facts gain `media_type` and new IDs. Pagination inference still reads each 2xx response's first schema. Swagger 2 `consumes`/`produces` are not compared.
+
 ## Mapping designed for three adapters
 
 | Surface | OpenAPI (implemented) | GraphQL (implemented) | Protobuf (implemented) |
@@ -139,7 +150,7 @@ let changes_only = json.without_surfaces(); // the --omit-surfaces shape
 
 ## Limits
 
-OpenAPI parsing, the cap on expanding a chain of one-sided references and operation comparison limits remain as documented for v1: first request/response media type, exact HTTP path matching (plus the unique move pairing above), composition compared by index, supported OpenAPI schema grammar rather than all JSON Schema. Independent type comparison retains local `$ref` identity and includes default/deprecation facts; descriptions/examples/titles/extensions are annotations. No automatic rename matching, GraphQL/protobuf parsing or focused multi-format Markdown/Skill rendering was part of #124; the protobuf and GraphQL adapters below add them. Large v2 surfaces add output volume by design; callers needing only changes can select that field after parsing.
+OpenAPI parsing, the cap on expanding a chain of one-sided references and operation comparison limits remain as documented for v1: exact media-type keys (above), exact HTTP path matching (plus the unique move pairing above), composition compared by index, supported OpenAPI schema grammar rather than all JSON Schema. Independent type comparison retains local `$ref` identity and includes default/deprecation facts; descriptions/examples/titles/extensions are annotations. No automatic rename matching, GraphQL/protobuf parsing or focused multi-format Markdown/Skill rendering was part of #124; the protobuf and GraphQL adapters below add them. Large v2 surfaces add output volume by design; callers needing only changes can select that field after parsing.
 
 
 ## Protobuf adapter

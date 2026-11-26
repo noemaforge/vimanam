@@ -26,8 +26,8 @@ file only.
 * A `ComponentSchemaChanged` (#181) keeps its direction, `negated` flag and
   change; which component and which uses it reports are dropped. Its
   `unparsed` flag (#188) is `failClosed` applied to that verdict.
-* `ParameterAdded`, `EndpointRemoved` and the other structural changes keep
-  only the fields `severity` reads (names, locations and statuses are
+* `ParameterAdded`, `EndpointRemoved`, the media-type rows (#154) and the
+  other structural changes keep only the fields `severity` reads (names, locations and statuses are
   dropped; an `operationId` is reduced to present or absent).
 
 ## Boundary
@@ -276,6 +276,10 @@ inductive Change
   | requestSchemaChanged (p : Pointer) (k : Kind)
   | responseSchemaChanged (p : Pointer) (k : Kind)
   | componentSchemaChanged (direction : Direction) (negated : Bool) (p : Pointer) (k : Kind)
+  | requestMediaTypeAdded
+  | requestMediaTypeRemoved
+  | responseMediaTypeAdded
+  | responseMediaTypeRemoved
   deriving DecidableEq, Repr
 
 /-- `diff::severity`. -/
@@ -296,6 +300,10 @@ def severity : Change → Severity
   | .componentSchemaChanged _ true _ _ => .review
   | .componentSchemaChanged .request false p k => requestSeverity p k
   | .componentSchemaChanged .response false p k => responseSeverity p k
+  | .requestMediaTypeAdded => .nonBreaking
+  | .requestMediaTypeRemoved => .breaking
+  | .responseMediaTypeAdded => .nonBreaking
+  | .responseMediaTypeRemoved => .breaking
 
 /-- A change the comparison could not see properly fails closed: a change
 the table cannot classify (Review) is Breaking; Breaking and Non-breaking

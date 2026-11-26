@@ -1,0 +1,4 @@
+[
+{"change": {"after": "integer", "before": "string", "op": "changed"}, "dir": "request", "neg": false, "owner": null, "ptr": "/properties/id/type", "severity": "breaking", "use": "POST /a body media:application/json"},
+{"dir": "request", "media_type": "*/*", "op": "added", "severity": "non_breaking", "use": "POST /a body"}
+]

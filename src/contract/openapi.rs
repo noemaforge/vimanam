@@ -665,18 +665,64 @@ fn compare_aligned(
                     ChangeKind::ResultRemoved
                 }
             }
-            K::RequestSchemaChanged { change, .. } => {
+            K::RequestSchemaChanged {
+                change, media_type, ..
+            } => {
                 if is_schema_deprecation_pointer(&change.pointer) {
                     continue;
                 }
-                // Legacy comparison uses only the first `in: body` parameter.
+                // The body argument of the media type compared (#154), else
+                // the first `in: body` parameter.
                 parameter_in = Some("body".into());
                 pointer = change.pointer.clone();
                 resolved = true;
-                if let Some(name) = first_body_name(e) {
+                let name = match media_type {
+                    Some(media_type) => media_body_name(e, media_type),
+                    None => first_body_name(e),
+                };
+                if let Some(name) = name {
                     subject = body_argument_id(e, name);
                 }
                 schema_kind(change, true)
+            }
+            // A request media type is a body argument of its own in the
+            // surface (`requestBody (TYPE)`): the old side's for a removal,
+            // the new side's for an addition.
+            K::RequestMediaTypeRemoved { media_type } | K::RequestMediaTypeAdded { media_type } => {
+                parameter_in = Some("body".into());
+                let removed = matches!(change.kind, K::RequestMediaTypeRemoved { .. });
+                let side = if removed {
+                    e
+                } else {
+                    new_by_key
+                        .get(&(e.method.as_str(), e.path.as_str()))
+                        .copied()
+                        .unwrap_or(e)
+                };
+                if let Some(name) = media_body_name(side, media_type) {
+                    subject = body_argument_id(side, name);
+                }
+                if removed {
+                    ChangeKind::ArgumentRemoved
+                } else {
+                    ChangeKind::ArgumentAdded
+                }
+            }
+            // A response media type is a variant of the status's result,
+            // named in details (#154).
+            K::ResponseMediaTypeRemoved { status: s, .. }
+            | K::ResponseMediaTypeAdded { status: s, .. } => {
+                status = Some(s.clone());
+                subject = entity_id(
+                    Format::Openapi,
+                    EntityKind::Result,
+                    &format!("{root}/results/{}", escape(s)),
+                );
+                if matches!(change.kind, K::ResponseMediaTypeRemoved { .. }) {
+                    ChangeKind::ResultRemoved
+                } else {
+                    ChangeKind::ResultAdded
+                }
             }
             K::ComponentSchemaChanged { .. } => unreachable!("handled above"),
             K::ResponseSchemaChanged {
@@ -775,12 +821,22 @@ fn compare_aligned(
                 })
         })
         .collect();
+    // The body arguments the endpoint differ compares: the first, and since
+    // #154 every OpenAPI 3 media type (a body with one media type has one).
     let first_body_ids: std::collections::HashSet<String> = old
         .endpoints
         .iter()
         .chain(&new.endpoints)
-        .filter_map(|endpoint| {
-            first_body_name(endpoint).map(|name| body_argument_id(endpoint, name))
+        .flat_map(|endpoint| {
+            let first = first_body_name(endpoint);
+            endpoint
+                .parameters
+                .iter()
+                .filter(move |p| {
+                    p.parameter_in == "body"
+                        && (p.media_type.is_some() || Some(p.name.as_str()) == first)
+                })
+                .map(move |p| body_argument_id(endpoint, &p.name))
         })
         .collect();
     let supplemental = compare(
@@ -855,6 +911,35 @@ fn compare_aligned(
             {
                 continue;
             }
+            // Bodies compared media type by media type (#154): every media
+            // type both sides declare, inline or not, since the surface
+            // compares a body argument only when its name (which carries the
+            // media type once there are several) is the same on both sides.
+            if parameter.parameter_in == "body"
+                && let Some(pairs) = diff::media_body_pairs(before, after)
+            {
+                for (media_type, left_param, right_param) in pairs {
+                    let subject = body_argument_id(before, &left_param.name);
+                    use_deprecations(
+                        &mut changes,
+                        &mut use_edges,
+                        resolver,
+                        before,
+                        &subject,
+                        (
+                            left_param.schema.as_ref().map(schema_json),
+                            right_param.schema.as_ref().map(schema_json),
+                        ),
+                        (
+                            extensions_value(&left_param.extensions),
+                            extensions_value(&right_param.extensions),
+                        ),
+                        (Some("body".into()), None),
+                        Some(media_type),
+                    );
+                }
+                continue;
+            }
             let Some(next) = after
                 .parameters
                 .iter()
@@ -905,12 +990,40 @@ fn compare_aligned(
                 &right,
                 Some(parameter.parameter_in.clone()),
                 None,
+                None,
             );
         }
         for (status, response) in &before.responses {
             let Some(next) = after.responses.get(status) else {
                 continue;
             };
+            // Responses compared media type by media type (#154): the
+            // surface's result holds only the first schema, so every media
+            // type both sides declare is compared here, inline or not.
+            if let Some(pairs) = diff::media_response_pairs(response, next) {
+                let subject = entity_id(
+                    Format::Openapi,
+                    EntityKind::Result,
+                    &format!("{root}/results/{}", escape(status)),
+                );
+                for (media_type, left, right) in pairs {
+                    let (Some(left), Some(right)) = (left, right) else {
+                        continue;
+                    };
+                    use_deprecations(
+                        &mut changes,
+                        &mut use_edges,
+                        resolver,
+                        before,
+                        &subject,
+                        (Some(schema_json(left)), Some(schema_json(right))),
+                        (Value::Null, Value::Null),
+                        (None, Some(status.clone())),
+                        Some(media_type),
+                    );
+                }
+                continue;
+            }
             let (Some(left), Some(right)) = (
                 crate::markdown::response_schema(response),
                 crate::markdown::response_schema(next),
@@ -939,6 +1052,7 @@ fn compare_aligned(
                 &right,
                 None,
                 Some(status.clone()),
+                None,
             );
         }
     }
@@ -1029,12 +1143,12 @@ fn component_fact(
                 EntityKind::Argument,
                 &format!("{root}/arguments/{}/{}", escape(location), escape(name)),
             ),
-            diff::UseLocation::RequestBody { name } => entity_id(
+            diff::UseLocation::RequestBody { name, .. } => entity_id(
                 Format::Openapi,
                 EntityKind::Argument,
                 &format!("{root}/arguments/body/{}", escape(name)),
             ),
-            diff::UseLocation::Response { status } => entity_id(
+            diff::UseLocation::Response { status, .. } => entity_id(
                 Format::Openapi,
                 EntityKind::Result,
                 &format!("{root}/results/{}", escape(status)),
@@ -1254,6 +1368,52 @@ fn has_operation_schema_root(subject: &str, old: &Contract, new: &Contract) -> b
     false
 }
 
+/// The deprecation facts of one media type of a body or response compared
+/// media type by media type (#154): its two schemas (`None` falls back to
+/// `fallback`), localized like any use, its edges collected for
+/// `component_deprecation_facts`, and `media_type` in each fact's details.
+#[allow(clippy::too_many_arguments)]
+fn use_deprecations(
+    changes: &mut Vec<Change>,
+    use_edges: &mut Vec<(RefEdge, String)>,
+    resolver: &PairResolver,
+    endpoint: &Endpoint,
+    subject: &str,
+    (left, right): (Option<Value>, Option<Value>),
+    fallback: (Value, Value),
+    (parameter_in, status): (Option<String>, Option<String>),
+    media_type: Option<&str>,
+) {
+    if let (Some(left), Some(right)) = (&left, &right)
+        && resolver.values_equal(left, right)
+    {
+        return;
+    }
+    let mut edges = Vec::new();
+    let (left, right) = resolver.localize(
+        &left.unwrap_or(fallback.0),
+        &right.unwrap_or(fallback.1),
+        &mut edges,
+    );
+    use_edges.extend(edges.into_iter().map(|edge| (edge, subject.to_string())));
+    append_deprecation_facts(
+        changes,
+        subject,
+        endpoint,
+        &left,
+        &right,
+        parameter_in,
+        status,
+        media_type,
+    );
+}
+
+/// The `deprecated` changes between two localized use schemas as facts on
+/// `subject`, skipping one already reported at the same place. With a
+/// media type (#154) it is in the details, and a fact is already reported
+/// when one on the same subject at the same place names no media type or
+/// the same one.
+#[allow(clippy::too_many_arguments)]
 fn append_deprecation_facts(
     changes: &mut Vec<Change>,
     subject: &str,
@@ -1262,6 +1422,7 @@ fn append_deprecation_facts(
     after: &Value,
     parameter_in: Option<String>,
     status: Option<String>,
+    media_type: Option<&str>,
 ) {
     let before = semantic_attributes(before);
     let after = semantic_attributes(after);
@@ -1290,7 +1451,10 @@ fn append_deprecation_facts(
             status.clone(),
             true,
         );
-        let details = json!({"pointer":value.pointer,"before":before,"after":after});
+        let mut details = json!({"pointer":value.pointer,"before":before,"after":after});
+        if let Some(media_type) = media_type {
+            details["media_type"] = json!(media_type);
+        }
         let mut change = Change {
             id: String::new(),
             subject: subject.into(),
@@ -1308,6 +1472,12 @@ fn append_deprecation_facts(
                 && existing.details.get("pointer") == change.details.get("pointer")
                 && matches!(&existing.native, NativeLocation::Openapi { method:Some(m), path:Some(p), parameter_in:pi, status:s, .. }
                     if m == &endpoint.method && p == &endpoint.path && pi == &parameter_in && s == &status)
+                && (media_type.is_none()
+                    || (existing.subject == change.subject
+                        && existing
+                            .details
+                            .get("media_type")
+                            .is_none_or(|seen| seen == &json!(media_type))))
         }) {
             changes.push(change);
         }
@@ -1319,6 +1489,17 @@ fn first_body_name(endpoint: &Endpoint) -> Option<&str> {
         .parameters
         .iter()
         .find(|parameter| parameter.parameter_in == "body")
+        .map(|parameter| parameter.name.as_str())
+}
+
+/// The name of the body parameter the parser made for `media_type`.
+fn media_body_name<'a>(endpoint: &'a Endpoint, media_type: &str) -> Option<&'a str> {
+    endpoint
+        .parameters
+        .iter()
+        .find(|parameter| {
+            parameter.parameter_in == "body" && parameter.media_type.as_deref() == Some(media_type)
+        })
         .map(|parameter| parameter.name.as_str())
 }
 

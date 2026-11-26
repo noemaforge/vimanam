@@ -78,6 +78,7 @@ vimanam diff old.json new.json --format json --omit-surfaces --fail-on-breaking
 
 - **Entity IDs (`ve2_`)**: `"ve2_" + SHA-256` of canonical JSON `{v: 2, format, kind, coordinate}` with keys sorted recursively. Descriptions, comments, generator versions, and declaration order never alter an entity ID.
 - **Change IDs (`vc2_`)**: `"vc2_" + SHA-256` of canonical JSON `{v: 2, subject, kind, details}`. Severity labels, impact dimensions, `uses`, file paths, raw file hashes, and generator versions stay outside the hash so suppression lists keyed on `vc2_` IDs remain stable across policy updates.
+- **OpenAPI media types**: a request body or response with several media types is compared per media type (exact keys). A media type one side lacks is `argument_removed`/`argument_added` on that media type's body argument, or `result_removed`/`result_added` on the status's result, with `media_type` in `details` (native kinds `request_media_type_removed`, `response_media_type_added`, ...). A schema change of one media type adds `media_type` to `details`. Specs whose bodies and responses keep one media type get exactly the IDs they had before.
 - **Shared OpenAPI components**: a change inside a `$ref` target is one `component_schema_changed` fact per usage direction, with the named type as `subject`, `component` and `direction` in `details`, and the reaching argument/result entity IDs in `uses`. Because `uses` is not hashed, the ID does not change when another operation starts using the component. Since 2.3.0 these replace the per-operation facts earlier releases emitted for every reference path.
 
 ## Cross-format surface mapping
@@ -87,7 +88,7 @@ vimanam diff old.json new.json --format json --omit-surfaces --fail-on-breaking
 | `service` | Declared or inferred tag | Fully qualified service | `Query`, `Mutation`, `Subscription` root |
 | `operation` | `METHOD` + exact path | Fully qualified RPC | Root schema field (`Query.user`) |
 | `argument` | Parameter or synthetic body | Request message reference | Field argument (`Query.user(id:)`) |
-| `result` | Response status + first schema | Output message reference | Root return type |
+| `result` | Response status + first schema (other media types in change `details`) | Output message reference | Root return type |
 | `type` | Component or definition schema | Message, enum, nested type, file, package | Object, interface, input, enum, union, scalar |
 | `field` | Property or composition member | Message field or `oneof` member | Object, interface, or input field |
 | `value` | Canonical JSON enum member | Enum FQN + number + name | Enum value coordinate (`Role.ADMIN`) |
@@ -102,7 +103,7 @@ Pagination changes emit a `pagination_changed` fact carrying structured evidence
 
 ## Legacy OpenAPI v1 contract (`--contract 1`)
 
-Pass `--contract 1` when an existing OpenAPI script expects the v1 schema (`schema_version: 1`, `vc1_` IDs, and exact path matching without move pairing):
+Pass `--contract 1` when an existing OpenAPI script expects the v1 schema (`schema_version: 1`, `vc1_` IDs, and exact path matching without move pairing). v1 compares media types the same way: a media type one side lacks is a `request_media_type_removed`/`_added` or `response_media_type_removed`/`_added` record (details `media_type`, plus `status` for responses), and a schema record of a body or response compared per media type has `media_type` in its details (so its `vc1_` ID differs from the single-media one):
 
 ```bash
 vimanam diff old.json new.json --format json --contract 1 --report

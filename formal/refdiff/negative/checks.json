@@ -157,6 +157,43 @@
       "PTR": "/required",
       "SEV": "review",
       "why": "A one-sided expansion of an unparseable `definitions` entry fails closed beneath it (#195 round 2): re-rating the use-owned change Review is caught."
+    },
+    {
+      "case": "n154a",
+      "OP": "media-drop",
+      "PTR": "application/xml",
+      "why": "#154: a request media type removed (Breaking) must be reported; comparing only the first media type misses it."
+    },
+    {
+      "case": "n154a",
+      "OP": "media-rate",
+      "PTR": "application/xml",
+      "SEV": "review",
+      "why": "#154: removing a request media type is Breaking, never Review (Severity.lean media rows)."
+    },
+    {
+      "case": "n154a",
+      "OP": "media-rate",
+      "PTR": "text/plain",
+      "SEV": "breaking",
+      "why": "#154: adding a request media type is Non-breaking."
+    },
+    {
+      "case": "n154b",
+      "OP": "media-drop-use",
+      "PTR": "application/xml",
+      "why": "#154: a component change reached through a response's second media type is a record of that media-type use; dropping it is first-media-type comparison."
+    },
+    {
+      "case": "n154c",
+      "OP": "media-strip",
+      "why": "#154: once a side has two media types the body is compared per media type, and its records name the media type."
+    },
+    {
+      "case": "n154d",
+      "OP": "media-drop",
+      "PTR": "charset",
+      "why": "#154: media types match by exact key; application/json -> application/json; charset=utf-8 is a removal plus an addition."
     }
   ]
 }

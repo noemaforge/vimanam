@@ -57,6 +57,10 @@ variants!(
     RequestSchemaChanged,
     ResponseSchemaChanged,
     ComponentSchemaChanged,
+    RequestMediaTypeAdded,
+    RequestMediaTypeRemoved,
+    ResponseMediaTypeAdded,
+    ResponseMediaTypeRemoved,
 );
 
 /// `diff::severity` on `kind`, recording which variant was rated.
@@ -197,6 +201,20 @@ fn structural(input: &Value) -> ChangeKind {
             new: present(2),
         },
         "deprecated_changed" => ChangeKind::DeprecatedChanged { now: flag(1) },
+        "request_media_type_added" => ChangeKind::RequestMediaTypeAdded {
+            media_type: "application/xml".into(),
+        },
+        "request_media_type_removed" => ChangeKind::RequestMediaTypeRemoved {
+            media_type: "application/xml".into(),
+        },
+        "response_media_type_added" => ChangeKind::ResponseMediaTypeAdded {
+            status: "200".into(),
+            media_type: "application/xml".into(),
+        },
+        "response_media_type_removed" => ChangeKind::ResponseMediaTypeRemoved {
+            status: "200".into(),
+            media_type: "application/xml".into(),
+        },
         other => panic!("unknown change {other}"),
     }
 }
@@ -205,6 +223,7 @@ fn schema_change(rust: &str, pointer: String, kind: ValueChangeKind) -> ChangeKi
     let change = ValueChange { pointer, kind };
     match rust {
         "diff::severity(RequestSchemaChanged)" => ChangeKind::RequestSchemaChanged {
+            media_type: None,
             change,
             fail_closed: None,
         },
@@ -215,6 +234,7 @@ fn schema_change(rust: &str, pointer: String, kind: ValueChangeKind) -> ChangeKi
             fail_closed: None,
         },
         "diff::severity(ResponseSchemaChanged)" => ChangeKind::ResponseSchemaChanged {
+            media_type: None,
             status: "200".into(),
             change,
             fail_closed: None,
@@ -259,6 +279,7 @@ fn replay(rust: &str, cases: &[Value], seen: &mut BTreeSet<&'static str>) -> Vec
                             let tag = kind_tag(&value_change.kind);
                             let request = rate(
                                 ChangeKind::RequestSchemaChanged {
+                                    media_type: None,
                                     change: value_change.clone(),
                                     fail_closed: None,
                                 },
@@ -266,6 +287,7 @@ fn replay(rust: &str, cases: &[Value], seen: &mut BTreeSet<&'static str>) -> Vec
                             );
                             let response = rate(
                                 ChangeKind::ResponseSchemaChanged {
+                                    media_type: None,
                                     status: "200".into(),
                                     change: value_change.clone(),
                                     fail_closed: None,

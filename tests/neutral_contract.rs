@@ -641,7 +641,7 @@ fn request_body_type_change_is_the_first_body_argument() {
 }
 
 #[test]
-fn later_request_media_type_deprecation_is_omitted() {
+fn every_request_media_type_reports_its_deprecation() {
     let request_body = |first: bool, second: bool| {
         json!({
             "content": {
@@ -652,12 +652,22 @@ fn later_request_media_type_deprecation_is_omitted() {
     };
     let mut old = spec();
     old["paths"]["/widgets"]["get"]["requestBody"] = request_body(false, false);
+    // Since #154 every media type is compared, so a deprecation in the
+    // second one is reported on that media type's body argument.
     let mut second = old.clone();
     second["paths"]["/widgets"]["get"]["requestBody"] = request_body(false, true);
-    assert!(
-        !openapi_diff(&parse(&old), &parse(&second))
-            .iter()
-            .any(|change| change.kind == ChangeKind::DeprecatedChanged)
+    let facts: Vec<_> = openapi_diff(&parse(&old), &parse(&second))
+        .into_iter()
+        .filter(|change| change.kind == ChangeKind::DeprecatedChanged)
+        .collect();
+    assert_eq!(facts.len(), 1, "{facts:#?}");
+    assert_eq!(
+        facts[0].subject,
+        contract::entity_id(
+            Format::Openapi,
+            EntityKind::Argument,
+            "/paths/~1widgets/get/arguments/body/requestBody (text~1plain)"
+        )
     );
     let mut first = old.clone();
     first["paths"]["/widgets"]["get"]["requestBody"] = request_body(true, false);
@@ -911,4 +921,166 @@ fn without_surfaces_keeps_everything_else() {
     // The surface-free shape round-trips through its own type.
     let parsed: JsonDiffWithoutSurfaces = serde_json::from_value(value.clone()).unwrap();
     assert_eq!(serde_json::to_value(parsed).unwrap(), value);
+}
+
+// --- media types (#154) ---
+
+fn media_doc(request: Value, response: Value) -> Value {
+    json!({"openapi":"3.0.3","info":{"title":"t","version":"1"},"paths":{"/a":{"post":{
+        "requestBody":{"content":request},
+        "responses":{"200":{"description":"ok","content":response}}}}},
+        "components":{"schemas":{"W":{"type":"object","properties":{"id":{"type":"string"}}}}}})
+}
+
+#[test]
+fn media_types_are_argument_and_result_facts() {
+    let s = |id: &str| json!({"schema":{"type":"object","properties":{"id":{"type":id}}}});
+    let old = media_doc(
+        json!({"application/json": s("string"), "application/xml": s("string")}),
+        json!({"application/json": s("string"), "application/xml": s("string")}),
+    );
+    let new = media_doc(
+        json!({"application/json": s("string"), "text/plain": s("string")}),
+        json!({"application/json": s("string"), "application/xml": s("integer")}),
+    );
+    let changes = openapi_diff(&parse(&old), &parse(&new));
+    let find = |native_kind: &str| {
+        changes
+            .iter()
+            .find(|c| c.native_kind == native_kind)
+            .unwrap_or_else(|| panic!("no {native_kind} in {changes:#?}"))
+    };
+    let argument = |name: &str| {
+        contract::entity_id(
+            Format::Openapi,
+            EntityKind::Argument,
+            &format!("/paths/~1a/post/arguments/body/{}", name.replace('/', "~1")),
+        )
+    };
+    // A request media type is the body argument the parser made for it: the
+    // old one for a removal, the new one for an addition.
+    let removed = find("request_media_type_removed");
+    assert_eq!(removed.kind, ChangeKind::ArgumentRemoved);
+    assert_eq!(removed.severity, Severity::Breaking);
+    assert_eq!(removed.subject, argument("requestBody (application/xml)"));
+    assert_eq!(removed.details["media_type"], "application/xml");
+    let added = find("request_media_type_added");
+    assert_eq!(added.kind, ChangeKind::ArgumentAdded);
+    assert_eq!(added.severity, Severity::NonBreaking);
+    assert_eq!(added.subject, argument("requestBody (text/plain)"));
+    // A response media type is a variant of the status's result; the schema
+    // change of the second media type names it.
+    let result = contract::entity_id(
+        Format::Openapi,
+        EntityKind::Result,
+        "/paths/~1a/post/results/200",
+    );
+    let changed = find("response_schema_changed");
+    assert_eq!(changed.subject, result);
+    assert_eq!(changed.details["media_type"], "application/xml");
+    assert_eq!(changed.severity, Severity::Breaking);
+    // The surface itself is unchanged by #154: the result holds the first
+    // schema, and each request media type is its own argument.
+    let surface = contract::openapi::adapt(&parse(&new));
+    assert!(
+        surface
+            .entities
+            .iter()
+            .any(|e| e.id == argument("requestBody (text/plain)"))
+    );
+    let fewer = media_doc(
+        json!({"application/json": s("string"), "application/xml": s("string")}),
+        json!({"application/json": s("string")}),
+    );
+    let gone = openapi_diff(&parse(&old), &parse(&fewer));
+    let gone = gone
+        .iter()
+        .find(|c| c.native_kind == "response_media_type_removed")
+        .expect("response media type removed");
+    assert_eq!(gone.kind, ChangeKind::ResultRemoved);
+    assert_eq!(gone.subject, result);
+    assert_eq!(gone.details["status"], "200");
+    assert_eq!(gone.details["media_type"], "application/xml");
+    assert_eq!(gone.severity, Severity::Breaking);
+}
+
+#[test]
+fn a_component_behind_two_media_types_is_one_fact() {
+    let r = json!({"schema":{"$ref":"#/components/schemas/W"}});
+    let old = media_doc(
+        json!({"application/json": r.clone()}),
+        json!({"application/json": r.clone(), "application/xml": r.clone()}),
+    );
+    let mut new = old.clone();
+    new["components"]["schemas"]["W"]["properties"]["id"]["type"] = json!("integer");
+    let facts: Vec<_> = openapi_diff(&parse(&old), &parse(&new))
+        .into_iter()
+        .filter(|c| c.native_kind == "component_schema_changed")
+        .collect();
+    // One request fact and one response fact (a direction each); the two
+    // response media types are one use of the 200 result.
+    assert_eq!(facts.len(), 2, "{facts:#?}");
+    let response = facts
+        .iter()
+        .find(|c| c.details["direction"] == "response")
+        .unwrap();
+    assert_eq!(
+        response.uses,
+        [contract::entity_id(
+            Format::Openapi,
+            EntityKind::Result,
+            "/paths/~1a/post/results/200"
+        )]
+    );
+}
+
+#[test]
+fn single_media_type_facts_have_no_media_type() {
+    let s = |id: &str| json!({"schema":{"type":"object","properties":{"id":{"type":id}}}});
+    let old = media_doc(
+        json!({"application/json": s("string")}),
+        json!({"application/json": s("string")}),
+    );
+    let new = media_doc(
+        json!({"application/json": s("integer")}),
+        json!({"application/json": s("integer")}),
+    );
+    let changes = openapi_diff(&parse(&old), &parse(&new));
+    assert!(!changes.is_empty());
+    assert!(
+        changes
+            .iter()
+            .all(|c| c.details.get("media_type").is_none()),
+        "{changes:#?}"
+    );
+}
+
+#[test]
+fn deprecation_in_a_later_response_media_type_is_reported_once() {
+    let s = |deprecated: bool| json!({"schema":{"type":"object","properties":{"id":{"type":"string","deprecated":deprecated}}}});
+    let old = media_doc(
+        json!({"application/json": s(false)}),
+        json!({"application/json": s(false), "application/xml": s(false)}),
+    );
+    let new = media_doc(
+        json!({"application/json": s(false)}),
+        json!({"application/json": s(false), "application/xml": s(true)}),
+    );
+    let facts: Vec<_> = openapi_diff(&parse(&old), &parse(&new))
+        .into_iter()
+        .filter(|c| c.kind == ChangeKind::DeprecatedChanged)
+        .collect();
+    assert_eq!(facts.len(), 1, "{facts:#?}");
+    assert_eq!(facts[0].details["media_type"], "application/xml");
+    // Both media types deprecating the same field: the first media type's
+    // fact (from the surface's result) covers the place, once.
+    let both = media_doc(
+        json!({"application/json": s(false)}),
+        json!({"application/json": s(true), "application/xml": s(true)}),
+    );
+    let facts: Vec<_> = openapi_diff(&parse(&old), &parse(&both))
+        .into_iter()
+        .filter(|c| c.kind == ChangeKind::DeprecatedChanged)
+        .collect();
+    assert_eq!(facts.len(), 1, "{facts:#?}");
 }

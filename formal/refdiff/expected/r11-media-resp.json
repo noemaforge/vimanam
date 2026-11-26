@@ -1,0 +1,5 @@
+[
+{"change": {"after": "integer", "before": "string", "op": "changed"}, "dir": "response", "neg": false, "owner": {"new": "W", "old": "W"}, "ptr": "/properties/id/type", "severity": "breaking", "use": "GET /a response:200 media:application/json"},
+{"dir": "response", "media_type": "application/xml", "op": "removed", "severity": "breaking", "use": "GET /a response:200"},
+{"dir": "response", "media_type": "text/plain", "op": "added", "severity": "non_breaking", "use": "GET /a response:200"}
+]

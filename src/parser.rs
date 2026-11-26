@@ -417,6 +417,7 @@ fn extract_endpoints(
                             example: media_type.example.clone(),
                             examples: media_type.examples.clone(),
                             extensions: HashMap::new(),
+                            media_type: Some(content_type.clone()),
                         });
                     }
                 }

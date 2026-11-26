@@ -46,6 +46,11 @@ import VimanamProofs
 #print axioms Vimanam.Severity.parameter_required_like_schema_required
 #print axioms Vimanam.Severity.removal_breaking_addition_not
 #print axioms Vimanam.Severity.operation_id
+#print axioms Vimanam.Severity.media_type_removal_breaking_addition_not
+#print axioms Vimanam.Severity.request_media_type_like_enum_member
+#print axioms Vimanam.Severity.response_media_type_like_property
+#print axioms Vimanam.Severity.response_media_type_not_like_enum_member
+#print axioms Vimanam.Severity.media_type_swap
 #print axioms Vimanam.Severity.locateGo_append_general
 #print axioms Vimanam.Severity.locate_append_schema
 #print axioms Vimanam.Severity.underNot_append_schema

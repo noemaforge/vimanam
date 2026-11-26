@@ -23,7 +23,11 @@ Comparisons (see formal/README.md, "Reference semantics of `$ref` diffs"):
   (main since #182 merged; `--pr` is an alias)
   records (`diff --format json --contract 1`: one record per (use, change),
   with `component`/`old_component` for ref-reached changes). Unit:
-  (use, owner, owner-relative pointer, change, severity).
+  (use, owner, owner-relative pointer, change, severity). A body or
+  response compared media type by media type (#154) has one use per media
+  type (`... media:TYPE`), and a media type one side lacks is a record with
+  owner `media` (`added TYPE`/`removed TYPE`), against the Rust's
+  `*_media_type_added`/`_removed` records.
 * per-path: the model's per-path records against an optional `--per-path`
   binary built from before #182 (aa6b1ab or earlier; `--main` is an alias),
   whose v1 records have absolute pointers and no owners. That Rust's own
@@ -122,6 +126,11 @@ class Gen:
         # their own stream too.
         self.rbad = random.Random(seed * 1299709 + 5)
         self.bad = self.rbad.random() < 0.15
+        # Several media types per request body and response (#154): their
+        # own stream, applied after the documents are drawn, so seeds
+        # without them are unchanged.
+        self.rmt = random.Random(seed * 15485863 + 7)
+        self.mt = not self.oas2 and self.rmt.random() < 0.3
 
     # Keywords the schema grammar does not know, each holding a reference:
     # values (`default`, `const`, an `enum` member) and applicators whose
@@ -153,6 +162,79 @@ class Gen:
     BAD = [("required", "s"), ("nullable", "yes"), ("title", 1), ("type", 7),
            ("items", True), ("format", ["x"]), ("enum", "p"), ("properties", [])]
     SCALARS = [5, [1], "s", True]
+
+    # Media types (#154): exact keys, so parameters and wildcards are media
+    # types of their own.
+    MEDIA = ["application/xml", "text/plain", "application/json; charset=utf-8",
+             "*/*", "application/vnd.api+json", "multipart/form-data"]
+
+    def media_variant(self, schema):
+        """The schema of an extra media type, from `rmt`: the first media
+        type's (a copy), a reference, a leaf, or none."""
+        r = self.rmt
+        k = r.random()
+        if k < 0.35:
+            return {"schema": copy.deepcopy(schema)} if schema is not None else {}
+        if k < 0.65:
+            base = "#/definitions/" if r.random() < 0.2 else "#/components/schemas/"
+            return {"schema": {"$ref": base + enc(r.choice(NAMES))}}
+        if k < 0.85:
+            return {"schema": {"type": r.choice(["string", "object", "integer"])}}
+        return {}
+
+    def contents(self, doc: dict):
+        """Every request-body and response `content` map in `doc`."""
+        for item in doc.get("paths", {}).values():
+            for op in item.values():
+                if not isinstance(op, dict):
+                    continue
+                rb = op.get("requestBody")
+                if isinstance(rb, dict) and isinstance(rb.get("content"), dict):
+                    yield rb["content"]
+                for resp in (op.get("responses") or {}).values():
+                    if isinstance(resp, dict) and isinstance(resp.get("content"), dict):
+                        yield resp["content"]
+
+    def multimedia(self, old: dict, new: dict) -> None:
+        """Gives bodies and responses several media types, from `rmt`
+        (#154): on the old side, extra media types after the first; on the
+        new side the same ones, then some dropped, added, re-keyed (the
+        first as `application/json; charset=utf-8`), reordered or mutated."""
+        if not self.mt:
+            return
+        r = self.rmt
+        olds = list(self.contents(old))
+        news = list(self.contents(new))
+        for oc, nc in zip(olds, news):
+            if r.random() < 0.3:
+                continue
+            first = next(iter(oc.values()), {}).get("schema")
+            extra = {k: self.media_variant(first) for k in r.sample(self.MEDIA, r.randint(1, 3))}
+            oc.update(copy.deepcopy(extra))
+            nc.update(copy.deepcopy(extra))
+            x = r.random()
+            keys = list(nc)
+            if x < 0.15 and len(keys) > 1:
+                del nc[r.choice(keys)]
+            elif x < 0.3:
+                k = r.choice([m for m in self.MEDIA if m not in nc] or ["text/csv"])
+                nc[k] = self.media_variant(first)
+            elif x < 0.4 and "application/json" in nc:
+                nc["application/json; charset=utf-8"] = nc.pop("application/json")
+            elif x < 0.5:
+                items = list(nc.items())
+                r.shuffle(items)
+                nc.clear()
+                nc.update(items)
+            elif x < 0.7:
+                k = r.choice(keys)
+                nc[k] = {"schema": {"type": r.choice(["string", "boolean", "array"])}}
+        # A single media type re-keyed on one side: no longer the same one.
+        for oc, nc in zip(olds, news):
+            if len(oc) == 1 and len(nc) == 1 and r.random() < 0.1:
+                (k, v), = nc.items()
+                nc.clear()
+                nc["application/xml" if k != "application/xml" else "text/plain"] = v
 
     def malformed(self, old: dict, new: dict) -> None:
         """Makes one component, from `rbad`, a `definitions` entry the Rust
@@ -351,6 +433,7 @@ class Gen:
             new_paths["/v2/p0"] = new_paths.pop("/p0")
         old, new = self.doc(comps, paths), self.doc(new_comps, new_paths)
         self.malformed(old, new)
+        self.multimedia(old, new)
         return old, new
 
 
@@ -455,6 +538,9 @@ def model_grouped(m: dict) -> tuple[Counter, set[tuple]]:
         out[rec] += 1
         if r["neg"]:
             neg.add(rec)
+    # #154: a media type one side of a body or response lacks.
+    for r in m.get("media", []):
+        out[(r["use"], "media", "", f"{r['op']} {r['media_type']}", r["severity"])] += 1
     return out, neg
 
 
@@ -476,13 +562,37 @@ def rust_use(rec: dict) -> str | None:
     ep = f"{rec['endpoint']['method']} {rec['endpoint']['path']}"
     d = rec["details"]
     kind = rec["kind"]
+    # #154: a body or response compared media type by media type names the
+    # media type in its records; the model's use id carries it as a suffix.
+    media = f" media:{d['media_type']}" if "media_type" in d else ""
     if kind == "parameter_schema_changed":
         return f"{ep} param:{d.get('location')}:{d.get('name')}"
     if kind == "request_schema_changed":
-        return f"{ep} body"
+        return f"{ep} body{media}"
     if kind == "response_schema_changed":
-        return f"{ep} response:{d.get('status')}"
+        return f"{ep} response:{d.get('status')}{media}"
     return None
+
+
+# #154: the v1 kinds of a media type one side lacks, as the model's `op`.
+MEDIA_KINDS = {
+    "request_media_type_added": "added",
+    "request_media_type_removed": "removed",
+    "response_media_type_added": "added",
+    "response_media_type_removed": "removed",
+}
+
+
+def rust_media(rec: dict) -> tuple | None:
+    """A v1 media-type record as the model's (use, "media", "", change,
+    severity) tuple; `None` for any other record."""
+    op = MEDIA_KINDS.get(rec["kind"])
+    if op is None:
+        return None
+    ep = f"{rec['endpoint']['method']} {rec['endpoint']['path']}"
+    d = rec["details"]
+    use = f"{ep} body" if rec["kind"].startswith("request") else f"{ep} response:{d.get('status')}"
+    return (use, "media", "", f"{op} {d['media_type']}", rec["severity"])
 
 
 def rust_records(rust: dict, grouped: bool) -> tuple[Counter, set[tuple]]:
@@ -490,6 +600,11 @@ def rust_records(rust: dict, grouped: bool) -> tuple[Counter, set[tuple]]:
     out: Counter = Counter()
     neg = set()
     for rec in rust.get("changes", []):
+        media = rust_media(rec)
+        if media is not None:
+            if grouped:
+                out[media] += 1
+            continue
         use = rust_use(rec)
         if use is None:
             continue
@@ -570,6 +685,9 @@ def classify_grouped(model: Counter, model_neg: set[tuple], rust: Counter,
                 kind = "attribution-component-pair"
             found.append((kind, m, r))
             continue
+        if owner == "media":
+            found.append(("media-type-missing-in-rust", m, None))
+            continue
         found.append(("missing-in-rust" + ("-masked-reach" if owner != "use" else "-at-use"), m, None))
     # Records both sides report, where only one side says "reached under
     # `not`".
@@ -581,6 +699,9 @@ def classify_grouped(model: Counter, model_neg: set[tuple], rust: Counter,
     for r in only_r:
         if used_r[r] > 0:
             used_r[r] -= 1
+            continue
+        if r[1] == "media":
+            found.append(("media-type-extra-in-rust", None, r))
             continue
         found.append(("extra-in-rust" + ("-component" if r[1] != "use" else "-at-use"), None, r))
     return found
