@@ -152,6 +152,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `ResponseMediaTypeAdded`, `ResponseMediaTypeRemoved`; the enum is
     `#[non_exhaustive]`), as does `diff::json::JsonChangeKind`. The CLI is
     unaffected.
+- Whole-document `--detail full --include-schemas --inline-schemas` renders
+  finish on densely cyclic specs (#177). Inline expansion re-expands every
+  acyclic path through the component graph at each use site, so such specs
+  grew exponentially and never finished. Without `--schema-depth`, vimanam now
+  counts the inline rows first (without rendering) and, past 2,000,000 rows,
+  bounds expansion at `--schema-depth 2` with a stderr notice and a blockquote
+  under the title. This also covers `--max-tokens`, `--stats`, `--costs` and
+  selected slices. A 40-component adversarial spec that wrote 1.35 GB in 30 s
+  without finishing now renders in about 60 ms; every render under the budget
+  (all fixtures; the GitHub REST, protobuf-generated and petstore specs) is
+  byte-identical. `--costs` in linked mode, whose per-schema inline model hit
+  the same expansion, now measures an over-budget schema at depth 2 and marks
+  it `inline-bounded`. No public library API change: the touched
+  `--costs`/`--stats` types are crate-private, and `generate_markdown`
+  applies the same bound.
 - `diff` no longer stops expanding a recursive component by its name when
   only one side writes it as a `$ref` (#187). Expansion now stops where the
   compared pair of old and new values recurs, as the Lean reference model

@@ -31,9 +31,9 @@ pub(crate) use views::{removing_filters, service_is_visible, visible_endpoints};
 // `diff` compares the response schema the renderer would document.
 pub(crate) use schema::{PREFER_REF_DESCRIPTION_EXT, response_schema};
 // The `--costs` analysis measures schema use sites and per-schema renders.
-#[cfg(feature = "cli")]
-pub(crate) use schema::AUTO_SCHEMA_DEPTH_THRESHOLD;
 pub(crate) use schema::SchemaUse;
+#[cfg(feature = "cli")]
+pub(crate) use schema::{AUTO_SCHEMA_DEPTH, INLINE_ROW_BUDGET};
 #[cfg(feature = "cli")]
 pub(crate) use schema::{
     definition_section_tokens, inline_expansion_tokens, short_schema_reference,
@@ -114,23 +114,70 @@ pub(crate) fn render<W: Write>(
 /// uses the same depth as the whole render.
 pub(crate) struct ResolvedConfig<'c> {
     pub config: std::borrow::Cow<'c, DocConfig>,
-    /// Stderr notice when the depth was chosen automatically (#160).
+    /// Stderr notice when the depth was chosen automatically (#160, #177).
     pub notice: Option<String>,
+    /// Why the depth was chosen automatically, if it was.
+    pub bound: Option<AutoBound>,
+}
+
+/// Why [`resolve_schema_depth`] bounded schema expansion on its own.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum AutoBound {
+    /// A selected slice reaches more than
+    /// [`schema::AUTO_SCHEMA_DEPTH_THRESHOLD`] component schemas (#160).
+    ComponentGraph,
+    /// `--inline-schemas` would expand more than
+    /// [`schema::INLINE_ROW_BUDGET`] schema rows (#177).
+    InlineRows,
+}
+
+impl AutoBound {
+    /// The cause as a clause: "the selection reaches more than ...".
+    pub(crate) fn cause(self) -> String {
+        match self {
+            AutoBound::ComponentGraph => format!(
+                "the selection reaches more than {} component schemas",
+                schema::AUTO_SCHEMA_DEPTH_THRESHOLD
+            ),
+            AutoBound::InlineRows => format!(
+                "--inline-schemas would expand more than {} schema rows",
+                schema::INLINE_ROW_BUDGET
+            ),
+        }
+    }
 }
 
 impl ResolvedConfig<'_> {
     /// The automatically chosen depth, if any.
     pub(crate) fn auto_depth(&self) -> Option<usize> {
-        self.notice.as_ref().and(self.config.schema_depth)
+        self.bound.and(self.config.schema_depth)
+    }
+
+    /// The same decision applied to another configuration (a `--stats` row or
+    /// `--costs` slice), so it is measured at this run's depth.
+    #[cfg(feature = "cli")]
+    pub(crate) fn with_config(&self, config: DocConfig) -> ResolvedConfig<'static> {
+        ResolvedConfig {
+            config: std::borrow::Cow::Owned(config),
+            notice: self.notice.clone(),
+            bound: self.bound,
+        }
     }
 }
 
-/// Bounds a selected slice at [`schema::AUTO_SCHEMA_DEPTH`] when
-/// `--schema-depth` is not set and the slice's roots reach more than
-/// [`schema::AUTO_SCHEMA_DEPTH_THRESHOLD`] component schemas (#160). Slices are
-/// standalone `--schema`/`--schema-field` reads and `--operation`/
-/// `--operation-id` renders at `--detail full --include-schemas`; whole
-/// documents, which already render each component once, are unchanged.
+/// Bounds schema expansion at [`schema::AUTO_SCHEMA_DEPTH`] when
+/// `--schema-depth` is not set and either
+///
+/// * a selected slice's roots reach more than
+///   [`schema::AUTO_SCHEMA_DEPTH_THRESHOLD`] component schemas (#160). Slices
+///   are standalone `--schema`/`--schema-field` reads and `--operation`/
+///   `--operation-id` renders at `--detail full --include-schemas`; or
+/// * under `--inline-schemas`, the rendered schema roots (a selection's, or
+///   every visible operation's at `--detail full --include-schemas`) would
+///   expand more than [`schema::INLINE_ROW_BUDGET`] rows (#177), counted by
+///   [`schema::inline_row_count`] without rendering.
+///
+/// Anything else, including every linked whole document, is unchanged.
 pub(crate) fn resolve_schema_depth<'c>(
     doc: &ApiDocumentation,
     config: &'c DocConfig,
@@ -138,40 +185,61 @@ pub(crate) fn resolve_schema_depth<'c>(
     let unchanged = ResolvedConfig {
         config: std::borrow::Cow::Borrowed(config),
         notice: None,
+        bound: None,
     };
     if config.schema_depth.is_some() {
         return unchanged;
     }
+    let schemas_rendered = config.detail_level == DetailLevel::Full && config.include_schemas;
     let selected;
-    let roots: Vec<&crate::models::Schema> = if schema_selection::active(config) {
+    let (roots, slice): (Vec<&crate::models::Schema>, bool) = if schema_selection::active(config) {
         let Ok(found) = schema_selection::selections(doc, config) else {
             return unchanged;
         };
         selected = found;
-        selected.iter().map(|(_, schema)| schema).collect()
-    } else if config.operation_selector.is_some()
-        && config.detail_level == DetailLevel::Full
-        && config.include_schemas
-    {
-        visible_endpoints(doc, config)
+        (selected.iter().map(|(_, schema)| schema).collect(), true)
+    } else if schemas_rendered && (config.operation_selector.is_some() || config.inline_schemas) {
+        let roots = visible_endpoints(doc, config)
             .into_iter()
             .flat_map(schema::rendered_endpoint_schemas)
-            .collect()
+            .collect();
+        (roots, config.operation_selector.is_some())
     } else {
         return unchanged;
     };
     let threshold = schema::AUTO_SCHEMA_DEPTH_THRESHOLD;
-    if schema::reachable_component_count(doc, roots, threshold) <= threshold {
+    let bound = if slice
+        && schema::reachable_component_count(doc, roots.iter().copied(), threshold) > threshold
+    {
+        AutoBound::ComponentGraph
+    } else if config.inline_schemas
+        && schema::inline_row_count(
+            doc,
+            roots,
+            schema_selection::active(config),
+            schema::INLINE_ROW_BUDGET,
+        ) > schema::INLINE_ROW_BUDGET
+    {
+        AutoBound::InlineRows
+    } else {
         return unchanged;
-    }
+    };
     let depth = schema::AUTO_SCHEMA_DEPTH;
     let mut bounded = config.clone();
     bounded.schema_depth = Some(depth);
+    let notice = match bound {
+        AutoBound::ComponentGraph => format!(
+            "vimanam: selection reaches more than {threshold} component schemas and --schema-depth is not set; bounding schema expansion at --schema-depth {depth} (pass --schema-depth 0..=24 to choose)"
+        ),
+        AutoBound::InlineRows => format!(
+            "vimanam: --inline-schemas would expand more than {} schema rows and --schema-depth is not set; bounding schema expansion at --schema-depth {depth} (pass --schema-depth 0..=24 to choose, or drop --inline-schemas to render each component schema once)",
+            schema::INLINE_ROW_BUDGET
+        ),
+    };
     ResolvedConfig {
         config: std::borrow::Cow::Owned(bounded),
-        notice: Some(format!(
-            "vimanam: selection reaches more than {threshold} component schemas and --schema-depth is not set; bounding schema expansion at --schema-depth {depth} (pass --schema-depth 0..=24 to choose)"
-        )),
+        notice: Some(notice),
+        bound: Some(bound),
     }
 }
 
@@ -202,11 +270,18 @@ pub(crate) fn render_resolved<W: Write>(
             .map_or(0, |index| index + 1)
     };
     writer.write_all(&buffer[..split])?;
-    write!(
-        writer,
-        "\n> Schema expansion is bounded at --schema-depth {depth}: this selection reaches more than {} component schemas. Follow the per-row retrieval commands, or pass --schema-depth N (0..=24) to choose another bound.\n",
-        schema::AUTO_SCHEMA_DEPTH_THRESHOLD
-    )?;
+    match resolved.bound {
+        Some(AutoBound::InlineRows) => write!(
+            writer,
+            "\n> Schema expansion is bounded at --schema-depth {depth}: {}. Follow the per-row retrieval commands, pass --schema-depth N (0..=24) to choose another bound, or drop --inline-schemas to render each component schema once.\n",
+            AutoBound::InlineRows.cause()
+        )?,
+        _ => write!(
+            writer,
+            "\n> Schema expansion is bounded at --schema-depth {depth}: this selection reaches more than {} component schemas. Follow the per-row retrieval commands, or pass --schema-depth N (0..=24) to choose another bound.\n",
+            schema::AUTO_SCHEMA_DEPTH_THRESHOLD
+        )?,
+    }
     let rest = &buffer[split..];
     // Exactly one blank line before what followed the title.
     if !rest.starts_with(b"\n") {

@@ -34,9 +34,9 @@ use anyhow::Result;
 use indexmap::IndexSet;
 
 use crate::markdown::{
-    ResolvedConfig, SchemaUse, definition_section_tokens, detail_level_name, estimate_tokens,
-    inline_expansion_tokens, render_resolved, resolve_schema_depth, service_is_visible,
-    short_schema_reference, visible_endpoints,
+    AutoBound, ResolvedConfig, SchemaUse, definition_section_tokens, detail_level_name,
+    estimate_tokens, inline_expansion_tokens, render_resolved, resolve_schema_depth,
+    service_is_visible, short_schema_reference, visible_endpoints,
 };
 use crate::models::{
     AdditionalProperties, ApiDocumentation, DocConfig, Endpoint, OperationRef, OperationSelector,
@@ -84,6 +84,11 @@ pub(crate) struct SchemaCost {
     /// The schema participates in a reference cycle (transitively reaches
     /// itself). Inline expansion cuts such cycles with a one-row notice.
     pub cyclic: bool,
+    /// One inline expansion would render more than
+    /// [`crate::markdown::INLINE_ROW_BUDGET`] rows without `--schema-depth`
+    /// (#177), so `inline_per_use_tokens` was measured at
+    /// [`crate::markdown::AUTO_SCHEMA_DEPTH`] and is a lower bound.
+    pub inline_bounded: bool,
 }
 
 /// The complete analysis: mode, TOTAL, endpoint and schema rows, and
@@ -94,9 +99,10 @@ pub(crate) struct CostReport {
     pub detail_name: String,
     /// Whether the analyzed configuration renders schemas inline.
     pub inline_schemas: bool,
-    /// `--schema-depth` chosen automatically for a large selected slice
-    /// (#160); TOTAL, every slice and every schema row use it.
-    pub auto_schema_depth: Option<usize>,
+    /// `--schema-depth` chosen automatically, and why: a large selected
+    /// slice (#160) or an over-budget inline expansion (#177). TOTAL, every
+    /// slice and every schema row use it.
+    pub auto_schema_depth: Option<(usize, AutoBound)>,
     /// The matching stderr notice.
     pub notice: Option<String>,
     /// Tokens of one render of the whole filtered document; 0 when nothing is
@@ -158,7 +164,7 @@ pub(crate) fn compute(doc: &ApiDocumentation, config: &DocConfig) -> Result<Cost
     Ok(CostReport {
         detail_name: detail_level_name(&config.detail_level).to_string(),
         inline_schemas: config.inline_schemas,
-        auto_schema_depth: resolved.auto_depth(),
+        auto_schema_depth: resolved.auto_depth().zip(resolved.bound),
         notice: resolved.notice.clone(),
         total_tokens,
         endpoints,
@@ -195,10 +201,7 @@ fn estimate_slice(
 
     // Measure at the resolved depth: slices never re-decide it, so a
     // whole-document analysis is not bounded per slice while TOTAL is not.
-    let slice = ResolvedConfig {
-        config: std::borrow::Cow::Owned(slice_config),
-        notice: resolved.notice.clone(),
-    };
+    let slice = resolved.with_config(slice_config);
     let mut buffer = Vec::new();
     render_resolved(&mut buffer, doc, &slice)?;
     Ok(estimate_tokens(&buffer))
@@ -231,7 +234,7 @@ fn schema_cost(
 ) -> SchemaCost {
     let definition_depth = definition_depth(config, use_stats.min_depth);
     let definition_tokens = definition_section_tokens(doc, config, reference, definition_depth);
-    let inline_per_use_tokens = inline_expansion_tokens(doc, config, reference);
+    let (inline_per_use_tokens, inline_bounded) = inline_expansion_tokens(doc, config, reference);
     let inline_total_tokens = use_stats.count * inline_per_use_tokens;
     let amplification =
         (definition_tokens > 0).then(|| inline_total_tokens as f64 / definition_tokens as f64);
@@ -244,6 +247,7 @@ fn schema_cost(
         inline_total_tokens,
         amplification,
         cyclic: schema_reaches_itself(doc, reference),
+        inline_bounded,
     }
 }
 
@@ -406,6 +410,7 @@ const INLINE_TOTAL_HEADER: &str = "INLINE TOTAL";
 const AMPLIFICATION_HEADER: &str = "AMPLIF.";
 const NOTES_HEADER: &str = "NOTES";
 const CYCLE_NOTE: &str = "cycle";
+const INLINE_BOUNDED_NOTE: &str = "inline-bounded";
 /// Spaces between columns.
 const GAP: &str = "  ";
 
@@ -433,11 +438,11 @@ pub(crate) fn write_costs<W: Write>(writer: &mut W, report: &CostReport) -> Resu
         "Mode: --detail {}, schemas {}. {TOTAL_LABEL}: ~{} tokens (one render of the whole filtered document).",
         report.detail_name, schema_mode, report.total_tokens
     )?;
-    if let Some(depth) = report.auto_schema_depth {
+    if let Some((depth, bound)) = report.auto_schema_depth {
         writeln!(
             writer,
-            "Schema depth: automatic --schema-depth {depth} (the selection reaches more than {} component schemas); every row is measured at this depth.",
-            crate::markdown::AUTO_SCHEMA_DEPTH_THRESHOLD
+            "Schema depth: automatic --schema-depth {depth} ({}); every row is measured at this depth.",
+            bound.cause()
         )?;
     }
     writeln!(writer)?;
@@ -621,7 +626,10 @@ fn write_schema_table<W: Write>(writer: &mut W, report: &CostReport) -> Result<(
         .unwrap_or(INLINE_TOTAL_HEADER.len());
     // The NOTES column only exists when at least one row carries a note, so
     // ordinary rows never end in trailing whitespace.
-    let has_notes = report.schemas.iter().any(|cost| cost.cyclic);
+    let has_notes = report
+        .schemas
+        .iter()
+        .any(|cost| cost.cyclic || cost.inline_bounded);
 
     write!(
         writer,
@@ -646,10 +654,27 @@ fn write_schema_table<W: Write>(writer: &mut W, report: &CostReport) -> Result<(
             cost.inline_total_tokens,
             amplification
         )?;
-        if has_notes && cost.cyclic {
-            write!(writer, "{GAP}{CYCLE_NOTE}")?;
+        if has_notes {
+            let notes: Vec<&str> = [
+                (cost.cyclic, CYCLE_NOTE),
+                (cost.inline_bounded, INLINE_BOUNDED_NOTE),
+            ]
+            .into_iter()
+            .filter_map(|(set, note)| set.then_some(note))
+            .collect();
+            if !notes.is_empty() {
+                write!(writer, "{GAP}{}", notes.join(", "))?;
+            }
         }
         writeln!(writer)?;
+    }
+    if report.schemas.iter().any(|cost| cost.inline_bounded) {
+        writeln!(
+            writer,
+            "{INLINE_BOUNDED_NOTE}: one inline expansion would render more than {} schema rows, so INLINE/USE was measured at --schema-depth {} and is a lower bound.",
+            crate::markdown::INLINE_ROW_BUDGET,
+            crate::markdown::AUTO_SCHEMA_DEPTH
+        )?;
     }
     Ok(())
 }
@@ -694,6 +719,7 @@ mod tests {
                     inline_total_tokens: 1350,
                     amplification: Some(1350.0 / 456.0),
                     cyclic: false,
+                    inline_bounded: false,
                 },
                 SchemaCost {
                     name: "Node".into(),
@@ -703,6 +729,7 @@ mod tests {
                     inline_total_tokens: 120,
                     amplification: Some(120.0 / 890.0),
                     cyclic: true,
+                    inline_bounded: false,
                 },
             ],
             endpoint_hotspots: vec![1, 0],
@@ -738,6 +765,7 @@ mod tests {
                 inline_total_tokens: 1100,
                 amplification: Some(1.1),
                 cyclic: false,
+                inline_bounded: false,
             },
             // 10x amplification on a small absolute inline total.
             SchemaCost {
@@ -748,6 +776,7 @@ mod tests {
                 inline_total_tokens: 100,
                 amplification: Some(10.0),
                 cyclic: false,
+                inline_bounded: false,
             },
             // Ties Small on ratio and wins the inline-total tie-break.
             SchemaCost {
@@ -758,6 +787,7 @@ mod tests {
                 inline_total_tokens: 1000,
                 amplification: Some(10.0),
                 cyclic: false,
+                inline_bounded: false,
             },
             // No ratio (empty definition): always last.
             SchemaCost {
@@ -768,6 +798,7 @@ mod tests {
                 inline_total_tokens: 20,
                 amplification: None,
                 cyclic: false,
+                inline_bounded: false,
             },
         ];
         // Ratio beats absolute size, ratio ties break on inline total, and

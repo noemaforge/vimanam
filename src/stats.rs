@@ -106,13 +106,7 @@ pub(crate) fn compute(doc: &ApiDocumentation, config: &DocConfig) -> Result<Stat
         rows.push(ServiceStats {
             name: service.name.clone(),
             endpoints: count,
-            tokens: estimate_render(
-                doc,
-                &ResolvedConfig {
-                    config: std::borrow::Cow::Owned(service_config),
-                    notice: resolved.notice.clone(),
-                },
-            )?,
+            tokens: estimate_render(doc, &resolved.with_config(service_config))?,
         });
     }
 
