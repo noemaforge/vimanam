@@ -92,6 +92,9 @@ files (compiler-version skew), unless neither input has a user file. Source-rete
 (protoc drops them from descriptors). Enum reserved
 bounds use wide integers.
 
+File-pair diffs take per-side `--old-proto-path`/`--new-proto-path` (#162):
+a side's list replaces `-I` for that side; `diff_inputs::check_side_proto_roots`
+rejects them (exit 1) in Git-ref mode and for non-`.proto` inputs.
 `--breaking` scopes protobuf failure gates only; `--contract 1` rejects protobuf
 before output creation. `cli::diff_inputs` resolves committed regular proto
 files directly from Git blobs in memory via a custom `protox` `FileResolver`,

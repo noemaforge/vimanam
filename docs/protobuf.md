@@ -26,8 +26,16 @@ vimanam api.pb --schema example.v1.ListRequest
 vimanam api.pb --output-mode skill --detail full --include-schemas -o context/
 vimanam diff old.pb new.pb --format json --report
 vimanam diff old.proto new.proto -I proto --fail-on-breaking --breaking wire
+vimanam diff old/proto/api.proto new/proto/api.proto --old-proto-path old/proto --new-proto-path new/proto
 vimanam diff --from-ref v1 --to-ref v2 --spec proto/api.proto -I proto --breaking source --fail-on-breaking
 ```
+
+A shared `-I` list serves both sides of a file-pair diff, so two checkouts of
+one tree would resolve both sides' imports from the first root. Repeatable
+`--old-proto-path` / `--new-proto-path` give each side its own roots; a side's
+list replaces `-I` for that side (a side without one keeps `-I`). They require
+`.proto` sources for OLD and NEW and are rejected with `--from-ref`/`--to-ref`
+(exit 1, before output is created).
 
 Operation IDs are fully qualified RPC names. Markdown uses native `RPC`, input
 message and `result` labels; messages show field numbers, JSON names, oneofs,

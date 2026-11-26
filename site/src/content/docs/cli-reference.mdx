@@ -80,6 +80,8 @@ Conversion flags cannot be combined with subcommands (`diff`, `completions`, `ma
 | `--from-spec <PATH>` | — | Literal repository-relative path at `--from-ref` (requires `--to-spec`; bypasses rename discovery) |
 | `--to-spec <PATH>` | — | Literal repository-relative path at `--to-ref` (requires `--from-spec`) |
 | `-I, --proto-path <DIR>` | — | Protobuf import root (repeatable; must stay repository-relative with Git refs) |
+| `--old-proto-path <DIR>` | `-I` | Import root for `OLD` only (repeatable; file-pair `.proto` diffs; replaces `-I` for that side) |
+| `--new-proto-path <DIR>` | `-I` | Import root for `NEW` only (repeatable; file-pair `.proto` diffs; replaces `-I` for that side) |
 | `--format <markdown\|json>` | `markdown` | Output Markdown diff report or JSON contract envelope |
 | `--contract <1\|2>` | `2` | JSON contract version (`1` is OpenAPI-only) |
 | `--breaking <all\|wire\|source>` | `all` | Protobuf-only scope for `--fail-on-breaking` |
