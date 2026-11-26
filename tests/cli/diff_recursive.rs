@@ -221,6 +221,16 @@ fn the_v2_report_lists_unparseable_definitions_only_when_there_are_any() {
         .collect();
     assert_eq!(kinds, ["unparsed_definition_changed"; 2]);
     assert!(run("r8-unroll-resp").get("warnings").is_none());
+    // `--omit-surfaces` keeps them.
+    let output = vimanam()
+        .arg("diff")
+        .arg(format!("{CASES}/r8-bad-def-oneside-resp.old.json"))
+        .arg(format!("{CASES}/r8-bad-def-oneside-resp.new.json"))
+        .args(["--format", "json", "--omit-surfaces"])
+        .output()
+        .unwrap();
+    let omitted: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(omitted["warnings"], doc["warnings"]);
 }
 
 #[test]

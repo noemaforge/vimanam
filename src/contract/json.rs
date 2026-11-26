@@ -93,6 +93,7 @@ impl JsonDiff {
             summary: self.summary,
             changes: self.changes,
             deltas: self.deltas,
+            warnings: self.warnings,
         }
     }
 }
@@ -129,6 +130,9 @@ pub struct JsonDiffWithoutSurfaces {
     /// Optional existing OpenAPI report deltas.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub deltas: Option<JsonDeltas>,
+    /// As [`JsonDiff::warnings`]; omitted when there are none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<JsonWarning>,
 }
 
 impl JsonDiffWithoutSurfaces {
