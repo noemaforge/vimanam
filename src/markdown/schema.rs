@@ -97,26 +97,24 @@ pub(crate) fn reachable_component_count<'a>(
 /// re-expands every acyclic path through the component graph at each use
 /// site, so a densely cross-linked graph (Stripe's) grows without practical
 /// bound even with cycle detection. Real specs that finish stay far below this
-/// (a 10 MB GitHub REST spec renders ~63 thousand rows, 5.6 MB); two million
-/// rows is a few hundred MB of Markdown. Renders at or below the budget are
+/// (the largest local one renders about 74 thousand table lines, 11 MB; a
+/// 10 MB GitHub REST spec about 68 thousand, 5.6 MB). The budget counts rows,
+/// not bytes: with short descriptions two million rows is a few hundred MB of
+/// Markdown, and long descriptions scale that up (2,000-character ones make
+/// about a million rows over 600 MB). Renders at or below the budget are
 /// unchanged.
 pub(crate) const INLINE_ROW_BUDGET: usize = 2_000_000;
 
-/// Rows one schema's inline expansion may have for the `--costs`
-/// amplification model to measure it in full (#177). The model measures every
-/// used schema separately, so its total work is this budget times the schema
-/// count; [`INLINE_ROW_BUDGET`] per schema would take minutes on a
-/// Stripe-sized dense graph. Real specs stay far below it (the largest single
-/// expansion in the local corpus is under 3 thousand rows), so their reports
-/// are unchanged.
+/// Rows of one schema's inline expansion the `--costs` amplification model
+/// measures (#177), at any `--schema-depth`. The model measures every used
+/// schema separately, so its total work is this budget times the schema count;
+/// [`INLINE_ROW_BUDGET`] per schema would take minutes on a Stripe-sized dense
+/// graph. A longer expansion is measured by exactly its first this-many rows,
+/// so a bounded figure always covers more rows than any unbounded one. Real
+/// specs stay far below it (the largest single expansion in the local corpus
+/// is under 3 thousand rows), so their reports are unchanged.
 #[cfg(feature = "cli")]
-pub(crate) const INLINE_MEASURE_ROW_BUDGET: usize = 25_000;
-
-/// Rows of an over-budget expansion the `--costs` model does measure: their
-/// tokens are a lower bound on the whole expansion's, of the right order of
-/// magnitude for ranking hotspots, at a fixed cost per schema.
-#[cfg(feature = "cli")]
-pub(crate) const INLINE_MEASURE_PREFIX_ROWS: usize = 2_000;
+pub(crate) const INLINE_MEASURE_ROW_BUDGET: usize = 10_000;
 
 /// Rows an `--inline-schemas` table renders for `roots` without
 /// `--schema-depth`, counted up to `cap + 1` so an exponential expansion stops
@@ -1069,11 +1067,10 @@ pub(crate) fn definition_section_tokens(
 /// label and depth; the drift is a few characters, though a depth-bounded
 /// configuration may truncate the real expansion differently.
 ///
-/// Returns the tokens and whether the expansion was bounded: without
-/// `--schema-depth`, an expansion that would render more than
-/// [`INLINE_MEASURE_ROW_BUDGET`] rows (#177, counted without rendering) is
-/// measured by its first [`INLINE_MEASURE_PREFIX_ROWS`] rows only, so the
-/// figure is a lower bound.
+/// Returns the tokens and whether the expansion was bounded: collection stops
+/// one row past [`INLINE_MEASURE_ROW_BUDGET`] (#177), whatever the depth, and
+/// an expansion that reached it is measured by its first
+/// [`INLINE_MEASURE_ROW_BUDGET`] rows only, so the figure is a lower bound.
 #[cfg(feature = "cli")]
 pub(crate) fn inline_expansion_tokens(
     doc: &ApiDocumentation,
@@ -1084,12 +1081,7 @@ pub(crate) fn inline_expansion_tokens(
         return (0, false);
     };
     let mut ctx = SchemaContext::configured(doc, config, false);
-    let bounded = ctx.max_depth.is_none()
-        && inline_row_count(doc, [resolved], ctx.selected, INLINE_MEASURE_ROW_BUDGET)
-            > INLINE_MEASURE_ROW_BUDGET;
-    if bounded {
-        ctx.row_limit = Some(INLINE_MEASURE_PREFIX_ROWS);
-    }
+    ctx.row_limit = Some(INLINE_MEASURE_ROW_BUDGET + 1);
     ctx.inline = true;
     ctx.protected_depth = 0;
     let name = short_schema_reference(reference);
@@ -1107,6 +1099,8 @@ pub(crate) fn inline_expansion_tokens(
         &mut ctx,
     );
 
+    let bounded = rows.len() > INLINE_MEASURE_ROW_BUDGET;
+    rows.truncate(INLINE_MEASURE_ROW_BUDGET);
     let mut buffer = Vec::new();
     let _ = write_rows(&mut buffer, &rows, false);
     (super::estimate_tokens(&buffer), bounded)

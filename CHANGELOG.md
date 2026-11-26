@@ -9,6 +9,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Behavior changes
 
+- **`--inline-schemas` renders are bounded at 2,000,000 schema rows**
+  (#177). Whole-document `--detail full --include-schemas --inline-schemas`
+  renders now finish on densely cyclic specs. Inline expansion re-expands
+  every acyclic path through the component graph at each use site, so such
+  specs grew exponentially and never finished. Without `--schema-depth`,
+  vimanam now counts the inline rows first (without rendering) and, past
+  2,000,000 rows, bounds expansion at `--schema-depth 2` with a stderr notice
+  and a blockquote under the title. The count follows the view, so the
+  default service view counts a multi-tag operation once per tag. This also
+  covers `--max-tokens`, `--stats`, `--costs` and selected slices. The budget
+  counts rows, not bytes: with short descriptions it is a few hundred MB of
+  Markdown, and long descriptions scale that up. A 40-component adversarial
+  spec that wrote 1.35 GB in 30 s without finishing now renders in about
+  25 ms. Every render under the budget (all fixtures; the GitHub REST,
+  protobuf-generated and petstore specs) is byte-identical.
+  - **Changed output:** inline renders above the budget that used to finish,
+    slowly (hundreds of MB), are now bounded as well. Pass `--schema-depth N`
+    to choose a deeper bound.
+  - **`--costs`:** its inline model expands every used schema separately (in
+    linked mode too). It now measures at most 10,000 rows of each schema's
+    expansion, at any `--schema-depth`, and marks a cut figure
+    `inline-bounded`. INLINE/USE, INLINE TOTAL and AMPLIF. are then lower
+    bounds, shown as `at least` in the hotspots. A dense 1,000-schema graph
+    now reports in seconds.
+  - **API:** no public library API change. The touched `--costs`/`--stats`
+    types are crate-private, and `generate_markdown` applies the same bound.
 - **`diff` compares `$ref` targets as edges** (#181). Each `(old component,
   new component)` pair is compared once, and a change inside a shared
   component is reported once per usage direction (request: parameters and
@@ -152,28 +178,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `ResponseMediaTypeAdded`, `ResponseMediaTypeRemoved`; the enum is
     `#[non_exhaustive]`), as does `diff::json::JsonChangeKind`. The CLI is
     unaffected.
-- Whole-document `--detail full --include-schemas --inline-schemas` renders
-  finish on densely cyclic specs (#177). Inline expansion re-expands every
-  acyclic path through the component graph at each use site, so such specs
-  grew exponentially and never finished. Without `--schema-depth`, vimanam now
-  counts the inline rows first (without rendering) and, past 2,000,000 rows,
-  bounds expansion at `--schema-depth 2` with a stderr notice and a blockquote
-  under the title. The count follows the view, so the default service view
-  counts a multi-tag operation once per tag. This also covers `--max-tokens`,
-  `--stats`, `--costs` and selected slices. A 40-component adversarial spec
-  that wrote 1.35 GB in 30 s without finishing now renders in about 25 ms;
-  every render under the budget (all fixtures; the GitHub REST,
-  protobuf-generated and petstore specs) is byte-identical. Inline renders
-  above the budget that used to finish slowly (hundreds of MB) are now bounded
-  as well; pass `--schema-depth N` to choose a deeper bound. `--costs`, whose
-  inline model expands every used schema separately (in linked mode too), now
-  measures a schema whose single expansion exceeds 25,000 rows by its first
-  2,000 rows and marks the figure `inline-bounded` (a lower bound, shown as
-  `at least` in the hotspots), so a dense 1,000-schema graph reports in
-  seconds.
-  No public library API change: the touched
-  `--costs`/`--stats` types are crate-private, and `generate_markdown`
-  applies the same bound.
 - `diff` no longer stops expanding a recursive component by its name when
   only one side writes it as a `$ref` (#187). Expansion now stops where the
   compared pair of old and new values recurs, as the Lean reference model

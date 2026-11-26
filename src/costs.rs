@@ -85,9 +85,9 @@ pub(crate) struct SchemaCost {
     /// itself). Inline expansion cuts such cycles with a one-row notice.
     pub cyclic: bool,
     /// One inline expansion would render more than
-    /// [`crate::markdown::INLINE_MEASURE_ROW_BUDGET`] rows without `--schema-depth`
-    /// (#177), so `inline_per_use_tokens` measures only its first
-    /// [`crate::markdown::INLINE_MEASURE_PREFIX_ROWS`] rows and is a lower bound.
+    /// [`crate::markdown::INLINE_MEASURE_ROW_BUDGET`] rows (#177), so
+    /// `inline_per_use_tokens` measures only its first that-many rows and,
+    /// with `inline_total_tokens` and `amplification`, is a lower bound.
     pub inline_bounded: bool,
 }
 
@@ -677,9 +677,8 @@ fn write_schema_table<W: Write>(writer: &mut W, report: &CostReport) -> Result<(
     if report.schemas.iter().any(|cost| cost.inline_bounded) {
         writeln!(
             writer,
-            "{INLINE_BOUNDED_NOTE}: one inline expansion would render more than {} schema rows, so INLINE/USE measures only its first {} rows and is a lower bound.",
-            crate::markdown::INLINE_MEASURE_ROW_BUDGET,
-            crate::markdown::INLINE_MEASURE_PREFIX_ROWS
+            "{INLINE_BOUNDED_NOTE}: one inline expansion would render more than {0} schema rows, so INLINE/USE measures only its first {0} rows; it, INLINE TOTAL and AMPLIF. are lower bounds.",
+            crate::markdown::INLINE_MEASURE_ROW_BUDGET
         )?;
     }
     Ok(())

@@ -182,7 +182,7 @@ fn budget_stats_and_costs_stay_bounded_on_cyclic_specs() {
     assert!(!err.contains(NOTICE));
     assert!(out.contains("cycle, inline-bounded"), "{out}");
     assert!(out.contains(
-        "inline-bounded: one inline expansion would render more than 25000 schema rows, so INLINE/USE measures only its first 2000 rows and is a lower bound."
+        "inline-bounded: one inline expansion would render more than 10000 schema rows, so INLINE/USE measures only its first 10000 rows; it, INLINE TOTAL and AMPLIF. are lower bounds."
     ));
     assert!(out.contains("tokens inline vs ~"), "{out}");
     assert!(out.contains(", at least ~"), "{out}");
@@ -248,4 +248,46 @@ fn inline_expansion_under_the_budget_is_unchanged() {
         LIMIT,
     );
     assert!(!costs.contains("inline-bounded"));
+}
+
+/// `C0`'s `--costs` row: `(INLINE/USE, inline-bounded)`.
+fn c0_inline_per_use(spec: &str, extra: &[&str]) -> (u64, bool) {
+    let mut args = vec![spec, "--detail", "full", "--include-schemas", "--costs"];
+    args.extend(extra);
+    let (code, out, _) = bounded(&args, LIMIT);
+    assert_eq!(code, 0);
+    let row = out
+        .lines()
+        .find(|line| line.starts_with("C0 "))
+        .unwrap_or_else(|| panic!("no C0 row: {out}"));
+    let columns: Vec<&str> = row.split_whitespace().collect();
+    (columns[3].parse().unwrap(), row.contains("inline-bounded"))
+}
+
+/// A bounded `--costs` measurement covers exactly the per-schema budget of
+/// rows, more than any unbounded one, so growing the graph past the budget
+/// never makes a schema look cheaper: at 9 × 3, C0's expansion fits (about
+/// 4,700 rows); from 10 × 3 it is bounded, and the figure keeps growing.
+#[test]
+fn bounded_costs_figures_never_rank_below_unbounded_ones() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut last = 0;
+    for (n, expect_bounded) in [(9, false), (10, true), (12, true)] {
+        let spec = write_spec(&dir, &format!("c{n}.json"), &cyclic_spec(n, 3));
+        let (inline, is_bounded) = c0_inline_per_use(&spec, &[]);
+        assert_eq!(is_bounded, expect_bounded, "{n} x 3");
+        assert!(inline >= last, "{n} x 3: {inline} < {last}");
+        last = inline;
+    }
+}
+
+/// The per-schema `--costs` budget holds at any explicit `--schema-depth`:
+/// depth 24 does not cut a dense cyclic graph's expansion in practice, and
+/// the linked document itself renders in milliseconds.
+#[test]
+fn costs_budget_holds_at_an_explicit_schema_depth() {
+    let dir = tempfile::tempdir().unwrap();
+    let spec = write_spec(&dir, "cyclic.json", &cyclic_spec(40, 4));
+    let (_, is_bounded) = c0_inline_per_use(&spec, &["--schema-depth", "24"]);
+    assert!(is_bounded);
 }

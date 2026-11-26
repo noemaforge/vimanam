@@ -31,9 +31,9 @@ pub(crate) use views::{removing_filters, service_is_visible, visible_endpoints};
 // `diff` compares the response schema the renderer would document.
 pub(crate) use schema::{PREFER_REF_DESCRIPTION_EXT, response_schema};
 // The `--costs` analysis measures schema use sites and per-schema renders.
-pub(crate) use schema::SchemaUse;
 #[cfg(feature = "cli")]
-pub(crate) use schema::{INLINE_MEASURE_PREFIX_ROWS, INLINE_MEASURE_ROW_BUDGET};
+pub(crate) use schema::INLINE_MEASURE_ROW_BUDGET;
+pub(crate) use schema::SchemaUse;
 #[cfg(feature = "cli")]
 pub(crate) use schema::{
     definition_section_tokens, inline_expansion_tokens, short_schema_reference,
