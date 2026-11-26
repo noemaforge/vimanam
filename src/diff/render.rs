@@ -33,6 +33,13 @@ pub fn write_diff<W: Write>(
     )?;
     writeln!(writer)?;
 
+    // An invalid `definitions` entry is compared as written (#188); the
+    // report says so before anything else.
+    for entry in &diff.unparsed_definitions {
+        writeln!(writer, "> **Warning:** {entry}.")?;
+        writeln!(writer)?;
+    }
+
     if diff.changes.is_empty() {
         writeln!(writer, "**Summary:** No changes.")?;
     } else {
@@ -221,8 +228,22 @@ fn change_label(kind: &ChangeKind) -> &'static str {
     }
 }
 
-/// The `Detail` column.
+/// The `Detail` column, plus why the change fails closed when it does
+/// (only then, so other rows are unchanged).
 fn change_detail(kind: &ChangeKind) -> String {
+    let detail = plain_detail(kind);
+    match super::fail_closed_of(kind) {
+        Some(super::FailClosed::UnparsedDefinition) => {
+            format!("{detail}; fails closed: invalid `definitions` entry")
+        }
+        Some(super::FailClosed::ExpansionCut) => {
+            format!("{detail}; fails closed: `$ref` expansion limit reached")
+        }
+        None => detail,
+    }
+}
+
+fn plain_detail(kind: &ChangeKind) -> String {
     match kind {
         ChangeKind::EndpointAdded => "-".to_string(),
         ChangeKind::EndpointRemoved { was_deprecated } => if *was_deprecated {
@@ -261,6 +282,7 @@ fn change_detail(kind: &ChangeKind) -> String {
             name,
             location,
             change,
+            ..
         } => format!("`{name}` ({location}) {}", describe_value_change(change)),
         ChangeKind::ResponseAdded { status } | ChangeKind::ResponseRemoved { status } => {
             status.clone()
@@ -269,8 +291,8 @@ fn change_detail(kind: &ChangeKind) -> String {
             format!("{} → {}", operation_id(old), operation_id(new))
         }
         ChangeKind::DeprecatedChanged { .. } => "-".to_string(),
-        ChangeKind::RequestSchemaChanged { change } => describe_value_change(change),
-        ChangeKind::ResponseSchemaChanged { status, change } => {
+        ChangeKind::RequestSchemaChanged { change, .. } => describe_value_change(change),
+        ChangeKind::ResponseSchemaChanged { status, change, .. } => {
             format!("{status} {}", describe_value_change(change))
         }
         ChangeKind::ComponentSchemaChanged {
@@ -451,12 +473,37 @@ mod tests {
             new_title: "API".into(),
             new_version: "2".into(),
             changes: Vec::new(),
+            unparsed_definitions: Vec::new(),
         };
         let mut buffer = Vec::new();
         write_diff(&mut buffer, &diff, None).unwrap();
         assert_eq!(
             String::from_utf8(buffer).unwrap(),
             "# API Diff: API 1 → 2\n\n**Summary:** No changes.\n"
+        );
+    }
+
+    #[test]
+    fn write_diff_names_unparsed_definitions() {
+        let diff = SpecDiff {
+            old_title: "API".into(),
+            old_version: "1".into(),
+            new_title: "API".into(),
+            new_version: "2".into(),
+            changes: Vec::new(),
+            unparsed_definitions: vec![super::super::UnparsedDefinition {
+                old: false,
+                name: "Bad".into(),
+                error: "invalid type".into(),
+            }],
+        };
+        let mut buffer = Vec::new();
+        write_diff(&mut buffer, &diff, None).unwrap();
+        assert_eq!(
+            String::from_utf8(buffer).unwrap(),
+            "# API Diff: API 1 → 2\n\n> **Warning:** `/definitions/Bad` in the new spec is not \
+             a valid schema (invalid type); it was compared as written.\n\n\
+             **Summary:** No changes.\n"
         );
     }
 
@@ -468,6 +515,7 @@ mod tests {
             new_title: "New".into(),
             new_version: "2".into(),
             changes: Vec::new(),
+            unparsed_definitions: Vec::new(),
         };
         let mut buffer = Vec::new();
         write_diff(&mut buffer, &diff, None).unwrap();

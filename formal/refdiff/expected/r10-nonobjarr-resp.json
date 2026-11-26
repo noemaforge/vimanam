@@ -1,0 +1,3 @@
+[
+{"change": {"after": {"properties": {"a": {"type": "string"}}, "type": "object"}, "before": [1], "op": "changed"}, "dir": "response", "neg": false, "owner": null, "ptr": "", "severity": "breaking", "use": "POST /x response:200"}
+]

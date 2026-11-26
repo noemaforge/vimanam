@@ -1,0 +1,4 @@
+[
+{"change": {"after": "string", "before": "integer", "op": "changed"}, "dir": "request", "neg": false, "owner": null, "ptr": "/properties/a/type", "severity": "breaking", "use": "POST /x body"},
+{"change": {"after": "yes", "op": "added"}, "dir": "request", "neg": false, "owner": null, "ptr": "/nullable", "severity": "breaking", "use": "POST /x body"}
+]

@@ -37,8 +37,8 @@ use sha2::{Digest, Sha256};
 use std::fmt::Write as _;
 
 use crate::diff::{
-    Change, ChangeKind, ComponentRef, Deltas, Location, Severity, SpecDiff, UseLocation,
-    ValueChange, ValueChangeKind, locate, severity,
+    Change, ChangeKind, ComponentRef, Deltas, FailClosed, Location, Severity, SpecDiff,
+    UseLocation, ValueChange, ValueChangeKind, locate, severity,
 };
 use crate::report::EndpointRef;
 use crate::utils::decode_json_pointer_token;
@@ -385,6 +385,7 @@ fn json_records(change: &Change) -> Vec<JsonChange> {
             component,
             change: value,
             negated,
+            fail_closed,
             uses,
             ..
         } => uses
@@ -392,7 +393,13 @@ fn json_records(change: &Change) -> Vec<JsonChange> {
             .map(|use_| {
                 record(
                     &use_.endpoint,
-                    component_kind_and_details(component, *negated, value, &use_.location),
+                    component_kind_and_details(
+                        component,
+                        *negated,
+                        *fail_closed,
+                        value,
+                        &use_.location,
+                    ),
                     level,
                 )
             })
@@ -446,6 +453,7 @@ fn details(entries: Vec<(&'static str, Value)>) -> JsonDetails {
 pub(crate) fn component_kind_and_details(
     component: &ComponentRef,
     negated: bool,
+    fail_closed: Option<FailClosed>,
     change: &ValueChange,
     location: &UseLocation,
 ) -> (JsonChangeKind, JsonDetails) {
@@ -461,17 +469,19 @@ pub(crate) fn component_kind_and_details(
             vec![("status", json!(status))],
         ),
     };
-    entries.extend(component_entries(component, negated));
+    entries.extend(component_entries(component, negated, fail_closed));
     entries.push(("schema_change", json!(json_schema_change(change))));
     (kind, details(entries))
 }
 
 /// `component`, plus `old_component` when the reference was retargeted and
-/// `under_not: true` when the uses reach the component through `not` (only
-/// then, so other records keep their IDs).
+/// `under_not: true` when the uses reach the component through `not`, and
+/// `fail_closed` (`unparsed_definition` or `expansion_cut`) when the change
+/// fails closed (each only then, so other records keep their IDs).
 pub(crate) fn component_entries(
     component: &ComponentRef,
     negated: bool,
+    fail_closed: Option<FailClosed>,
 ) -> Vec<(&'static str, Value)> {
     let mut entries = vec![("component", Value::String(component.new.clone()))];
     if component.renamed() {
@@ -479,6 +489,21 @@ pub(crate) fn component_entries(
     }
     if negated {
         entries.push(("under_not", Value::Bool(true)));
+    }
+    if let Some(reason) = fail_closed {
+        entries.push(("fail_closed", Value::String(reason.as_str().into())));
+    }
+    entries
+}
+
+/// `entries` plus `fail_closed` (the reason) when the change fails closed;
+/// unchanged otherwise, so other records keep their IDs.
+fn with_fail_closed(
+    mut entries: Vec<(&'static str, Value)>,
+    fail_closed: Option<FailClosed>,
+) -> Vec<(&'static str, Value)> {
+    if let Some(reason) = fail_closed {
+        entries.push(("fail_closed", Value::String(reason.as_str().into())));
     }
     entries
 }
@@ -557,13 +582,17 @@ pub(crate) fn json_kind_and_details(kind: &ChangeKind) -> (JsonChangeKind, JsonD
             name,
             location,
             change,
+            fail_closed,
         } => (
             JsonChangeKind::ParameterSchemaChanged,
-            details(vec![
-                ("name", json!(name)),
-                ("location", json!(location)),
-                ("schema_change", json!(json_schema_change(change))),
-            ]),
+            details(with_fail_closed(
+                vec![
+                    ("name", json!(name)),
+                    ("location", json!(location)),
+                    ("schema_change", json!(json_schema_change(change))),
+                ],
+                *fail_closed,
+            )),
         ),
         ChangeKind::ResponseAdded { status } => (
             JsonChangeKind::ResponseAdded,
@@ -583,24 +612,40 @@ pub(crate) fn json_kind_and_details(kind: &ChangeKind) -> (JsonChangeKind, JsonD
             JsonChangeKind::DeprecatedChanged,
             details(vec![("now", json!(now))]),
         ),
-        ChangeKind::RequestSchemaChanged { change } => (
+        ChangeKind::RequestSchemaChanged {
+            change,
+            fail_closed,
+        } => (
             JsonChangeKind::RequestSchemaChanged,
-            details(vec![("schema_change", json!(json_schema_change(change)))]),
+            details(with_fail_closed(
+                vec![("schema_change", json!(json_schema_change(change)))],
+                *fail_closed,
+            )),
         ),
-        ChangeKind::ResponseSchemaChanged { status, change } => (
+        ChangeKind::ResponseSchemaChanged {
+            status,
+            change,
+            fail_closed,
+        } => (
             JsonChangeKind::ResponseSchemaChanged,
-            details(vec![
-                ("status", json!(status)),
-                ("schema_change", json!(json_schema_change(change))),
-            ]),
+            details(with_fail_closed(
+                vec![
+                    ("status", json!(status)),
+                    ("schema_change", json!(json_schema_change(change))),
+                ],
+                *fail_closed,
+            )),
         ),
         ChangeKind::ComponentSchemaChanged {
             component,
             change,
             negated,
+            fail_closed,
             uses,
             ..
-        } => component_kind_and_details(component, *negated, change, &uses[0].location),
+        } => {
+            component_kind_and_details(component, *negated, *fail_closed, change, &uses[0].location)
+        }
     }
 }
 
@@ -884,6 +929,7 @@ mod tests {
                     new: json!("string"),
                 },
             ),
+            fail_closed: None,
         }));
         assert_eq!(kind, "parameter_schema_changed");
         assert_eq!(
@@ -948,6 +994,7 @@ mod tests {
                     new: json!("double"),
                 },
             ),
+            fail_closed: None,
         }));
         assert_eq!(kind, "request_schema_changed");
         assert_eq!(
@@ -973,6 +1020,7 @@ mod tests {
                 "/properties/pricing",
                 ValueChangeKind::Added(json!({ "type": "number" })),
             ),
+            fail_closed: None,
         }));
         assert_eq!(kind, "response_schema_changed");
         assert_eq!(
@@ -1224,6 +1272,7 @@ mod tests {
                     new: json!("integer"),
                 },
             ),
+            fail_closed: None,
         });
         let b = record(ChangeKind::ResponseSchemaChanged {
             status: "200".into(),
@@ -1234,6 +1283,7 @@ mod tests {
                     new: json!("boolean"),
                 },
             ),
+            fail_closed: None,
         });
         assert_ne!(a.id, b.id);
     }

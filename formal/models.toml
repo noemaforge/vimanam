@@ -26,8 +26,8 @@
 
 [[model]]
 lean = "formal/VimanamProofs/Severity.lean"
-read_against = "88be623a50d7"
-read_digest = "v1:sha256:25444a551b631721a7f0c61454c4cbef808f7ce8ab7cba81cad47bb5f6df7d20"
+read_against = "1d7674c1a104"
+read_digest = "v1:sha256:15fd89249b180063c2b5d0738a0121c8f9e92cc1e78cb257ed2789b6beca3134"
 rust = [
   "src/diff/mod.rs#Severity",
   "src/diff/mod.rs#ChangeKind",
@@ -37,6 +37,8 @@ rust = [
   "src/diff/mod.rs#at_default",
   "src/diff/mod.rs#request_schema_severity",
   "src/diff/mod.rs#response_schema_severity",
+  "src/diff/mod.rs#fail_closed",
+  "src/diff/mod.rs#FailClosed",
   "src/diff/value.rs#ValueChangeKind",
   "src/diff/value.rs#Location",
   "src/diff/value.rs#Node",
@@ -67,8 +69,8 @@ rust = [
 # drift, re-run the harness.
 [[model]]
 lean = "formal/VimanamProofs/RefDiff.lean"
-read_against = "77d8c81e8a76"
-read_digest = "v1:sha256:a16923fbb09a31c665813a9ed73c686232ab70ab58b12adbb51706a51008de52"
+read_against = "f6145f0b24bf"
+read_digest = "v1:sha256:f307cb8d10f91baf0490137c6dfb98e6770b7bf1751632bf40924e5705207276"
 rust = [
   "src/resolve.rs#reference_name",
   "src/resolve.rs#DocResolver",
@@ -115,6 +117,14 @@ rust = [
   "src/parser.rs#extract_schemas",
   "src/resolve.rs#RefEdge",
   "src/resolve.rs#PairResolver",
+  "src/resolve.rs#LocalWalk",
+  "src/resolve.rs#Expansion",
+  "src/resolve.rs#EXPANSION_BUDGET",
+  "src/resolve.rs#ClosedRegions",
+  "src/diff/mod.rs#fail_closed",
+  "src/diff/mod.rs#FailClosed",
+  "src/models.rs#AdditionalProperties",
+  "src/models.rs#UnparsedSchema",
   "src/diff/components.rs",
   "src/diff/json.rs#component_kind_and_details",
   "src/diff/json.rs#component_entries",
@@ -127,8 +137,8 @@ rust = [
 # `adapt` decide which attributes a fragment change touches.
 [[model]]
 lean = "formal/VimanamProofs/Protobuf.lean"
-read_against = "506d8ab1cfdf"
-read_digest = "v1:sha256:9ee2ca0e6e8299fe48b2749cc058f472bbe1b4b2a121a74843ef8c9142facea6"
+read_against = "a0ff2d41b887"
+read_digest = "v1:sha256:aac981b2d41259ef999c4446d90bebe0a0eb604446d430e78a4d6d707b2f00cb"
 rust = [
   "src/contract/protobuf.rs#ProtobufAdapter",
   "src/contract/protobuf.rs#rule",

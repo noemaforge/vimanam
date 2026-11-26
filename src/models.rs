@@ -718,6 +718,16 @@ pub enum SortMethod {
     None,
 }
 
+/// A `definitions` entry that does not deserialise as a [`Schema`] (#188),
+/// kept exactly as written.
+#[derive(Debug, Clone, PartialEq)]
+pub struct UnparsedSchema {
+    /// The entry as written.
+    pub value: serde_json::Value,
+    /// Why it does not deserialise.
+    pub error: String,
+}
+
 /// Intermediate representation for documentation generation
 #[derive(Debug, Clone)]
 pub struct ApiDocumentation {
@@ -737,6 +747,10 @@ pub struct ApiDocumentation {
     pub security_schemes: IndexMap<String, String>,
     /// Reusable schemas keyed by name in declaration order.
     pub schemas: IndexMap<String, Schema>,
+    /// `definitions` entries that do not deserialise as a [`Schema`] (#188),
+    /// keyed by name in declaration order. Rendering leaves them out;
+    /// `diff` compares them as written and names them in its report.
+    pub unparsed_schemas: IndexMap<String, UnparsedSchema>,
     // Reusable examples (`components/examples`), keyed by name for `$ref` lookups.
     /// Named source examples in declaration order.
     pub examples: IndexMap<String, Example>,

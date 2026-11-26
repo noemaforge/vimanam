@@ -1540,7 +1540,7 @@ pub fn documentation(doc: &Document) -> crate::ApiDocumentation {
     }
     services.sort_by(|a, b| a.name.cmp(&b.name));
     endpoints.sort_by(|a, b| a.path.cmp(&b.path));
-    crate::ApiDocumentation{title:"Protocol Buffers / gRPC".into(),version:String::new(),description:Some("Native Protocol Buffers contract. RPC selectors use fully qualified method names; schemas use fully qualified type names.".into()),services,endpoints,servers:vec![],security_schemes:IndexMap::new(),schemas,examples:IndexMap::new()}
+    crate::ApiDocumentation{title:"Protocol Buffers / gRPC".into(),version:String::new(),description:Some("Native Protocol Buffers contract. RPC selectors use fully qualified method names; schemas use fully qualified type names.".into()),services,endpoints,servers:vec![],security_schemes:IndexMap::new(),schemas,unparsed_schemas:IndexMap::new(),examples:IndexMap::new()}
 }
 /// Human-readable diff containing native rules and compatibility dimensions.
 pub fn write_diff(

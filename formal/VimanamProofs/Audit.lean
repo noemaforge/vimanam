@@ -14,6 +14,9 @@ import VimanamProofs
 #print axioms Vimanam.Severity.forall_of_check
 #print axioms Vimanam.Severity.locateGo_append
 #print axioms Vimanam.Severity.underNotGo_append
+#print axioms Vimanam.Severity.failClosed_never_review
+#print axioms Vimanam.Severity.failClosed_plain
+#print axioms Vimanam.Severity.failClosed_keeps_classified
 #print axioms Vimanam.Severity.walk_append
 #print axioms Vimanam.Severity.locate_nil
 #print axioms Vimanam.Severity.property_named_like_a_keyword

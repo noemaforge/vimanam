@@ -96,6 +96,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `diff` no longer stops expanding a recursive component by its name when
+  only one side writes it as a `$ref` (#187). Expansion now stops where the
+  compared pair of old and new values recurs, as the Lean reference model
+  specifies. Before, the walk compared a literal `$ref` with the other side's
+  inline schema, which caused two problems:
+  - changes beneath that point were hidden, so a Breaking change could pass
+    `--fail-on-breaking`;
+  - a recursive component unrolled inline (no change at all) reported a
+    Breaking `/type` added and exited 3. On Stripe, inlining every response
+    `$ref` two or three levels deep gave 45 and 754 false Breaking records;
+    it now gives none.
+
+  A pure alias loop (`C = {"$ref": C}`) facing an inline schema now compares
+  as its siblings without `$ref`, instead of reporting a `$ref` removed.
+  The work is bounded: past 64 one-sided expansions on one chain, or 4,096
+  in one schema comparison, the reference is compared as written and fails
+  closed: the `$ref` record there, and any change the rule table leaves to
+  review beneath it, is Breaking (v1 details `fail_closed: "expansion_cut"`,
+  v2 native kind `expansion_cut`), so a change hidden behind the cut still
+  trips `--fail-on-breaking`. Two
+  reference cycles facing each other no longer grow exponentially: 9 and 10
+  components take 0.8 s.
+- `diff` compares a `definitions` entry that is not a valid schema instead
+  of dropping it (#188). Before, a change inside such an entry (one with
+  `"required": "a"`, say) printed "No changes." and exited 0. The entry is
+  now compared as written and fails closed: a change inside it that the
+  rule table leaves to review is Breaking, whether the entry is compared
+  with its counterpart or expanded against an inline schema (v1 details
+  `fail_closed: "unparsed_definition"`, v2 native kind
+  `unparsed_definition_changed`; Markdown rows say "fails closed");
+  Breaking and Non-breaking verdicts stand.
+  The report opens with a `> **Warning:**` line naming the entry by JSON
+  pointer, the same goes to stderr, and v2 JSON has a new `warnings` array
+  (omitted when empty). Markdown rendering still leaves the entry out.
+  **Library API break (#187, #188).** The enum variants
+  `diff::ChangeKind::ParameterSchemaChanged`,
+  `diff::ChangeKind::RequestSchemaChanged` and
+  `diff::ChangeKind::ResponseSchemaChanged` (released in earlier versions)
+  gained a `fail_closed: Option<diff::FailClosed>` field. Downstream code
+  that builds one of them as a struct literal must set it, and a pattern
+  that lists their fields without `..` must add it or `..`. The CLI is
+  unaffected. Also new: `diff::ChangeKind::ComponentSchemaChanged` (itself
+  new in this release) has the same `fail_closed` field; the structs
+  `ApiDocumentation` (field `unparsed_schemas`), `diff::SpecDiff` (field
+  `unparsed_definitions`) and `contract::json::JsonDiff` (field
+  `warnings`) gained a field each, which breaks struct literals of them;
+  and the new types are `UnparsedSchema`, `diff::UnparsedDefinition`,
+  `diff::FailClosed` and `contract::json::JsonWarning`.
 - `diff` no longer rates removing a member from a **response** `enum` as
   breaking (#169): a server that stops returning a value cannot break a
   client, so the row is now non-breaking. Request-side enum removal stays

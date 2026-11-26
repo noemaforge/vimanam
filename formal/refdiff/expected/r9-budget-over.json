@@ -1,0 +1,6 @@
+[
+{"change": {"after": "#/components/schemas/B0", "op": "added"}, "dir": "request", "neg": false, "owner": null, "ptr": "/properties/p1/$ref", "severity": "breaking", "use": "POST /x body"},
+{"change": {"before": "object", "op": "removed"}, "dir": "request", "neg": false, "owner": null, "ptr": "/properties/p1/type", "severity": "breaking", "use": "POST /x body"},
+{"change": {"before": {"$ref": "#/components/schemas/A1"}, "op": "removed"}, "dir": "request", "neg": false, "owner": null, "ptr": "/properties/p1/properties/p0", "severity": "breaking", "use": "POST /x body"},
+{"change": {"before": {"$ref": "#/components/schemas/A1"}, "op": "removed"}, "dir": "request", "neg": false, "owner": null, "ptr": "/properties/p1/properties/p1", "severity": "breaking", "use": "POST /x body"}
+]

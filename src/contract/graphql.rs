@@ -2621,6 +2621,7 @@ pub fn documentation(doc: &Document) -> crate::ApiDocumentation {
         servers: vec![],
         security_schemes: IndexMap::new(),
         schemas,
+        unparsed_schemas: IndexMap::new(),
         examples: IndexMap::new(),
     }
 }

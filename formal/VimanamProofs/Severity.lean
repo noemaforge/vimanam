@@ -24,7 +24,8 @@ file only.
   (`diff_values`) never reports `Changed a a`; theorems that need this take
   `Kind.Wf`.
 * A `ComponentSchemaChanged` (#181) keeps its direction, `negated` flag and
-  change; which component and which uses it reports are dropped.
+  change; which component and which uses it reports are dropped. Its
+  `unparsed` flag (#188) is `failClosed` applied to that verdict.
 * `ParameterAdded`, `EndpointRemoved` and the other structural changes keep
   only the fields `severity` reads (names, locations and statuses are
   dropped; an `operationId` is reduced to present or absent).
@@ -295,5 +296,33 @@ def severity : Change → Severity
   | .componentSchemaChanged _ true _ _ => .review
   | .componentSchemaChanged .request false p k => requestSeverity p k
   | .componentSchemaChanged .response false p k => responseSeverity p k
+
+/-- A change the comparison could not see properly fails closed: a change
+the table cannot classify (Review) is Breaking; Breaking and Non-breaking
+verdicts stand. `closed` is set (`diff::FailClosed`) for a change
+* inside a `definitions` entry that does not deserialise as a schema,
+  compared as written (#188): owned by a component pair with such a side, or
+  at or beneath a one-sided expansion of one;
+* at or beneath a one-sided reference the walk refused to expand, past the
+  expansion budget or the chain cap (#187): compared as written, its
+  `$ref` added or removed is never a silent pass.
+The retarget record of a pair is never inside either and is not passed
+through this. -/
+def failClosed (closed : Bool) (s : Severity) : Severity :=
+  if closed && s == .review then .breaking else s
+
+/-- `diff::severity` on a `ComponentSchemaChanged` whose `unparsed` flag is
+set: never Review. -/
+theorem failClosed_never_review (s : Severity) : failClosed true s ≠ .review := by
+  cases s <;> decide
+
+/-- Without the flag nothing changes. -/
+theorem failClosed_plain (s : Severity) : failClosed false s = s := by
+  cases s <;> rfl
+
+/-- It only ever raises Review: a classified verdict stands. -/
+theorem failClosed_keeps_classified (u : Bool) (s : Severity) (h : s ≠ .review) :
+    failClosed u s = s := by
+  cases u <;> cases s <;> simp_all [failClosed]
 
 end Vimanam.Severity

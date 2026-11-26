@@ -145,8 +145,11 @@ fn run_diff<W: Write>(
     } else {
         diff::EndpointMatching::Moves
     };
-    let resolver = crate::resolve::PairResolver::new(&old.schemas, &new.schemas);
+    let resolver = crate::resolve::PairResolver::for_docs(&old, &new);
     let spec_diff = diff::diff_with_resolver(&old, &new, matching, &resolver);
+    for entry in &spec_diff.unparsed_definitions {
+        notice(&format!("vimanam: warning: {entry}"));
+    }
     let deltas = if args.report {
         Some(diff::compute_deltas(&old, &new).context("Failed to compute deltas")?)
     } else {

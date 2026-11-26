@@ -1,0 +1,4 @@
+[
+{"change": {"after": "#/components/schemas/Z", "op": "added"}, "dir": "request", "neg": false, "owner": null, "ptr": "/properties/z/$ref", "severity": "breaking", "use": "POST /x body"},
+{"change": {"before": {"type": "integer"}, "op": "removed"}, "dir": "request", "neg": false, "owner": null, "ptr": "/properties/z/properties/f", "severity": "breaking", "use": "POST /x body"}
+]

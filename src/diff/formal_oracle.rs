@@ -204,15 +204,20 @@ fn structural(input: &Value) -> ChangeKind {
 fn schema_change(rust: &str, pointer: String, kind: ValueChangeKind) -> ChangeKind {
     let change = ValueChange { pointer, kind };
     match rust {
-        "diff::severity(RequestSchemaChanged)" => ChangeKind::RequestSchemaChanged { change },
+        "diff::severity(RequestSchemaChanged)" => ChangeKind::RequestSchemaChanged {
+            change,
+            fail_closed: None,
+        },
         "diff::severity(ParameterSchemaChanged)" => ChangeKind::ParameterSchemaChanged {
             name: "p".into(),
             location: "query".into(),
             change,
+            fail_closed: None,
         },
         "diff::severity(ResponseSchemaChanged)" => ChangeKind::ResponseSchemaChanged {
             status: "200".into(),
             change,
+            fail_closed: None,
         },
         other => panic!("no replay for {other}"),
     }
@@ -255,6 +260,7 @@ fn replay(rust: &str, cases: &[Value], seen: &mut BTreeSet<&'static str>) -> Vec
                             let request = rate(
                                 ChangeKind::RequestSchemaChanged {
                                     change: value_change.clone(),
+                                    fail_closed: None,
                                 },
                                 seen,
                             );
@@ -262,6 +268,7 @@ fn replay(rust: &str, cases: &[Value], seen: &mut BTreeSet<&'static str>) -> Vec
                                 ChangeKind::ResponseSchemaChanged {
                                     status: "200".into(),
                                     change: value_change.clone(),
+                                    fail_closed: None,
                                 },
                                 seen,
                             );
@@ -292,6 +299,10 @@ fn replay(rust: &str, cases: &[Value], seen: &mut BTreeSet<&'static str>) -> Vec
                         kind: kind(&input[3]),
                     },
                     negated: input[1].as_bool().expect("negated"),
+                    fail_closed: input[4]
+                        .as_bool()
+                        .expect("unparsed")
+                        .then_some(super::FailClosed::UnparsedDefinition),
                     uses: Vec::new(),
                 };
                 json!(severity_name(rate(kind, seen)))

@@ -6,6 +6,7 @@ use std::path::Path;
 
 use crate::models::{
     ApiDocumentation, Endpoint, Example, OpenApiSpec, Parameter, Response, Schema, Service,
+    UnparsedSchema,
 };
 use crate::utils::{
     extract_security_schemes, extract_servers, resolve_parameter_ref, resolve_path_item_ref,
@@ -77,7 +78,7 @@ pub fn parse_openapi_bytes(
 
     let endpoints = extract_endpoints(&spec, &spec_json, &services);
     debug!("Extracted {} endpoints", endpoints.len());
-    let schemas = extract_schemas(&spec);
+    let (schemas, unparsed_schemas) = extract_schemas(&spec);
     debug!("Extracted {} reusable schemas", schemas.len());
     let examples = extract_examples(&spec);
     debug!("Extracted {} reusable examples", examples.len());
@@ -91,6 +92,7 @@ pub fn parse_openapi_bytes(
         servers,
         security_schemes,
         schemas,
+        unparsed_schemas,
         examples,
     })
 }
@@ -451,8 +453,15 @@ fn extract_endpoints(
 
 /// Collects reusable schemas from OpenAPI 3 `components.schemas` and OpenAPI 2 `definitions`
 /// into a deterministic registry.
-fn extract_schemas(spec: &OpenApiSpec) -> IndexMap<String, Schema> {
+/// The document's reusable schemas: `components.schemas`, then every
+/// `definitions` entry whose name is not taken. A `definitions` entry that
+/// does not deserialise as a [`Schema`] is returned separately, as written
+/// (#188): rendering leaves it out, but `diff` still compares it.
+fn extract_schemas(
+    spec: &OpenApiSpec,
+) -> (IndexMap<String, Schema>, IndexMap<String, UnparsedSchema>) {
     let mut schemas = IndexMap::new();
+    let mut unparsed = IndexMap::new();
 
     if let Some(components) = &spec.components
         && let Some(component_schemas) = &components.schemas
@@ -481,12 +490,19 @@ fn extract_schemas(spec: &OpenApiSpec) -> IndexMap<String, Schema> {
                         "Skipping definition '{}': failed to parse schema: {}",
                         name, err
                     );
+                    unparsed.insert(
+                        name.clone(),
+                        UnparsedSchema {
+                            value: raw_schema.clone(),
+                            error: err.to_string(),
+                        },
+                    );
                 }
             }
         }
     }
 
-    schemas
+    (schemas, unparsed)
 }
 
 /// Collects reusable examples from OpenAPI 3 `components.examples` into a

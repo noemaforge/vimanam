@@ -1732,6 +1732,7 @@ mod tests {
             servers: Vec::new(),
             security_schemes: IndexMap::new(),
             schemas: IndexMap::new(),
+            unparsed_schemas: IndexMap::new(),
             examples: IndexMap::new(),
         };
         for i in 0..10 {

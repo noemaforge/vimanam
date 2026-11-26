@@ -94,7 +94,7 @@ import VimanamProofs.Severity
 namespace Vimanam.RefDiff
 
 open Vimanam.Severity (Pointer Kind Val Severity Node Loc locate underNot
-  requestSeverity responseSeverity)
+  requestSeverity responseSeverity failClosed)
 
 /-! ## JSON -/
 
@@ -250,6 +250,61 @@ partial def schemaNorm : J → J
     .obj (normNull kvs)
   | j => j
 
+/-- Whether `models::Schema` deserialises `j` (#188): an object whose typed
+keys hold, when not `null`, the types the struct declares (`title`,
+`description`, `format`, `$ref` strings; `type` a string or an array of
+strings; `properties` an object of schemas; `items` a schema; `required` an
+array of strings; `allOf`/`oneOf`/`anyOf` arrays of schemas; `enum` an
+array; `nullable` a boolean; `additionalProperties` a boolean or a schema).
+Every other key is an extension and holds anything. -/
+partial def parsesAsSchema : J → Bool
+  | .obj kvs => kvs.all fun (k, v) =>
+    let str : J → Bool := fun
+      | .str _ => true
+      | _ => false
+    v.isNull ||
+    if k == "title" || k == "description" || k == "format" || k == "$ref" then str v
+    else if k == "type" then
+      match v with
+      | .str _ => true
+      | .arr xs => xs.all str
+      | _ => false
+    else if k == "properties" then
+      match v with
+      | .obj m => m.all fun (_, x) => parsesAsSchema x
+      | _ => false
+    else if k == "items" then parsesAsSchema v
+    else if k == "required" then
+      match v with
+      | .arr xs => xs.all str
+      | _ => false
+    else if k == "allOf" || k == "oneOf" || k == "anyOf" then
+      match v with
+      | .arr xs => xs.all parsesAsSchema
+      | _ => false
+    else if k == "enum" then
+      match v with
+      | .arr _ => true
+      | _ => false
+    else if k == "nullable" then
+      match v with
+      | .bool _ => true
+      | _ => false
+    else if k == "additionalProperties" then
+      match v with
+      | .bool _ => true
+      | v => parsesAsSchema v
+    else true
+  | _ => false
+
+#guard parsesAsSchema (.obj [("type", .str "object"), ("required", .arr [.str "a"])])
+#guard parsesAsSchema (.obj [("required", .null), ("x-y", .num "1"), ("not", .num "2")])
+-- #188's repro: `required` is a string.
+#guard !parsesAsSchema (.obj [("type", .str "object"), ("required", .str "a")])
+#guard !parsesAsSchema (.obj [("properties", .obj [("a", .obj [("nullable", .str "yes")])])])
+#guard !parsesAsSchema (.obj [("type", .num "1")])
+#guard !parsesAsSchema (.bool true)
+
 #guard (schemaNorm (.obj [("type", .arr [.str "string", .str "null"])])).render
   == "{\"type\":\"string\",\"nullable\":true}"
 #guard (schemaNorm (.obj [("type", .arr [.str "null"])])).render == "{\"type\":\"null\"}"
@@ -331,11 +386,22 @@ grammar is replaced by: `DocResolver::component_value`). The same names. -/
 structure Side where
   comps : List (String × J)
   raw : List (String × J)
+  /-- The `definitions` entries that do not deserialise as a schema (#188). -/
+  unparsed : List String := []
 
 def Side.target (s : Side) (name : String) : J := (s.comps.lookup name).getD .null
 
 /-- `resolve::MAX_RESOLVE_DEPTH`. -/
 def maxResolveDepth : Nat := 64
+
+/-- `resolve::EXPANSION_BUDGET`: one-sided expansions one local walk may make
+(#187 review). Cutting on a recurring pair bounds each chain, but not the
+tree of chains: two cycles of lengths `a` and `b` facing each other branch
+until the pair recurs, about `a·b` levels deep, so the walk is exponential
+in that. Past the budget a one-sided reference is compared as written, which
+always reports a `$ref` added or removed there, and everything at and beneath
+it fails closed (`closeAt`): a cut never hides a Breaking change. -/
+def expansionBudget : Nat := 4096
 
 /-- `j` as a reference to a component this side declares: the name and the
 siblings (every key but `$ref`). An undeclared or external reference is
@@ -442,6 +508,12 @@ structure Out where
   hops : Array Hop := #[]
   /-- Where a one-sided expansion was cut (the rest repeats periodically). -/
   cuts : Array Pointer := #[]
+  /-- One-sided expansions made so far (`expansionBudget`). -/
+  expansions : Nat := 0
+  /-- Where a change fails closed at and beneath (`Severity.failClosed`): a
+  one-sided reference refused past the budget or the chain cap, and a
+  one-sided expansion of a `definitions` entry that does not deserialise. -/
+  closed : Array Pointer := #[]
 
 abbrev W := StateM Out
 
@@ -550,14 +622,38 @@ def setCmp (os ns : Side) (p : Pointer) (xs ys : List J) : W Unit := do
   for x in (xs.filter ys.contains).eraseDups do
     rawCmp .opaq (p ++ [setSegment x]) (os.inline [] x) (ns.inline [] x)
 
+/-- An object's entries in key order. -/
+def byKey (kvs : List (String × J)) : List (String × J) :=
+  kvs.mergeSort fun a b => decide (a.1 ≤ b.1)
+
+/-- Whether a one-sided expansion is refused here, and otherwise counts it:
+refused once `maxResolveDepth` expansions are on the chain, or once the walk
+has made `expansionBudget` of them (`PairResolver::local`). A refused
+reference is compared as written (`plain`), which reports its `$ref` added
+or removed. The budget is spent in walk order: objects key by key in key
+order, arrays by index, depth first. -/
+def spent (chain : List (Pointer × J × J)) : W Bool := do
+  let out ← get
+  if chain.length ≥ maxResolveDepth || out.expansions ≥ expansionBudget then return true
+  set { out with expansions := out.expansions + 1 }
+  return false
+
+/-- Changes at and beneath `p` fail closed (`Out.closed`). -/
+def closeAt (p : Pointer) : W Unit :=
+  modify fun out => { out with closed := out.closed.push p }
+
+/-- Whether a change at `p` fails closed in a walk that closed `closed`. -/
+def closedAt (closed : Array Pointer) (p : Pointer) : Bool :=
+  closed.any (·.isPrefixOf p)
+
 mutual
 
 /-- Compares `o` and `n` at `p` (a `node` of the schema grammar), resolving
 references by the three rules in the header. `chain` holds the value pairs
 a one-sided expansion produced on the way here: the walk is a function of
 the pair it compares, so meeting one again means the rest repeats
-periodically (see `expand`; main's name-keyed cut instead compares a literal
-`$ref` against an expansion). -/
+periodically (see `expand`; the Rust's name-keyed cut before #187 instead
+compared a literal `$ref` against an expansion). -/
 partial def go (os ns : Side) (chain : List (Pointer × J × J)) (node : Node) (p : Pointer)
     (o n : J) : W Unit := do
   -- Outside the grammar a reference is not a schema use (#186): each side
@@ -573,19 +669,29 @@ partial def go (os ns : Side) (chain : List (Pointer × J × J)) (node : Node) (
   match ro, rn with
   | some (x, so), some (y, sn) =>
     let mask := so.map (·.1) ++ (sn.map (·.1)).filter (fun k => !(so.any (·.1 == k)))
-    for k in mask do
+    -- In key order, as everywhere: the expansion budget is spent in walk
+    -- order, so both implementations must walk alike.
+    for k in sortDedup mask do
       goOpt os ns chain (node.child k) (p ++ [k])
         (so.lookup k <|> os.resolvedKey x k) (sn.lookup k <|> ns.resolvedKey y k)
     modify fun out => { out with hops := out.hops.push ⟨p, x, y, sortDedup mask⟩ }
   | some (x, so), none =>
     if n.isObj then
-      let o' := merge (os.target x) so
-      expand os ns chain node p o' n
+      if ← spent chain then
+        closeAt p
+        plain os ns chain node p o n
+      else
+        if os.unparsed.contains x then closeAt p
+        expand os ns chain node p (merge (os.target x) so) n
     else plain os ns chain node p o n
   | none, some (y, sn) =>
     if o.isObj then
-      let n' := merge (ns.target y) sn
-      expand os ns chain node p o n'
+      if ← spent chain then
+        closeAt p
+        plain os ns chain node p o n
+      else
+        if ns.unparsed.contains y then closeAt p
+        expand os ns chain node p o (merge (ns.target y) sn)
     else plain os ns chain node p o n
   | none, none => plain os ns chain node p o n
 
@@ -625,9 +731,10 @@ partial def plain (os ns : Side) (chain : List (Pointer × J × J)) (node : Node
     (o n : J) : W Unit := do
   match o, n with
   | .obj ok, .obj nk =>
-    for (k, ov) in ok do
+    -- In key order (`byKey`), as the Rust walks: see `spent`.
+    for (k, ov) in byKey ok do
       goOpt os ns chain (node.child k) (p ++ [k]) (some ov) (nk.lookup k)
-    for (k, nv) in nk do
+    for (k, nv) in byKey nk do
       if (ok.lookup k).isNone then
         goOpt os ns chain (node.child k) (p ++ [k]) none (some nv)
   | .arr xs, .arr ys =>
@@ -673,12 +780,30 @@ def walk (os ns : Side) (o n : J) : Out :=
   ((go os ns [] .schema [] o n).run {}).2
 
 #guard
-  let s : Side := ⟨[("A", .obj [("type", .str "string")])], [("A", .obj [("type", .str "string")])]⟩
-  let t : Side := ⟨[("A", .obj [("type", .str "integer")])], [("A", .obj [("type", .str "integer")])]⟩
+  let s : Side := ⟨[("A", .obj [("type", .str "string")])], [("A", .obj [("type", .str "string")])], []⟩
+  let t : Side := ⟨[("A", .obj [("type", .str "integer")])], [("A", .obj [("type", .str "integer")])], []⟩
   let r := .obj [("$ref", .str "#/components/schemas/A"), ("nullable", .bool true)]
   let out := walk s t r r
   -- The sibling is compared at the use (unchanged); the target via a hop.
   out.facts.size == 0 && out.hops.size == 1 && out.hops[0]!.mask == ["nullable"]
+
+-- #187: a one-sided expansion is cut where the compared value pair recurs,
+-- never by component name. `B` is recursive through `data`; unrolling it
+-- inline once is no change, and changing the unrolled copy's `data.data`
+-- to a string is a change there (both were a name cut in the Rust before).
+#guard
+  let b : J := .obj [("type", .str "object"), ("properties", .obj [
+    ("data", .obj [("$ref", .str "#/components/schemas/B")]), ("x", .obj [("type", .str "string")])])]
+  let s : Side := ⟨[("B", b)], [("B", b)], []⟩
+  let unrolled (inner : J) : J := .obj [("type", .str "object"), ("properties", .obj [
+    ("data", .obj [("type", .str "object"), ("properties", .obj [
+      ("data", inner), ("x", .obj [("type", .str "string")])])]),
+    ("x", .obj [("type", .str "string")])])]
+  let r := .obj [("$ref", .str "#/components/schemas/B")]
+  let noop := walk s s r (unrolled r)
+  let changed := walk s s r (unrolled (.obj [("type", .str "string")]))
+  noop.facts.size == 0 && noop.hops.size == 1
+    && changed.facts.toList.any fun (p, _) => p == ["properties", "data", "properties", "data", "type"]
 
 /-! ## Spec pairs: uses -/
 
@@ -723,16 +848,20 @@ def endpoints (doc : J) : List Endpoint :=
 /-- The document's components (`parser::extract_schemas`): every
 `components.schemas` entry, then every top-level `definitions` entry whose
 name is not taken, in either OpenAPI version; as deserialised,
-canonicalised. (The Rust skips a `definitions` entry `models::Schema` cannot
-parse, #188; such inputs are not specified.) -/
+canonicalised. A `definitions` entry `models::Schema` cannot deserialise
+(`parsesAsSchema`, #188) is a component all the same, as written: nothing is
+normalised in it, and it is compared like any other (the report also names
+it). Before #188 the Rust dropped it, so a change inside it went unreported. -/
 def side (doc : J) : Side :=
   let entries (j : Option J) : List (String × J) := match j with
     | some (.obj kvs) => kvs
     | _ => []
-  let comps := entries ((doc.field? "components").bind (·.field? "schemas"))
+  let comps := (entries ((doc.field? "components").bind (·.field? "schemas"))).map
+    fun (k, v) => (k, schemaNorm v)
   let defs := (entries (doc.field? "definitions")).filter fun (k, _) => (comps.lookup k).isNone
-  let all := comps ++ defs
-  ⟨all.map fun (k, v) => (k, canon (schemaNorm v)), all.map fun (k, v) => (k, schemaNorm v)⟩
+  let all := comps ++ defs.map fun (k, v) => (k, if parsesAsSchema v then schemaNorm v else v)
+  ⟨all.map fun (k, v) => (k, canon v), all,
+    (defs.filter fun (_, v) => !parsesAsSchema v).map (·.1)⟩
 
 /-- Endpoint matching: exact `(METHOD, path)`. Move pairing (operationId,
 `v<digits>` segments) only renames the use in Markdown and v2 output; the v1
@@ -873,6 +1002,11 @@ structure Rec where
   ptr : Pointer
   ch : Ch
   neg : Bool
+  /-- The change fails closed (`Severity.failClosed`): its owner pair has a
+  side that is a `definitions` entry that does not deserialise (#188), or it
+  sits at or beneath a pointer its walk closed (`Out.closed`); never set on
+  a retarget fact. -/
+  closed : Bool := false
   deriving Inhabited
 
 instance : BEq Rec where
@@ -880,11 +1014,14 @@ instance : BEq Rec where
     && a.ch == b.ch && a.neg == b.neg
 
 /-- The verdict: Review under `not` and for retargets, otherwise the
-direction's table on the owner-relative pointer. -/
+direction's table on the owner-relative pointer; inside a pair with an
+unparseable side (#188), or beneath a refused or unparsed one-sided
+expansion, `failClosed` makes a Review Breaking. -/
 def Rec.severity (r : Rec) : Severity :=
   match r.ch with
   | .retargeted _ _ => .review
   | c =>
+    failClosed r.closed <|
     if r.neg then .review else
     match r.dir with
     | .request => requestSeverity r.ptr c.kind
@@ -903,12 +1040,25 @@ def pairContent (os ns : Side) (x y : String) : List (Pointer × Ch) × List Hop
   let out := walk os ns (os.target x) (ns.target y)
   (suppress out.facts.toList, out.hops.toList)
 
+/-- Where a pair's own walk closed (`Out.closed`). -/
+def pairClosed (os ns : Side) (x y : String) : Array Pointer :=
+  (walk os ns (os.target x) (ns.target y)).closed
+
 /-- The state a hop leads to from a state (or from the use: `mask = []`,
 `neg = false`). A hop at the owner's root inherits the outer mask. -/
 def next (mask : List String) (neg : Bool) (h : Hop) : St :=
   { old := h.old, new := h.new
     mask := if h.at_.isEmpty then sortDedup (mask ++ h.mask) else h.mask
     neg := neg || underNot h.at_ }
+
+-- #188: an unparseable `definitions` entry is a component, kept as written.
+#guard
+  let bad (t : String) : J := .obj [("type", .str "object"),
+    ("properties", .obj [("a", .obj [("type", .str t)])]), ("required", .str "a")]
+  let doc (t : String) : J := .obj [("definitions", .obj [("Bad", bad t)])]
+  ((side (doc "string")).comps.lookup "Bad").any (· == bad "string")
+    && ((pairContent (side (doc "string")) (side (doc "integer")) "Bad" "Bad").1.map (·.1))
+      == [["properties", "a", "type"]]
 
 /-- Every state reachable from a use's own hops (breadth first, each state
 once; there are finitely many). -/
@@ -925,13 +1075,17 @@ partial def reach (os ns : Side) (todo : List St) (seen : List St) : List St :=
 def groupedUse (os ns : Side) (u : Use) : List Rec :=
   let out := walk os ns u.old u.new
   let atUse := (suppress out.facts.toList).map fun (p, c) =>
-    ({ use := u.id, dir := u.dir, owner := .use, ptr := p, ch := c, neg := false } : Rec)
+    ({ use := u.id, dir := u.dir, owner := .use, ptr := p, ch := c, neg := false,
+       closed := closedAt out.closed p } : Rec)
   let states := reach os ns (out.hops.toList.map (next [] false)) []
   let fromPairs := states.flatMap fun s =>
     let (facts, _) := pairContent os ns s.old s.new
     let own := Owner.pair s.old s.new
+    let unparsed := os.unparsed.contains s.old || ns.unparsed.contains s.new
+    let closed := pairClosed os ns s.old s.new
     let vis := (facts.filter (visible s.mask ·.1)).map fun (p, c) =>
-      ({ use := u.id, dir := u.dir, owner := own, ptr := p, ch := c, neg := s.neg } : Rec)
+      ({ use := u.id, dir := u.dir, owner := own, ptr := p, ch := c, neg := s.neg,
+         closed := unparsed || closedAt closed p } : Rec)
     if s.old == s.new then vis
     else { use := u.id, dir := u.dir, owner := own, ptr := [], ch := .retargeted s.old s.new,
            neg := s.neg } :: vis

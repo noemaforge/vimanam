@@ -1,0 +1,22 @@
+{
+ "swagger": "2.0",
+ "info": {
+  "title": "t",
+  "version": "1"
+ },
+ "paths": {
+  "/x": {
+   "post": {
+    "responses": {
+     "200": {
+      "description": "ok",
+      "schema": {
+       "type": "string"
+      }
+     }
+    }
+   }
+  }
+ },
+ "definitions": {}
+}

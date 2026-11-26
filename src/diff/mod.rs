@@ -179,6 +179,8 @@ pub enum ChangeKind {
         location: String,
         /// The field-level change in the resolved, canonicalized schema.
         change: ValueChange,
+        /// Why the change fails closed, if it does ([`FailClosed`]).
+        fail_closed: Option<FailClosed>,
     },
     /// A response status was added.
     ResponseAdded {
@@ -206,6 +208,8 @@ pub enum ChangeKind {
     RequestSchemaChanged {
         /// The field-level change in the resolved, canonicalized schema.
         change: ValueChange,
+        /// Why the change fails closed, if it does ([`FailClosed`]).
+        fail_closed: Option<FailClosed>,
     },
     /// A field-level change in the resolved schema of one response.
     ResponseSchemaChanged {
@@ -213,6 +217,8 @@ pub enum ChangeKind {
         status: String,
         /// The field-level change in the resolved, canonicalized schema.
         change: ValueChange,
+        /// Why the change fails closed, if it does ([`FailClosed`]).
+        fail_closed: Option<FailClosed>,
     },
     /// A field-level change inside a shared component (a `$ref` target),
     /// reported once per usage direction instead of once per operation or
@@ -231,11 +237,62 @@ pub enum ChangeKind {
         /// reverses every compatibility direction, so such a record is
         /// Review; uses that reach it plainly are a separate record.
         negated: bool,
+        /// Why the change fails closed, if it does ([`FailClosed`]): a side
+        /// of the pair is a `definitions` entry that does not deserialise, or
+        /// the change is beneath a cut or unparsed one-sided expansion in the
+        /// pair's comparison. Never set on the `/$ref` retarget record.
+        fail_closed: Option<FailClosed>,
         /// Every parameter, request body or response of this direction that
         /// reaches the component, directly or through other components, in
         /// report order.
         uses: Vec<SchemaUse>,
     },
+}
+
+/// Why a schema change fails closed: the comparison could not see that part
+/// of the schema properly, so a change the rule table leaves to review is
+/// Breaking instead and `--fail-on-breaking` trips (Severity.lean's
+/// `failClosed`). Breaking and Non-breaking verdicts stand.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum FailClosed {
+    /// Inside a `definitions` entry that does not deserialise as a schema,
+    /// compared as written (#188).
+    UnparsedDefinition,
+    /// At or beneath a one-sided `$ref` that was not expanded because the
+    /// walk reached its expansion budget or the chain cap (#187), so it was
+    /// compared as written.
+    ExpansionCut,
+}
+
+impl FailClosed {
+    /// The reason's snake-case name, as JSON details and v2 native kinds
+    /// spell it.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            FailClosed::UnparsedDefinition => "unparsed_definition",
+            FailClosed::ExpansionCut => "expansion_cut",
+        }
+    }
+
+    /// The v2 native kind of a change that fails closed for this reason.
+    pub fn native_kind(self) -> &'static str {
+        match self {
+            FailClosed::UnparsedDefinition => "unparsed_definition_changed",
+            FailClosed::ExpansionCut => "expansion_cut",
+        }
+    }
+}
+
+/// Why a schema change fails closed, if it does; `None` for other kinds.
+pub fn fail_closed_of(kind: &ChangeKind) -> Option<FailClosed> {
+    match kind {
+        ChangeKind::ParameterSchemaChanged { fail_closed, .. }
+        | ChangeKind::RequestSchemaChanged { fail_closed, .. }
+        | ChangeKind::ResponseSchemaChanged { fail_closed, .. }
+        | ChangeKind::ComponentSchemaChanged { fail_closed, .. } => *fail_closed,
+        _ => None,
+    }
 }
 
 /// The pair of components a shared-component change was found in: each
@@ -362,6 +419,94 @@ pub struct SpecDiff {
     pub new_version: String,
     /// Every change, in report order (see the module docs).
     pub changes: Vec<Change>,
+    /// `definitions` entries of either spec that do not deserialise as a
+    /// schema (#188), old spec first, each in document order. They were
+    /// compared as written, so changes inside them are in `changes`; the
+    /// report names them because the spec is invalid there.
+    pub unparsed_definitions: Vec<UnparsedDefinition>,
+}
+
+/// A `definitions` entry of one spec that does not deserialise as a schema
+/// (#188). `diff` compares it as written, like any other component, so a
+/// change inside it is still reported and rated.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct UnparsedDefinition {
+    /// Whether the entry is in the old spec (else the new one).
+    pub old: bool,
+    /// The entry's name under `definitions`.
+    pub name: String,
+    /// Why it does not deserialise.
+    pub error: String,
+}
+
+impl UnparsedDefinition {
+    /// The entry's JSON pointer in its spec (`/definitions/<name>`, the name
+    /// encoded).
+    pub fn pointer(&self) -> String {
+        value::pointer_of(&["definitions".to_string(), self.name.clone()])
+    }
+}
+
+/// `text` as a Markdown code span on one line: control characters escaped
+/// (`\n`, `\u{..}`) and fenced with more backticks than any run inside it.
+fn code_span(text: &str) -> String {
+    let text: String = text
+        .chars()
+        .map(|c| {
+            if c.is_control() {
+                c.escape_default().collect()
+            } else {
+                c.to_string()
+            }
+        })
+        .collect();
+    let mut longest = 0;
+    let mut run = 0;
+    for c in text.chars() {
+        run = if c == '`' { run + 1 } else { 0 };
+        longest = longest.max(run);
+    }
+    let fence = "`".repeat(longest + 1);
+    let pad = if text.starts_with('`') || text.ends_with('`') {
+        " "
+    } else {
+        ""
+    };
+    format!("{fence}{pad}{text}{pad}{fence}")
+}
+
+impl std::fmt::Display for UnparsedDefinition {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let error: String = self
+            .error
+            .chars()
+            .map(|c| if c.is_control() { ' ' } else { c })
+            .collect();
+        write!(
+            f,
+            "{} in the {} spec is not a valid schema ({error}); it was compared as written",
+            code_span(&self.pointer()),
+            if self.old { "old" } else { "new" },
+        )
+    }
+}
+
+/// The `definitions` entries of `old` then `new` that do not deserialise as
+/// a schema.
+fn unparsed_definitions(old: &ApiDocumentation, new: &ApiDocumentation) -> Vec<UnparsedDefinition> {
+    [(true, old), (false, new)]
+        .into_iter()
+        .flat_map(|(is_old, doc)| {
+            doc.unparsed_schemas
+                .iter()
+                .map(move |(name, entry)| UnparsedDefinition {
+                    old: is_old,
+                    name: name.clone(),
+                    error: entry.error.clone(),
+                })
+        })
+        .collect()
 }
 
 impl SpecDiff {
@@ -560,8 +705,15 @@ pub fn severity(change: &Change) -> Severity {
             }
         }
         ChangeKind::ParameterLocationChanged { .. } => Severity::Breaking,
-        ChangeKind::ParameterSchemaChanged { change, .. }
-        | ChangeKind::RequestSchemaChanged { change } => request_schema_severity(change),
+        ChangeKind::ParameterSchemaChanged {
+            change,
+            fail_closed,
+            ..
+        }
+        | ChangeKind::RequestSchemaChanged {
+            change,
+            fail_closed,
+        } => self::fail_closed(fail_closed.is_some(), request_schema_severity(change)),
         ChangeKind::ResponseAdded { .. } => Severity::NonBreaking,
         ChangeKind::ResponseRemoved { .. } => Severity::Breaking,
         ChangeKind::OperationIdChanged {
@@ -570,14 +722,35 @@ pub fn severity(change: &Change) -> Severity {
         } => Severity::NonBreaking,
         ChangeKind::OperationIdChanged { .. } => Severity::Breaking,
         ChangeKind::DeprecatedChanged { .. } => Severity::NonBreaking,
-        ChangeKind::ResponseSchemaChanged { change, .. } => response_schema_severity(change),
-        ChangeKind::ComponentSchemaChanged { negated: true, .. } => Severity::Review,
+        ChangeKind::ResponseSchemaChanged {
+            change,
+            fail_closed,
+            ..
+        } => self::fail_closed(fail_closed.is_some(), response_schema_severity(change)),
         ChangeKind::ComponentSchemaChanged {
-            direction, change, ..
-        } => match direction {
-            Direction::Request => request_schema_severity(change),
-            Direction::Response => response_schema_severity(change),
-        },
+            direction,
+            change,
+            negated,
+            fail_closed,
+            ..
+        } => self::fail_closed(
+            fail_closed.is_some(),
+            match (negated, direction) {
+                (true, _) => Severity::Review,
+                (false, Direction::Request) => request_schema_severity(change),
+                (false, Direction::Response) => response_schema_severity(change),
+            },
+        ),
+    }
+}
+
+/// A change that fails closed ([`FailClosed`]) is never Review: Review
+/// becomes Breaking; classified verdicts stand (Severity.lean's `failClosed`).
+fn fail_closed(closed: bool, severity: Severity) -> Severity {
+    if closed && severity == Severity::Review {
+        Severity::Breaking
+    } else {
+        severity
     }
 }
 
@@ -688,12 +861,7 @@ pub fn diff_with(
     new: &ApiDocumentation,
     matching: EndpointMatching,
 ) -> SpecDiff {
-    diff_with_resolver(
-        old,
-        new,
-        matching,
-        &PairResolver::new(&old.schemas, &new.schemas),
-    )
+    diff_with_resolver(old, new, matching, &PairResolver::for_docs(old, new))
 }
 
 /// [`diff_with`] with a caller-owned resolution cache for the same two specs,
@@ -773,6 +941,7 @@ pub(crate) fn diff_with_resolver(
         new_title: new.title.clone(),
         new_version: new.version.clone(),
         changes,
+        unparsed_definitions: unparsed_definitions(old, new),
     }
 }
 
@@ -1061,13 +1230,14 @@ fn diff_parameter_pair(
             location: new_param.parameter_in.clone(),
         },
     };
-    for change in components.compare(use_, &old_schema, &new_schema) {
+    for (change, fail_closed) in components.compare(use_, &old_schema, &new_schema) {
         changes.push(Change {
             endpoint: endpoint.clone(),
             kind: ChangeKind::ParameterSchemaChanged {
                 name: new_param.name.clone(),
                 location: new_param.parameter_in.clone(),
                 change,
+                fail_closed,
             },
         });
     }
@@ -1104,7 +1274,7 @@ fn schema_changes(
     old: Option<&crate::models::Schema>,
     new: Option<&crate::models::Schema>,
     components: &mut Components,
-) -> Vec<ValueChange> {
+) -> Vec<(ValueChange, Option<FailClosed>)> {
     let (old, new) = (
         old.map_or(Value::Null, schema_json),
         new.map_or(Value::Null, schema_json),
@@ -1197,9 +1367,13 @@ fn diff_request_body(
                 new_body.schema.as_ref(),
                 components,
             ) {
+                let (change, fail_closed) = change;
                 changes.push(Change {
                     endpoint: endpoint.clone(),
-                    kind: ChangeKind::RequestSchemaChanged { change },
+                    kind: ChangeKind::RequestSchemaChanged {
+                        change,
+                        fail_closed,
+                    },
                 });
             }
         }
@@ -1234,12 +1408,13 @@ fn diff_responses(
                 status: status.clone(),
             },
         };
-        for change in schema_changes(use_, old_schema, new_schema, components) {
+        for (change, fail_closed) in schema_changes(use_, old_schema, new_schema, components) {
             changes.push(Change {
                 endpoint: endpoint.clone(),
                 kind: ChangeKind::ResponseSchemaChanged {
                     status: status.clone(),
                     change,
+                    fail_closed,
                 },
             });
         }
@@ -1338,13 +1513,17 @@ pub(crate) mod test_support {
     }
 
     pub(crate) fn request(change: ValueChange) -> Severity {
-        severity(&self::change(ChangeKind::RequestSchemaChanged { change }))
+        severity(&self::change(ChangeKind::RequestSchemaChanged {
+            change,
+            fail_closed: None,
+        }))
     }
 
     pub(crate) fn response(change: ValueChange) -> Severity {
         severity(&self::change(ChangeKind::ResponseSchemaChanged {
             status: "200".into(),
             change,
+            fail_closed: None,
         }))
     }
 
@@ -1359,6 +1538,7 @@ pub(crate) mod test_support {
             direction,
             change,
             negated: false,
+            fail_closed: None,
             uses: vec![SchemaUse {
                 endpoint: endpoint(),
                 location: UseLocation::Response {
@@ -1373,6 +1553,7 @@ pub(crate) mod test_support {
             name: "limit".into(),
             location: "query".into(),
             change,
+            fail_closed: None,
         }))
     }
 }
@@ -2201,6 +2382,7 @@ mod tests {
                 kind: ChangeKind::ResponseSchemaChanged {
                     status: "200".into(),
                     change: added("/properties/age", json!({"type": "integer"})),
+                    fail_closed: None,
                 },
             }]
         );
@@ -2514,7 +2696,7 @@ mod tests {
                 .changes
                 .iter()
                 .map(|change| match &change.kind {
-                    ChangeKind::RequestSchemaChanged { change: value }
+                    ChangeKind::RequestSchemaChanged { change: value, .. }
                     | ChangeKind::ResponseSchemaChanged { change: value, .. } => {
                         format!("{} {:?}", value.pointer, value.kind)
                     }
