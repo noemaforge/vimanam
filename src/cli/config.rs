@@ -97,7 +97,9 @@ pub struct Cli {
     pub include_schemas: bool,
 
     /// Fully inline every `$ref` schema at each use site instead of linking to a
-    /// shared "Schema Definitions" section (larger, self-contained output)
+    /// shared "Schema Definitions" section (larger, self-contained output).
+    /// Without --schema-depth, a render that would expand more than 2,000,000
+    /// schema rows is bounded at --schema-depth 2, with a notice
     #[arg(long)]
     pub inline_schemas: bool,
 
@@ -105,7 +107,8 @@ pub struct Cli {
     /// Zero retains only roots. Without selectors requires full detail with schemas.
     /// Default: unbounded, except a selected slice (standalone --schema/--schema-field,
     /// or --operation/--operation-id with --detail full --include-schemas) whose roots
-    /// transitively reach more than 200 component schemas, which is bounded at 2.
+    /// transitively reach more than 200 component schemas, and an --inline-schemas
+    /// render that would expand more than 2,000,000 schema rows, are bounded at 2.
     #[arg(long, value_name = "N")]
     pub schema_depth: Option<usize>,
 

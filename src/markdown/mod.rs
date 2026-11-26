@@ -33,7 +33,7 @@ pub(crate) use schema::{PREFER_REF_DESCRIPTION_EXT, response_schema};
 // The `--costs` analysis measures schema use sites and per-schema renders.
 pub(crate) use schema::SchemaUse;
 #[cfg(feature = "cli")]
-pub(crate) use schema::{AUTO_SCHEMA_DEPTH, INLINE_ROW_BUDGET};
+pub(crate) use schema::{INLINE_MEASURE_PREFIX_ROWS, INLINE_MEASURE_ROW_BUDGET};
 #[cfg(feature = "cli")]
 pub(crate) use schema::{
     definition_section_tokens, inline_expansion_tokens, short_schema_reference,
@@ -173,8 +173,9 @@ impl ResolvedConfig<'_> {
 ///   are standalone `--schema`/`--schema-field` reads and `--operation`/
 ///   `--operation-id` renders at `--detail full --include-schemas`; or
 /// * under `--inline-schemas`, the rendered schema roots (a selection's, or
-///   every visible operation's at `--detail full --include-schemas`) would
-///   expand more than [`schema::INLINE_ROW_BUDGET`] rows (#177), counted by
+///   every operation the view renders at `--detail full --include-schemas`,
+///   once per rendering, so a multi-tag operation counts once per service)
+///   would expand more than [`schema::INLINE_ROW_BUDGET`] rows (#177), counted by
 ///   [`schema::inline_row_count`] without rendering.
 ///
 /// Anything else, including every linked whole document, is unchanged.
@@ -192,38 +193,50 @@ pub(crate) fn resolve_schema_depth<'c>(
     }
     let schemas_rendered = config.detail_level == DetailLevel::Full && config.include_schemas;
     let selected;
-    let (roots, slice): (Vec<&crate::models::Schema>, bool) = if schema_selection::active(config) {
-        let Ok(found) = schema_selection::selections(doc, config) else {
+    // The component-graph rule asks what a slice reaches, so each endpoint
+    // counts once; the inline-row rule sizes the output, so an endpoint the
+    // view renders under several services counts once per rendering.
+    let (graph_roots, row_roots, slice): (Vec<&crate::models::Schema>, Vec<_>, bool) =
+        if schema_selection::active(config) {
+            let Ok(found) = schema_selection::selections(doc, config) else {
+                return unchanged;
+            };
+            selected = found;
+            let roots: Vec<_> = selected.iter().map(|(_, schema)| schema).collect();
+            (roots.clone(), roots, true)
+        } else if schemas_rendered && (config.operation_selector.is_some() || config.inline_schemas)
+        {
+            let slice = config.operation_selector.is_some();
+            let graph_roots = if slice {
+                endpoint_schema_roots(visible_endpoints(doc, config))
+            } else {
+                Vec::new()
+            };
+            let row_roots = if config.inline_schemas {
+                endpoint_schema_roots(views::rendered_endpoints(doc, config))
+            } else {
+                Vec::new()
+            };
+            (graph_roots, row_roots, slice)
+        } else {
             return unchanged;
         };
-        selected = found;
-        (selected.iter().map(|(_, schema)| schema).collect(), true)
-    } else if schemas_rendered && (config.operation_selector.is_some() || config.inline_schemas) {
-        let roots = visible_endpoints(doc, config)
-            .into_iter()
-            .flat_map(schema::rendered_endpoint_schemas)
-            .collect();
-        (roots, config.operation_selector.is_some())
-    } else {
-        return unchanged;
-    };
     let threshold = schema::AUTO_SCHEMA_DEPTH_THRESHOLD;
-    let bound = if slice
-        && schema::reachable_component_count(doc, roots.iter().copied(), threshold) > threshold
-    {
-        AutoBound::ComponentGraph
-    } else if config.inline_schemas
-        && schema::inline_row_count(
-            doc,
-            roots,
-            schema_selection::active(config),
-            schema::INLINE_ROW_BUDGET,
-        ) > schema::INLINE_ROW_BUDGET
-    {
-        AutoBound::InlineRows
-    } else {
-        return unchanged;
-    };
+    let bound =
+        if slice && schema::reachable_component_count(doc, graph_roots, threshold) > threshold {
+            AutoBound::ComponentGraph
+        } else if config.inline_schemas
+            && schema::inline_row_count(
+                doc,
+                row_roots,
+                schema_selection::active(config),
+                schema::INLINE_ROW_BUDGET,
+            ) > schema::INLINE_ROW_BUDGET
+        {
+            AutoBound::InlineRows
+        } else {
+            return unchanged;
+        };
     let depth = schema::AUTO_SCHEMA_DEPTH;
     let mut bounded = config.clone();
     bounded.schema_depth = Some(depth);
@@ -241,6 +254,14 @@ pub(crate) fn resolve_schema_depth<'c>(
         notice: Some(notice),
         bound: Some(bound),
     }
+}
+
+/// The schema roots `endpoints` render at `--detail full --include-schemas`.
+fn endpoint_schema_roots(endpoints: Vec<&crate::models::Endpoint>) -> Vec<&crate::models::Schema> {
+    endpoints
+        .into_iter()
+        .flat_map(schema::rendered_endpoint_schemas)
+        .collect()
 }
 
 /// Renders exactly at the resolved depth, never re-deciding it. When the depth
@@ -423,5 +444,96 @@ pub(crate) fn detail_level_name(level: &DetailLevel) -> &'static str {
         DetailLevel::Basic => "basic",
         DetailLevel::Standard => "standard",
         DetailLevel::Full => "full",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `n` mutually recursive components with `k` references each, and one
+    /// operation tagged with `tags` tags whose request and response bodies
+    /// reference them.
+    fn multi_tag_doc(n: usize, k: usize, tags: usize) -> ApiDocumentation {
+        let reference =
+            |i: usize| serde_json::json!({"$ref": format!("#/components/schemas/C{}", i % n)});
+        let mut schemas = serde_json::Map::new();
+        for i in 0..n {
+            let mut properties = serde_json::Map::new();
+            properties.insert("id".into(), serde_json::json!({"type": "string"}));
+            for j in 1..=k {
+                properties.insert(format!("r{j}"), reference(i + j));
+            }
+            schemas.insert(
+                format!("C{i}"),
+                serde_json::json!({"type": "object", "properties": properties}),
+            );
+        }
+        let tags: Vec<String> = (0..tags).map(|t| format!("t{t}")).collect();
+        let spec = serde_json::json!({
+            "openapi": "3.0.0",
+            "info": {"title": "Multi", "version": "1"},
+            "paths": {"/c": {"post": {
+                "tags": tags,
+                "requestBody": {"content": {"application/json": {"schema": reference(0)}}},
+                "responses": {"200": {
+                    "description": "ok",
+                    "content": {"application/json": {"schema": reference(1)}}
+                }}
+            }}},
+            "components": {"schemas": schemas},
+        });
+        crate::parser::parse_openapi_bytes(spec.to_string().as_bytes(), "json", None)
+            .expect("multi-tag spec parses")
+    }
+
+    fn inline_config() -> DocConfig {
+        DocConfig {
+            inline_schemas: true,
+            ..DocConfig::unfiltered()
+        }
+    }
+
+    /// The service view renders a multi-tag operation under each service, so
+    /// the inline-row estimate counts it once per rendering (#177): one
+    /// rendering of this graph fits the budget, four do not.
+    #[test]
+    fn inline_row_bound_counts_each_service_rendering() {
+        fn roots(doc: &ApiDocumentation) -> Vec<&crate::models::Schema> {
+            endpoint_schema_roots(views::rendered_endpoints(doc, &inline_config()))
+        }
+        let single = multi_tag_doc(18, 3, 1);
+        let rows = schema::inline_row_count(&single, roots(&single), false, usize::MAX - 1);
+        assert!(rows <= schema::INLINE_ROW_BUDGET && rows * 4 > schema::INLINE_ROW_BUDGET);
+        assert!(
+            resolve_schema_depth(&single, &inline_config())
+                .bound
+                .is_none()
+        );
+
+        let tagged = multi_tag_doc(18, 3, 4);
+        assert_eq!(roots(&tagged).len(), 4 * 2);
+        let config = inline_config();
+        let resolved = resolve_schema_depth(&tagged, &config);
+        assert!(matches!(resolved.bound, Some(AutoBound::InlineRows)));
+        assert_eq!(
+            resolved.config.schema_depth,
+            Some(schema::AUTO_SCHEMA_DEPTH)
+        );
+
+        // Views that render the operation once, and a service filter that
+        // keeps one of its services, leave it under the budget.
+        for group_by in [GroupBy::Flat, GroupBy::Method, GroupBy::Path] {
+            let config = DocConfig {
+                group_by,
+                ..inline_config()
+            };
+            assert!(resolve_schema_depth(&tagged, &config).bound.is_none());
+        }
+        let config = DocConfig {
+            service_filter: Some(vec!["t2".into()]),
+            ..inline_config()
+        };
+        assert!(resolve_schema_depth(&tagged, &config).bound.is_none());
     }
 }

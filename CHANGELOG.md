@@ -158,13 +158,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   grew exponentially and never finished. Without `--schema-depth`, vimanam now
   counts the inline rows first (without rendering) and, past 2,000,000 rows,
   bounds expansion at `--schema-depth 2` with a stderr notice and a blockquote
-  under the title. This also covers `--max-tokens`, `--stats`, `--costs` and
-  selected slices. A 40-component adversarial spec that wrote 1.35 GB in 30 s
-  without finishing now renders in about 60 ms; every render under the budget
-  (all fixtures; the GitHub REST, protobuf-generated and petstore specs) is
-  byte-identical. `--costs` in linked mode, whose per-schema inline model hit
-  the same expansion, now measures an over-budget schema at depth 2 and marks
-  it `inline-bounded`. No public library API change: the touched
+  under the title. The count follows the view, so the default service view
+  counts a multi-tag operation once per tag. This also covers `--max-tokens`,
+  `--stats`, `--costs` and selected slices. A 40-component adversarial spec
+  that wrote 1.35 GB in 30 s without finishing now renders in about 25 ms;
+  every render under the budget (all fixtures; the GitHub REST,
+  protobuf-generated and petstore specs) is byte-identical. Inline renders
+  above the budget that used to finish slowly (hundreds of MB) are now bounded
+  as well; pass `--schema-depth N` to choose a deeper bound. `--costs`, whose
+  inline model expands every used schema separately (in linked mode too), now
+  measures a schema whose single expansion exceeds 25,000 rows by its first
+  2,000 rows and marks the figure `inline-bounded` (a lower bound, shown as
+  `at least` in the hotspots), so a dense 1,000-schema graph reports in
+  seconds.
+  No public library API change: the touched
   `--costs`/`--stats` types are crate-private, and `generate_markdown`
   applies the same bound.
 - `diff` no longer stops expanding a recursive component by its name when

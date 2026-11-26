@@ -102,6 +102,22 @@ pub(crate) fn reachable_component_count<'a>(
 /// unchanged.
 pub(crate) const INLINE_ROW_BUDGET: usize = 2_000_000;
 
+/// Rows one schema's inline expansion may have for the `--costs`
+/// amplification model to measure it in full (#177). The model measures every
+/// used schema separately, so its total work is this budget times the schema
+/// count; [`INLINE_ROW_BUDGET`] per schema would take minutes on a
+/// Stripe-sized dense graph. Real specs stay far below it (the largest single
+/// expansion in the local corpus is under 3 thousand rows), so their reports
+/// are unchanged.
+#[cfg(feature = "cli")]
+pub(crate) const INLINE_MEASURE_ROW_BUDGET: usize = 25_000;
+
+/// Rows of an over-budget expansion the `--costs` model does measure: their
+/// tokens are a lower bound on the whole expansion's, of the right order of
+/// magnitude for ranking hotspots, at a fixed cost per schema.
+#[cfg(feature = "cli")]
+pub(crate) const INLINE_MEASURE_PREFIX_ROWS: usize = 2_000;
+
 /// Rows an `--inline-schemas` table renders for `roots` without
 /// `--schema-depth`, counted up to `cap + 1` so an exponential expansion stops
 /// early. Mirrors [`collect_schema_rows`] exactly in that mode: a resolvable
@@ -345,6 +361,10 @@ pub(super) struct SchemaContext<'a> {
     /// Use-site observations per reference, in first-encounter order. Fed to
     /// the `--costs` analysis through the render result.
     uses: IndexMap<String, SchemaUse>,
+    /// Stop collecting once this many rows exist (`--costs` measurement only;
+    /// never set for real output). What was collected is then a subset of the
+    /// full expansion, so its size is a lower bound.
+    row_limit: Option<usize>,
 }
 
 impl<'a> SchemaContext<'a> {
@@ -376,6 +396,7 @@ impl<'a> SchemaContext<'a> {
             body_label: None,
             root_depth: 0,
             uses: IndexMap::new(),
+            row_limit: None,
         }
     }
 
@@ -1050,8 +1071,9 @@ pub(crate) fn definition_section_tokens(
 ///
 /// Returns the tokens and whether the expansion was bounded: without
 /// `--schema-depth`, an expansion that would render more than
-/// [`INLINE_ROW_BUDGET`] rows (#177) is measured at [`AUTO_SCHEMA_DEPTH`]
-/// instead, so the figure is a lower bound.
+/// [`INLINE_MEASURE_ROW_BUDGET`] rows (#177, counted without rendering) is
+/// measured by its first [`INLINE_MEASURE_PREFIX_ROWS`] rows only, so the
+/// figure is a lower bound.
 #[cfg(feature = "cli")]
 pub(crate) fn inline_expansion_tokens(
     doc: &ApiDocumentation,
@@ -1063,9 +1085,10 @@ pub(crate) fn inline_expansion_tokens(
     };
     let mut ctx = SchemaContext::configured(doc, config, false);
     let bounded = ctx.max_depth.is_none()
-        && inline_row_count(doc, [resolved], ctx.selected, INLINE_ROW_BUDGET) > INLINE_ROW_BUDGET;
+        && inline_row_count(doc, [resolved], ctx.selected, INLINE_MEASURE_ROW_BUDGET)
+            > INLINE_MEASURE_ROW_BUDGET;
     if bounded {
-        ctx.max_depth = Some(AUTO_SCHEMA_DEPTH);
+        ctx.row_limit = Some(INLINE_MEASURE_PREFIX_ROWS);
     }
     ctx.inline = true;
     ctx.protected_depth = 0;
@@ -1196,6 +1219,9 @@ fn collect_schema_rows(
 ) {
     const MAX_DEPTH: usize = SCHEMA_DEPTH_LIMIT;
 
+    if ctx.row_limit.is_some_and(|limit| rows.len() >= limit) {
+        return;
+    }
     if ctx
         .max_depth
         .is_some_and(|limit| depth >= limit.max(ctx.protected_depth))

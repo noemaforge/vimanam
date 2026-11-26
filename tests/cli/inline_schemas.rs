@@ -15,6 +15,12 @@ use crate::common::write_spec;
 /// references to the next `k` components. 40 × 4 renders more than a gigabyte
 /// of Markdown inline on 2.2.0 without finishing; 8 × 3 stays small.
 fn cyclic_spec(n: usize, k: usize) -> Value {
+    tagged_cyclic_spec(n, k, 1)
+}
+
+/// [`cyclic_spec`] with its one operation tagged `t0..t{tags-1}`, so the
+/// default service view renders it `tags` times.
+fn tagged_cyclic_spec(n: usize, k: usize, tags: usize) -> Value {
     let mut schemas = Map::new();
     for i in 0..n {
         let mut properties = Map::new();
@@ -34,7 +40,7 @@ fn cyclic_spec(n: usize, k: usize) -> Value {
         "openapi": "3.0.0",
         "info": {"title": "Cyclic", "version": "1"},
         "paths": {"/c": {"get": {
-            "tags": ["c"],
+            "tags": (0..tags).map(|t| if tags == 1 { "c".to_string() } else { format!("t{t}") }).collect::<Vec<_>>(),
             "responses": {"200": {
                 "description": "ok",
                 "content": {"application/json": {"schema": {"$ref": "#/components/schemas/C0"}}}
@@ -169,15 +175,51 @@ fn budget_stats_and_costs_stay_bounded_on_cyclic_specs() {
     assert!(err.contains(NOTICE));
 
     // Linked mode renders each component once, but the `--costs` inline
-    // model expands each schema alone: past the budget it is measured at
-    // depth 2 and marked as a lower bound.
+    // model expands each schema alone: past its per-schema budget only a
+    // prefix is measured, marked as a lower bound in the table and hotspots.
     let (code, out, err) = with(&["--costs"]);
     assert_eq!(code, 0);
     assert!(!err.contains(NOTICE));
     assert!(out.contains("cycle, inline-bounded"), "{out}");
     assert!(out.contains(
-        "inline-bounded: one inline expansion would render more than 2000000 schema rows, so INLINE/USE was measured at --schema-depth 2 and is a lower bound."
+        "inline-bounded: one inline expansion would render more than 25000 schema rows, so INLINE/USE measures only its first 2000 rows and is a lower bound."
     ));
+    assert!(out.contains("tokens inline vs ~"), "{out}");
+    assert!(out.contains(", at least ~"), "{out}");
+    assert!(out.contains("read once (cycle, inline-bounded)"), "{out}");
+}
+
+/// The service view renders a multi-tag operation once per service, so the
+/// estimate counts every rendering: one rendering of 18 × 3 fits the budget
+/// (about 260 thousand rows, 25 MB on 2.2.0), ten do not.
+#[test]
+fn multi_tag_operations_count_once_per_service() {
+    let dir = tempfile::tempdir().unwrap();
+    let spec = write_spec(&dir, "tagged.json", &tagged_cyclic_spec(18, 3, 10));
+    let full = [
+        spec.as_str(),
+        "--detail",
+        "full",
+        "--include-schemas",
+        "--inline-schemas",
+    ];
+
+    let mut args = full.to_vec();
+    args.push("--no-report");
+    let (code, out, err) = bounded(&args, LIMIT);
+    assert_eq!(code, 0);
+    assert!(err.starts_with(NOTICE), "stderr: {err}");
+    assert!(out.contains(BLOCKQUOTE));
+    for tag in 0..10 {
+        assert!(out.contains(&format!("## t{tag} {{#t{tag}}}")), "t{tag}");
+    }
+
+    let mut args = full.to_vec();
+    args.push("--stats");
+    let (code, out, err) = bounded(&args, LIMIT);
+    assert_eq!(code, 0);
+    assert!(out.contains("TOTAL"));
+    assert!(err.contains(NOTICE));
 }
 
 #[test]
