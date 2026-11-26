@@ -10,6 +10,7 @@ mod diff_moves;
 mod diff_recursive;
 mod diff_refs;
 mod diff_verdicts;
+mod inline_schemas;
 mod neutral_json;
 mod report;
 mod schema_selection;

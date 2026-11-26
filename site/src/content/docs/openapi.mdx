@@ -55,6 +55,8 @@ Pass `--inline-schemas` if you need every `$ref` expanded directly inside each e
 vimanam openapi.yaml --detail full --include-schemas --inline-schemas -o inline-api.md
 ```
 
+Inline expansion repeats each shared schema at every use site. On a densely cross-linked spec that grows exponentially, so an inline render that would exceed 2,000,000 schema rows is bounded at `--schema-depth 2` with a notice; see [Default bound for large component graphs](/llm-context/#default-bound-for-large-component-graphs).
+
 <Aside type="note" title="Schema and example flags require full detail">
   `--include-schemas` and `--include-examples` take effect only with `--detail full`. Passing `--inline-schemas` without `--include-schemas` logs a warning and leaves output unchanged.
 </Aside>

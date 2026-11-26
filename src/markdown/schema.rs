@@ -92,6 +92,123 @@ pub(crate) fn reachable_component_count<'a>(
     seen.len().min(cap + 1)
 }
 
+/// Schema rows a render may expand under `--inline-schemas` before schema
+/// expansion is bounded at [`AUTO_SCHEMA_DEPTH`] (#177). Inline expansion
+/// re-expands every acyclic path through the component graph at each use
+/// site, so a densely cross-linked graph (Stripe's) grows without practical
+/// bound even with cycle detection. Real specs that finish stay far below this
+/// (the largest local one renders about 74 thousand table lines, 11 MB; a
+/// 10 MB GitHub REST spec about 68 thousand, 5.6 MB). The budget counts rows,
+/// not bytes: with short descriptions two million rows is a few hundred MB of
+/// Markdown, and long descriptions scale that up (2,000-character ones make
+/// about a million rows over 600 MB). Renders at or below the budget are
+/// unchanged.
+pub(crate) const INLINE_ROW_BUDGET: usize = 2_000_000;
+
+/// Rows of one schema's inline expansion the `--costs` amplification model
+/// measures (#177), at any `--schema-depth`. The model measures every used
+/// schema separately, so its total work is this budget times the schema count;
+/// [`INLINE_ROW_BUDGET`] per schema would take minutes on a Stripe-sized dense
+/// graph. A longer expansion is measured by exactly its first this-many rows,
+/// so a bounded figure covers at least as many rows as any unbounded one
+/// (with longer rows, an unbounded figure can still be larger). Real
+/// specs stay far below it (the largest single expansion in the local corpus
+/// is under 3 thousand rows), so their reports are unchanged.
+#[cfg(feature = "cli")]
+pub(crate) const INLINE_MEASURE_ROW_BUDGET: usize = 10_000;
+
+/// Rows an `--inline-schemas` table renders for `roots` without
+/// `--schema-depth`, counted up to `cap + 1` so an exponential expansion stops
+/// early. Mirrors [`collect_schema_rows`] exactly in that mode: a resolvable
+/// `$ref` adds no row of its own and expands its target one level deeper, a
+/// reference already on the chain or an unresolvable one is one row, every
+/// other schema is one row plus its properties, items and composition
+/// variants (and `additionalProperties` when `selected`, as a schema
+/// selection renders it), and depth [`SCHEMA_DEPTH_LIMIT`] is one row.
+pub(crate) fn inline_row_count<'a>(
+    doc: &'a ApiDocumentation,
+    roots: impl IntoIterator<Item = &'a Schema>,
+    selected: bool,
+    cap: usize,
+) -> usize {
+    let mut counter = InlineRowCounter {
+        doc,
+        selected,
+        cap,
+        rows: 0,
+        chain: Vec::new(),
+        resolved: std::collections::HashMap::new(),
+    };
+    for root in roots {
+        if counter.rows > cap {
+            break;
+        }
+        counter.walk(root, 0);
+    }
+    counter.rows.min(cap + 1)
+}
+
+struct InlineRowCounter<'a> {
+    doc: &'a ApiDocumentation,
+    selected: bool,
+    cap: usize,
+    rows: usize,
+    /// References being expanded on the current path (`ref_stack`).
+    chain: Vec<&'a str>,
+    /// Resolution cache: the walk revisits the same references many times.
+    resolved: std::collections::HashMap<&'a str, Option<&'a Schema>>,
+}
+
+impl<'a> InlineRowCounter<'a> {
+    fn walk(&mut self, schema: &'a Schema, depth: usize) {
+        if self.rows > self.cap {
+            return;
+        }
+        if depth >= SCHEMA_DEPTH_LIMIT {
+            self.rows += 1;
+            return;
+        }
+        if let Some(reference) = schema.reference.as_deref() {
+            let doc = self.doc;
+            let target = *self
+                .resolved
+                .entry(reference)
+                .or_insert_with(|| resolve_schema_reference(reference, doc));
+            match target {
+                Some(resolved) if !self.chain.contains(&reference) => {
+                    self.chain.push(reference);
+                    self.walk(resolved, depth + 1);
+                    self.chain.pop();
+                }
+                _ => self.rows += 1,
+            }
+            return;
+        }
+        self.rows += 1;
+        if let Some(properties) = &schema.properties {
+            for child in properties.values() {
+                self.walk(child, depth + 1);
+            }
+        }
+        if let Some(items) = schema.items.as_deref() {
+            self.walk(items, depth + 1);
+        }
+        if self.selected
+            && let Some(AdditionalProperties::Schema(child)) = &schema.additional_properties
+        {
+            self.walk(child, depth + 1);
+        }
+        for variants in [&schema.all_of, &schema.one_of, &schema.any_of]
+            .into_iter()
+            .flatten()
+        {
+            for variant in variants {
+                self.walk(variant, depth + 1);
+            }
+        }
+    }
+}
+
 /// One depth-limited row whose nested expansion was omitted.
 #[derive(Debug, Clone)]
 pub(super) struct Omission {
@@ -243,6 +360,10 @@ pub(super) struct SchemaContext<'a> {
     /// Use-site observations per reference, in first-encounter order. Fed to
     /// the `--costs` analysis through the render result.
     uses: IndexMap<String, SchemaUse>,
+    /// Stop collecting once this many rows exist (`--costs` measurement only;
+    /// never set for real output). What was collected is then a subset of the
+    /// full expansion, so its size is a lower bound.
+    row_limit: Option<usize>,
 }
 
 impl<'a> SchemaContext<'a> {
@@ -274,6 +395,7 @@ impl<'a> SchemaContext<'a> {
             body_label: None,
             root_depth: 0,
             uses: IndexMap::new(),
+            row_limit: None,
         }
     }
 
@@ -945,16 +1067,22 @@ pub(crate) fn definition_section_tokens(
 /// name as the field label, while real expansions happen at each use site's
 /// label and depth; the drift is a few characters, though a depth-bounded
 /// configuration may truncate the real expansion differently.
+///
+/// Returns the tokens and whether the expansion was bounded: collection stops
+/// one row past [`INLINE_MEASURE_ROW_BUDGET`] (#177), whatever the depth, and
+/// an expansion that reached it is measured by its first
+/// [`INLINE_MEASURE_ROW_BUDGET`] rows only, so the figure is a lower bound.
 #[cfg(feature = "cli")]
 pub(crate) fn inline_expansion_tokens(
     doc: &ApiDocumentation,
     config: &DocConfig,
     reference: &str,
-) -> usize {
+) -> (usize, bool) {
     let Some(resolved) = resolve_schema_reference(reference, doc) else {
-        return 0;
+        return (0, false);
     };
     let mut ctx = SchemaContext::configured(doc, config, false);
+    ctx.row_limit = Some(INLINE_MEASURE_ROW_BUDGET + 1);
     ctx.inline = true;
     ctx.protected_depth = 0;
     let name = short_schema_reference(reference);
@@ -972,9 +1100,11 @@ pub(crate) fn inline_expansion_tokens(
         &mut ctx,
     );
 
+    let bounded = rows.len() > INLINE_MEASURE_ROW_BUDGET;
+    rows.truncate(INLINE_MEASURE_ROW_BUDGET);
     let mut buffer = Vec::new();
     let _ = write_rows(&mut buffer, &rows, false);
-    super::estimate_tokens(&buffer)
+    (super::estimate_tokens(&buffer), bounded)
 }
 
 fn push_cutoff_row(
@@ -1084,6 +1214,9 @@ fn collect_schema_rows(
 ) {
     const MAX_DEPTH: usize = SCHEMA_DEPTH_LIMIT;
 
+    if ctx.row_limit.is_some_and(|limit| rows.len() >= limit) {
+        return;
+    }
     if ctx
         .max_depth
         .is_some_and(|limit| depth >= limit.max(ctx.protected_depth))
@@ -1750,5 +1883,89 @@ mod tests {
         };
         assert_eq!(reachable_component_count(&doc, [&root], 100), 10);
         assert_eq!(reachable_component_count(&doc, [&root], 4), 5);
+    }
+
+    /// Mutually recursive components `C0..Cn`, each with `k` references to the
+    /// next components plus a scalar, an array of refs and a composition.
+    fn cyclic_doc(n: usize, k: usize) -> ApiDocumentation {
+        let mut schemas = serde_json::Map::new();
+        for i in 0..n {
+            let mut properties = serde_json::Map::new();
+            properties.insert("id".into(), serde_json::json!({"type": "string"}));
+            for j in 1..=k {
+                properties.insert(
+                    format!("r{j}"),
+                    serde_json::json!({"$ref": format!("#/components/schemas/C{}", (i + j) % n)}),
+                );
+            }
+            properties.insert(
+                "list".into(),
+                serde_json::json!({"type": "array", "items": {"$ref": format!("#/components/schemas/C{}", (i + 1) % n)}}),
+            );
+            properties.insert(
+                "either".into(),
+                serde_json::json!({"oneOf": [{"$ref": "#/components/schemas/Missing"}, {"type": "integer"}]}),
+            );
+            properties.insert(
+                "extra".into(),
+                serde_json::json!({"type": "object", "additionalProperties": {"$ref": format!("#/components/schemas/C{}", (i + 2) % n)}}),
+            );
+            schemas.insert(
+                format!("C{i}"),
+                serde_json::json!({"type": "object", "properties": properties}),
+            );
+        }
+        let spec = serde_json::json!({
+            "openapi": "3.0.0",
+            "info": {"title": "Cyclic", "version": "1"},
+            "paths": {},
+            "components": {"schemas": schemas},
+        });
+        crate::parser::parse_openapi_bytes(spec.to_string().as_bytes(), "json", None)
+            .expect("cyclic spec parses")
+    }
+
+    fn rendered_rows(doc: &ApiDocumentation, schema: &Schema, selected: bool) -> usize {
+        let mut ctx = SchemaContext::new(doc, true);
+        ctx.selected = selected;
+        let mut rows = Vec::new();
+        collect_schema_rows(
+            schema,
+            "root",
+            None,
+            &mut rows,
+            &mut Vec::new(),
+            0,
+            &mut ctx,
+        );
+        rows.len()
+    }
+
+    #[test]
+    fn inline_row_count_matches_the_inline_render() {
+        for (n, k) in [(1, 1), (3, 2), (5, 2), (4, 3)] {
+            let doc = cyclic_doc(n, k);
+            for schema in doc.schemas.values() {
+                for selected in [false, true] {
+                    let rows = rendered_rows(&doc, schema, selected);
+                    assert_eq!(
+                        inline_row_count(&doc, [schema], selected, usize::MAX - 1),
+                        rows,
+                        "n={n} k={k} selected={selected}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn inline_row_count_stops_past_cap() {
+        let doc = cyclic_doc(40, 4);
+        let root = &doc.schemas["C0"];
+        assert_eq!(inline_row_count(&doc, [root], false, 1_000), 1_001);
+        assert_eq!(
+            inline_row_count(&doc, [root, root], false, INLINE_ROW_BUDGET),
+            INLINE_ROW_BUDGET + 1
+        );
     }
 }

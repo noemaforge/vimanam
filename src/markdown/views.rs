@@ -9,7 +9,9 @@ use std::io::Write;
 use anyhow::Result;
 use indexmap::IndexMap;
 
-use crate::models::{ApiDocumentation, DocConfig, Endpoint, Service, SortMethod};
+use crate::models::{
+    ApiDocumentation, DetailLevel, DocConfig, Endpoint, GroupBy, Service, SortMethod,
+};
 use crate::utils::clean_for_id;
 
 use super::ViewRender;
@@ -83,6 +85,69 @@ pub(crate) fn visible_endpoints<'a>(
 
     sort_endpoints(&mut endpoints, &config.sort_method);
     endpoints
+}
+
+/// Every endpoint the body renders, once per time it is rendered, in no
+/// particular order. The service view (the default grouping) renders a
+/// multi-tag endpoint under each of its visible services, so it appears once
+/// per such service; the other views render each visible endpoint once. Used
+/// to size an `--inline-schemas` render before writing it (#177).
+pub(crate) fn rendered_endpoints<'a>(
+    doc: &'a ApiDocumentation,
+    config: &DocConfig,
+) -> Vec<&'a Endpoint> {
+    if config.detail_level == DetailLevel::Summary {
+        return Vec::new();
+    }
+    match config.group_by {
+        GroupBy::Service => {
+            let (services, service_endpoints) = service_sections(doc, config);
+            services
+                .iter()
+                .filter_map(|service| service_endpoints.get(service.name.as_str()))
+                .flatten()
+                .copied()
+                .collect()
+        }
+        GroupBy::Method | GroupBy::Path | GroupBy::Flat => visible_endpoints(doc, config),
+    }
+}
+
+/// The services the service-grouped views list, in spec order, and the
+/// endpoints each renders, in spec order: `--service-filter` narrows the
+/// services (case-insensitive), the other filters narrow the endpoints, and an
+/// endpoint is listed under every service it is tagged with. An exact
+/// selection is about its operations, so services it leaves empty are dropped
+/// instead of padding the output with empty sections.
+fn service_sections<'a>(
+    doc: &'a ApiDocumentation,
+    config: &DocConfig,
+) -> (Vec<&'a Service>, HashMap<&'a str, Vec<&'a Endpoint>>) {
+    let mut services = if let Some(filter) = &config.service_filter {
+        doc.services
+            .iter()
+            .filter(|s| service_matches_filter(&s.name, filter))
+            .collect::<Vec<_>>()
+    } else {
+        doc.services.iter().collect()
+    };
+
+    let mut service_endpoints: HashMap<&str, Vec<&Endpoint>> = HashMap::new();
+    for endpoint in &doc.endpoints {
+        if !passes_filters(endpoint, config) {
+            continue;
+        }
+
+        for service_name in &endpoint.services {
+            service_endpoints
+                .entry(service_name)
+                .or_default()
+                .push(endpoint);
+        }
+    }
+
+    retain_selected_services(&mut services, &service_endpoints, config);
+    (services, service_endpoints)
 }
 
 /// Whether an endpoint survives the deprecated, method, path and exact
@@ -198,34 +263,7 @@ pub(super) fn generate_summary<W: Write>(
 ) -> Result<()> {
     write_preamble(writer, doc, config)?;
 
-    // Filter services if needed (case-insensitive)
-    let mut services = if let Some(filter) = &config.service_filter {
-        doc.services
-            .iter()
-            .filter(|s| service_matches_filter(&s.name, filter))
-            .collect::<Vec<_>>()
-    } else {
-        doc.services.iter().collect()
-    };
-
-    // Group endpoints by service
-    let mut service_endpoints: HashMap<&str, Vec<&Endpoint>> = HashMap::new();
-    for endpoint in &doc.endpoints {
-        if !passes_filters(endpoint, config) {
-            continue;
-        }
-
-        for service_name in &endpoint.services {
-            service_endpoints
-                .entry(service_name)
-                .or_default()
-                .push(endpoint);
-        }
-    }
-
-    // An exact selection is about its operations, so services it leaves empty
-    // are dropped instead of padding the output with empty sections.
-    retain_selected_services(&mut services, &service_endpoints, config);
+    let (services, service_endpoints) = service_sections(doc, config);
 
     // Write Services List
     writeln!(writer, "## Services")?;
@@ -266,34 +304,7 @@ pub(super) fn generate_by_service<W: Write>(
 ) -> Result<ViewRender> {
     write_preamble(writer, doc, config)?;
 
-    // Filter services if needed (case-insensitive)
-    let mut services = if let Some(filter) = &config.service_filter {
-        doc.services
-            .iter()
-            .filter(|s| service_matches_filter(&s.name, filter))
-            .collect::<Vec<_>>()
-    } else {
-        doc.services.iter().collect()
-    };
-
-    // Group endpoints by service - MOVED THIS UP before TOC generation
-    let mut service_endpoints: HashMap<&str, Vec<&Endpoint>> = HashMap::new();
-    for endpoint in &doc.endpoints {
-        if !passes_filters(endpoint, config) {
-            continue;
-        }
-
-        for service_name in &endpoint.services {
-            service_endpoints
-                .entry(service_name)
-                .or_default()
-                .push(endpoint);
-        }
-    }
-
-    // As in the summary view, services an exact selection leaves empty are
-    // dropped.
-    retain_selected_services(&mut services, &service_endpoints, config);
+    let (services, service_endpoints) = service_sections(doc, config);
 
     // Table of Contents (if enabled)
     if config.include_toc {
