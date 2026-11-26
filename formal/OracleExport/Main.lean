@@ -9,11 +9,13 @@ through the real Rust and asserts the same outputs. See formal/README.md,
 -/
 import OracleExport.Gen
 import OracleExport.Severity
+import OracleExport.Protobuf
 
 open Vimanam.Oracle
 
 def allVectors : List Vectors := [
-  Severity.vectors
+  Severity.vectors,
+  Protobuf.vectors
 ]
 
 def main (args : List String) : IO UInt32 := do

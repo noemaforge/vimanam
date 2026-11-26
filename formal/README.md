@@ -1,6 +1,8 @@
-# Formal model of the `diff` severity rule table
+# Formal models of the `diff` rules
 
-A small Lean 4 development that models the rule table behind `vimanam diff`
+A small Lean 4 development. It models the OpenAPI rule table behind
+`vimanam diff` (below) and the protobuf rules (see "The protobuf rules").
+The OpenAPI model covers the rule table behind `vimanam diff`
 (`diff::severity` in `src/diff/mod.rs`) and proves its direction guarantees:
 what a change to a request or response schema does to existing clients. The
 rule table is where Vimanam's costliest `diff` bugs were (#169: 62 Breaking
@@ -32,9 +34,11 @@ python3 -I scripts/formal/check-model-drift.py
 | `VimanamProofs/Direction.lean` | The specification (`effect`, `noop`) and the direction theorems over `Severity.lean`. Reads no Rust of its own. |
 | `VimanamProofs/EnumReport.lean` | What `diff_values` reports for an `enum` keyword, and the direction theorems for the verdicts it then gets. |
 | `VimanamProofs/History.lean` | The pre-#175 tables and reporting, and the findings they violate. Reads no current Rust. |
+| `VimanamProofs/Protobuf.lean` | The protobuf rules (`src/contract/protobuf.rs`): the rule table, the composite diff on a fragment of protobuf, and the `--breaking` gate. Re-reading the Rust touches this file. |
+| `VimanamProofs/ProtobufCompat.lean` | The specification (wire and source hazards) and the theorems over `Protobuf.lean`. Reads no Rust of its own. |
 | `VimanamProofs/RefDiff.lean` | The `$ref`-aware schema diff reference model (#181): executable, no theorems. See "Reference semantics of `$ref` diffs". |
 | `VimanamProofs/Audit.lean` | `#print axioms` for every theorem. |
-| `OracleExport/` | `lake exe oracle`: writes `oracle/*.json` from the model definitions. `lake exe refdiff`: evaluates `RefDiff.lean` on spec pairs. |
+| `OracleExport/` | `lake exe oracle`: writes `oracle/*.json` from the model definitions (`Severity.json`, `Protobuf.json`). `lake exe refdiff`: evaluates `RefDiff.lean` on spec pairs. |
 | `refdiff/cases/`, `refdiff/expected/` | Fixed spec pairs for the `$ref` model (#182's review-round repros `r1`–`r3`, #185's `r4`–`r5`, including 62- to 66-hop alias chains around the 64-hop cap) and the model's pinned grouped output on them. |
 | `refdiff/allowlist.json` | The known disagreements `refdiff-harness.py --ci` accepts. |
 | `refdiff/negative/` | Cases and record corruptions (`checks.json`) that `--ci` must reject, run by `scripts/formal/check-refdiff-negative.sh`. |
@@ -185,18 +189,21 @@ still rated Breaking (#167).
   cannot happen today, because the parser rejects boolean component schemas.
   `response_swap` keeps its `p ≠ []` hypothesis (it is about
   `response_schema_severity`, whichever change kind calls it).
-* Endpoint matching and moves, the protobuf and GraphQL rule tables
-  (`src/contract/`), the v2 JSON verdicts, and rendering.
+* Endpoint matching and moves, the GraphQL rule table
+  (`src/contract/graphql.rs`), the v2 JSON verdicts, and rendering. The
+  protobuf rules have their own model (see "The protobuf rules").
 
 ## Keeping the models in step with the Rust
 
 `models.toml` lists, for each model file except `Audit.lean`,
-`Direction.lean` and `History.lean`, the Rust items it reads (`src/diff/mod.rs#severity`, ...) and
+`Direction.lean`, `ProtobufCompat.lean` and `History.lean`, the Rust items it reads (`src/diff/mod.rs#severity`, ...) and
 `read_digest`, a SHA-256 over those items with comments, `#[cfg(test)]` code
 and whitespace normalised away.
 `scripts/formal/check-model-drift.py` recomputes it; the `model-drift`
 workflow runs it on every change to `src/diff/`, `src/resolve.rs`,
-`src/utils.rs`, `formal/` or `scripts/formal/` and annotates the changed Rust with a warning when a model
+`src/utils.rs`, the protobuf adapter (`src/contract/protobuf.rs`,
+`src/contract/mod.rs`, `src/cli/config.rs`), `formal/` or `scripts/formal/`
+and annotates the changed Rust with a warning when a model
 has drifted, one annotation per changed file. The warning names only the refs
 that changed since the state the digest was taken at: `read_against` when it
 is that state, otherwise the newest of the last 100 commits touching the
@@ -598,6 +605,112 @@ reads integers past `u64` as lossy `f64` (`2^64` and `2^64 + 1` are equal
 there, a change here). Neither is intended semantics; the generator writes
 small integers only. Inputs the Rust rejects (`type` not a string or array
 of strings, ...) are not specified.
+
+## The protobuf rules
+
+`VimanamProofs/Protobuf.lean` models the protobuf adapter of `vimanam diff`
+(`src/contract/protobuf.rs`) in two layers, rule for rule in the Rust's
+match order:
+
+* **The rule table**, total over its finite inputs: `attribute_kind` and
+  `structural_kind` (which neutral kind an attribute or structural change
+  gets), `classify` (severity and impacts, from the kind, the pointer and
+  whether the subject's `cardinality` is `"required"`), `rule` and the
+  native-kind overrides of `diff` (`native_kind`), and `breaking_gate`, the
+  `--breaking wire|source|all` test `cli::run_diff` applies to each fact.
+  Pointers are abstracted to the classes the Rust's string comparisons tell
+  apart (`Ptr.ofString`).
+* **The composite diff**: the whole of `protobuf::diff` on a fragment of
+  protobuf, one proto2 file declaring at most one message `M` (scalar
+  `optional`/`required`/`repeated` fields, one oneof, deprecation, reserved
+  ranges and names) and at most one enum `E` (labels at signed 32-bit
+  numbers, aliases, inclusive reserved ranges and names) on each side. This
+  covers the neutral comparison's facts for the fragment and every composite
+  fact `diff` adds: `FIELD_NO_DELETE_UNLESS_NUMBER_RESERVED`,
+  `FIELD_REQUIRED_NO_DELETE`, `ENUM_VALUE_NO_DELETE_UNLESS_NUMBER_RESERVED`,
+  `ENUM_VALUE_NUMBER_REUSED`, `RESERVED_IDENTITY_REUSED`, and the downgrade
+  of a required field added with a new message. The output is the set of
+  facts (subject, native rule, severity, impacts).
+
+`VimanamProofs/ProtobufCompat.lean` states the guarantees against a
+specification written from protobuf's encoding and the policy in
+`docs/protobuf.md`, not from the rules: a **wire hazard** endangers binary
+peers (a field number keeps a field whose type, label or oneof membership
+changes; a number is vacated without being reserved; a required field is
+removed or added to an existing message; a reserved number is reused; an
+enum label present on both sides moves to another number), a **source
+hazard** breaks source or JSON (a message, enum or oneof removed; a field
+name gone, renamed at its number or moved; a field's shape changed; an enum
+label gone; a reserved name reused; a required field added).
+
+| Theorem | Rust behaviour |
+| --- | --- |
+| `wire_gate_iff_hazard` | On a surviving message, `--breaking wire` fails if and only if the evolution is a wire hazard. |
+| `no_wire_of_kept_shapes` | Renames and deprecations at a number, removals of optional fields whose number the new message reserves, and optional additions at numbers the old one did not reserve, never fail `--breaking wire`. |
+| `enum_wire_gate_sound` | On a surviving enum, `--breaking wire` fails only for a wire hazard. |
+| `enum_vacated_fails_wire`, `enum_reserved_reuse_fails_wire` | A vacated, unreserved enum number and a reused reserved one fail `--breaking wire`. |
+| `wire_gap_is_label_move` | Finding (open, #190): the only wire hazard `--breaking wire` misses on the fragment is a moved enum label. |
+| `enum_label_moved_wire_gap`, `enum_alias_moved_wire_gap` | Finding (open, #190): the two repros, with and without a reservation. |
+| `source_hazard_fails_source`, `source_hazard_msg` | Every source hazard fails `--breaking source`. |
+| `fails_all_iff`, `diff_ok` | Every Breaking fact names a wire or source impact, so `--breaking all` fails exactly when `wire` or `source` does. |
+| `doc_rows` | Pins of the docs' rule-table rows the fragment reaches. |
+| `enumReserved_inclusive` | The enum reserved-range test is inclusive at both ends (the Rust widens to 64 bits before adding one). |
+| `classify_breaking_gated`, `classify_not_breaking_no_wire` | Over every `classify` input: a Breaking verdict names a wire or source impact; Review and Non-breaking verdicts carry no wire impact, and Non-breaking none at all. |
+| `attribute_wire_evidence` | Exactly the `type`, `oneof`, `group`, streaming, `cardinality`, `presence`, `input`, `output` and `syntax` attribute changes supply wire evidence, each Breaking. |
+| `rename_source_only`, `structural_only_name` | A same-number rename and a JSON name change are Breaking in source/JSON only (`FIELD_SAME_NAME`, `FIELD_SAME_JSON_NAME`); no other structural difference is a fact. |
+| `type_change_wire`, `streaming_breaks_wire` | Every field type change, and every streaming change, is Breaking on the wire, in source and in JSON. |
+| `additions`, `removals_source`, `deprecation_default_review` | Additions are Non-breaking except a required field; removals are Breaking in source only; deprecation and default changes are Review. |
+| `gate_breaking_only`, `gate_scope_le_all`, `gate_outside_scope`, `gate_all_of_gated` | Only Breaking facts fail a gate, `all` fails whenever `wire` or `source` does, and no gate fails on a fact outside its scope. |
+
+### Finding
+
+#190 (open, not fixed here): `ENUM_VALUE_NUMBER_REUSED` fires only for a
+value entity that is gone *and* whose number now holds a label that had
+another number. A label that moves onto a number another label keeps, when
+its old number is reserved (`A = 1; B = 2` to `reserved 1; B = 2; A = 2`) or
+still has another label (`A = 1; B = 1; C = 2` to `A = 1; B = 2; C = 2`),
+gets no fact with a `wire` impact, so `--breaking wire --fail-on-breaking`
+exits 0. `docs/protobuf.md` rates this Breaking on the wire ("Existing enum
+label reassigned to another used number"). Once #190 is fixed,
+`enum_wire_gate_sound` should become an equivalence like
+`wire_gate_iff_hazard`, replacing the three finding theorems.
+
+### The oracle
+
+`lake exe oracle` writes `oracle/Protobuf.json`: the rule table
+exhaustively (every neutral kind with every listed pointer string, including
+lookalikes such as `/defaults` and `/file_options`, every `cardinality`
+attribute and removed type's `kind`; every scope, severity and impact list),
+then 625 fragment pairs (fixed ones for each docs row the fragment reaches,
+the #190 repros and the 32-bit reserved bounds, then generated ones, about
+half by editing the old side one to three times). For each pair it records
+the model's fact set, the gate under each scope, the specification's hazards,
+and `known_gap`: the issue a wire hazard the wire gate misses is filed as.
+The exporter refuses invalid documents and a gap that is not a moved label.
+
+`src/contract/protobuf/formal_oracle.rs` (part of the default `cargo test`)
+rebuilds each pair as a `FileDescriptorSet` (`prost_types`, no compiler),
+runs the real `protobuf::diff` and `breaking_gate`, and compares the fact
+sets and the gates. It also asserts that every wire hazard fails `--breaking
+wire` and every source hazard `--breaking source`, except a pair pinned as
+a known gap, which must still pass the wire gate: fixing #190 fails the test
+until the pin, the finding theorems and, if the fix changes the rules, the
+model are updated together. A `variants!` invocation lists every neutral
+`ChangeKind` (an exhaustive match, so a new variant does not compile until
+listed) and the test fails unless the oracle classifies each one.
+
+### Not covered
+
+Services and RPCs beyond the rule table (pagination inference, input/output
+and streaming facts in context), messages and enums as field types, groups,
+maps, extensions, nested types, more than one message, enum or oneof,
+proto3 (presence and syntax changes), options other than `deprecated` and
+`allow_alias`, explicit `json_name`s and defaults, file and package changes
+and renamed files, the bundled-file filter (`google/protobuf/`), Editions
+(rejected before diffing), how descriptors are compiled or decoded, and the
+Markdown and JSON rendering. The CLI wiring (`cli::run_diff` mapping
+`--breaking` through `BreakingArg::scope` to `breaking_gate`) is covered by
+`tests/protobuf_cli.rs`, not by the oracle.
 
 ## Next candidates
 

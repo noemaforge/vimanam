@@ -103,16 +103,10 @@ fn run_diff<W: Write>(
         let old = old_input.protobuf(&args.proto_paths)?;
         let new = new_input.protobuf(&args.proto_paths)?;
         let changes = crate::contract::protobuf::diff(&old, &new)?;
-        let breaking = changes.iter().any(|c| {
-            c.severity == crate::contract::Severity::Breaking
-                && match args.breaking {
-                    config::BreakingArg::All => true,
-                    config::BreakingArg::Wire => c.impacts.iter().any(|i| i == "wire"),
-                    config::BreakingArg::Source => {
-                        c.impacts.iter().any(|i| i == "source" || i == "wire_json")
-                    }
-                }
-        });
+        let scope = args.breaking.scope();
+        let breaking = changes
+            .iter()
+            .any(|c| crate::contract::protobuf::breaking_gate(c, scope));
         let document = crate::contract::json::to_json(
             crate::contract::protobuf::adapt(&old),
             crate::contract::protobuf::adapt(&new),

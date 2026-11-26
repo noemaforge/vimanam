@@ -1,14 +1,16 @@
 name: lean
 
-# Checks the Lean 4 model of the diff severity rule table under formal/. The
+# Checks the Lean 4 models under formal/ (the OpenAPI diff severity rule
+# table, the protobuf diff rules, the $ref diff reference model). The
 # development has no Lake dependencies (no Mathlib), so the only thing fetched
 # is the Lean release itself, pinned by version (formal/lean-toolchain) and
 # verified by SHA-256 below. To upgrade Lean: bump formal/lean-toolchain and
 # LEAN_SHA256 together.
 #   curl -sSfL https://github.com/leanprover/lean4/releases/download/v<ver>/lean-<ver>-linux.tar.zst | sha256sum
 #
-# The Rust replay of the oracle vectors (src/diff/formal_oracle.rs) runs in
-# ci.yml with the rest of `cargo test`; model drift is reported by
+# The Rust replay of the oracle vectors (src/diff/formal_oracle.rs,
+# src/contract/protobuf/formal_oracle.rs) runs in ci.yml with the rest of
+# `cargo test`; model drift is reported by
 # model-drift.yml. The `$ref` diff reference model is compared with a release
 # build of the Rust here, so the workflow also runs on Rust changes.
 on:
