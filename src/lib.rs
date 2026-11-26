@@ -53,6 +53,6 @@ pub mod cli;
 pub use models::{
     AdditionalProperties, ApiDocumentation, DetailLevel, DocConfig, Encoding, Endpoint, Example,
     GroupBy, Header, MediaType, OperationRef, OperationSelector, Parameter, Response, Schema,
-    Service, SortMethod,
+    Service, SortMethod, UnparsedSchema,
 };
 pub use parser::{parse_openapi, parse_openapi_bytes};

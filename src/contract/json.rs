@@ -148,7 +148,7 @@ pub fn openapi_with(
     new_sha: &str,
     matching: crate::diff::EndpointMatching,
 ) -> anyhow::Result<JsonDiff> {
-    let resolver = crate::resolve::PairResolver::new(&old.schemas, &new.schemas);
+    let resolver = crate::resolve::PairResolver::for_docs(old, new);
     openapi_from(
         old,
         new,
@@ -178,6 +178,7 @@ pub(crate) fn openapi_from(
         new_title: legacy.new_title.clone(),
         new_version: legacy.new_version.clone(),
         changes: Vec::new(),
+        unparsed_definitions: Vec::new(),
     };
     let legacy_json = crate::diff::json::to_json(&empty, deltas, old_sha, new_sha);
     let (changes, old_surface, new_surface) =

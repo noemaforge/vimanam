@@ -380,6 +380,7 @@ mod tests {
                     )
                 })
                 .collect(),
+            unparsed_schemas: IndexMap::new(),
             examples: IndexMap::new(),
         }
     }

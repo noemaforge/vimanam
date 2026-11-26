@@ -1,0 +1,7 @@
+[
+{"change": {"after": "Page", "before": "C", "op": "retargeted"}, "dir": "request", "neg": false, "owner": {"new": "Page", "old": "C"}, "ptr": "", "severity": "review", "use": "POST /a body"},
+{"change": {"after": "object", "before": "string", "op": "changed"}, "dir": "request", "neg": false, "owner": {"new": "Page", "old": "C"}, "ptr": "/properties/data/properties/data/type", "severity": "breaking", "use": "POST /a body"},
+{"change": {"after": {"$ref": "#/components/schemas/B"}, "op": "added"}, "dir": "request", "neg": false, "owner": {"new": "Page", "old": "C"}, "ptr": "/properties/data/properties/data/properties/data", "severity": "non_breaking", "use": "POST /a body"},
+{"change": {"after": {"type": "string"}, "op": "added"}, "dir": "request", "neg": false, "owner": {"new": "Page", "old": "C"}, "ptr": "/properties/data/properties/data/properties/x", "severity": "non_breaking", "use": "POST /a body"},
+{"change": {"after": {"type": "string"}, "op": "added"}, "dir": "request", "neg": false, "owner": {"new": "Page", "old": "C"}, "ptr": "/properties/data/properties/x", "severity": "non_breaking", "use": "POST /a body"}
+]

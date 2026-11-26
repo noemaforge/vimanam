@@ -29,7 +29,7 @@ use indexmap::IndexMap;
 use serde_json::{Map, Value};
 
 use crate::diff::{ValueChange, diff_set_member, pointer_of, set_member_rewritten};
-use crate::models::Schema;
+use crate::models::{ApiDocumentation, Schema, UnparsedSchema};
 use crate::utils::decode_json_pointer_token;
 
 /// Maximum number of `$ref` expansions on one chain in
@@ -112,6 +112,9 @@ fn collect_refs<'v>(value: &'v Value, out: &mut Vec<&'v str>) {
 /// via `RefCell`).
 pub(crate) struct DocResolver<'a> {
     pub(crate) schemas: &'a IndexMap<String, Schema>,
+    /// `definitions` entries that do not deserialise as a `Schema` (#188):
+    /// components all the same, as written.
+    unparsed: Option<&'a IndexMap<String, UnparsedSchema>>,
     /// Component name -> serialized `Schema` (`None`: not a component).
     components: RefCell<HashMap<String, Option<Rc<Value>>>>,
 }
@@ -129,7 +132,51 @@ impl<'a> DocResolver<'a> {
     pub(crate) fn new(schemas: &'a IndexMap<String, Schema>) -> Self {
         DocResolver {
             schemas,
+            unparsed: None,
             components: RefCell::new(HashMap::new()),
+        }
+    }
+
+    /// The resolver of a whole document: its schemas, plus the `definitions`
+    /// entries that do not deserialise as one, kept as written (#188).
+    pub(crate) fn for_doc(doc: &'a ApiDocumentation) -> Self {
+        DocResolver {
+            unparsed: Some(&doc.unparsed_schemas),
+            ..DocResolver::new(&doc.schemas)
+        }
+    }
+
+    /// Component `name` as JSON: the serialized `Schema`, or the entry as
+    /// written when it does not deserialise as one.
+    fn serialize(&self, name: &str) -> Option<Value> {
+        match self.schemas.get(name) {
+            Some(schema) => Some(serde_json::to_value(schema).unwrap_or(Value::Null)),
+            None => self
+                .unparsed
+                .and_then(|unparsed| unparsed.get(name))
+                .map(|entry| entry.value.clone()),
+        }
+    }
+
+    /// Every component name, in document order: the schemas, then the
+    /// entries that do not deserialise as one.
+    pub(crate) fn names(&self) -> impl Iterator<Item = &'a String> {
+        let unparsed = self
+            .unparsed
+            .into_iter()
+            .flat_map(|unparsed| unparsed.keys());
+        self.schemas.keys().chain(unparsed)
+    }
+
+    /// The position of component `name` in [`Self::names`] (`usize::MAX`
+    /// when it is not one).
+    pub(crate) fn position(&self, name: &str) -> usize {
+        match self.schemas.get_index_of(name) {
+            Some(index) => index,
+            None => self
+                .unparsed
+                .and_then(|unparsed| unparsed.get_index_of(name))
+                .map_or(usize::MAX, |index| self.schemas.len() + index),
         }
     }
 
@@ -138,10 +185,7 @@ impl<'a> DocResolver<'a> {
         if let Some(cached) = self.components.borrow().get(name) {
             return cached.clone();
         }
-        let value = self
-            .schemas
-            .get(name)
-            .map(|schema| Rc::new(serde_json::to_value(schema).unwrap_or(Value::Null)));
+        let value = self.serialize(name).map(Rc::new);
         self.components
             .borrow_mut()
             .insert(name.to_string(), value.clone());
@@ -277,25 +321,34 @@ pub(crate) struct PairResolver<'a> {
 }
 
 impl<'a> PairResolver<'a> {
+    /// The resolvers of two documents' schemas.
+    #[cfg(test)]
     pub(crate) fn new(
         old: &'a IndexMap<String, Schema>,
         new: &'a IndexMap<String, Schema>,
     ) -> Self {
-        let old_resolver = DocResolver::new(old);
-        let new_resolver = DocResolver::new(new);
+        Self::with(DocResolver::new(old), DocResolver::new(new))
+    }
 
+    /// The resolvers of two whole documents, including their `definitions`
+    /// entries that do not deserialise as a schema (#188).
+    pub(crate) fn for_docs(old: &'a ApiDocumentation, new: &'a ApiDocumentation) -> Self {
+        Self::with(DocResolver::for_doc(old), DocResolver::for_doc(new))
+    }
+
+    fn with(old_resolver: DocResolver<'a>, new_resolver: DocResolver<'a>) -> Self {
         let mut unstable = HashSet::new();
         // Referenced name -> names whose (identical) value references it.
         let mut referrers: HashMap<String, Vec<&str>> = HashMap::new();
-        let names = old
-            .keys()
-            .chain(new.keys().filter(|n| !old.contains_key(*n)));
+        let old_names: HashSet<&String> = old_resolver.names().collect();
+        let names = old_resolver
+            .names()
+            .chain(new_resolver.names().filter(|n| !old_names.contains(n)));
         // Serialized once here to compare, then dropped: resolution later
         // converts (and caches) only the components it actually reaches, which
         // keeps peak memory near a single copy of the document.
-        let serialize = |schema: &Schema| serde_json::to_value(schema).unwrap_or(Value::Null);
         for name in names {
-            match (old.get(name).map(serialize), new.get(name).map(serialize)) {
+            match (old_resolver.serialize(name), new_resolver.serialize(name)) {
                 (Some(before), Some(after)) if before == after => {
                     let mut refs = Vec::new();
                     collect_refs(&before, &mut refs);
@@ -455,12 +508,19 @@ fn overlay_keys(map: &Map<String, Value>) -> impl Iterator<Item = &String> {
     })
 }
 
+/// One entry of [`LocalWalk::chain`].
+struct Expansion {
+    path: Vec<String>,
+    old: Rc<Value>,
+    new: Rc<Value>,
+}
+
 /// The mutable state of one [`PairResolver::localize`] walk.
 struct LocalWalk<'w> {
-    /// Component names expanded in place on the current chain, per side
-    /// (names, so differently spelled references to one component are one).
-    old_stack: Vec<String>,
-    new_stack: Vec<String>,
+    /// The value pairs one-sided expansions produced on the current chain,
+    /// each with the path it was produced at (#187). The walk is a function
+    /// of the pair it compares, so meeting one again means the rest repeats.
+    chain: Vec<Expansion>,
     /// JSON depth below the walked schema, and the top-level key the walk is
     /// under (see [`RefEdge::at`]).
     depth: usize,
@@ -509,6 +569,9 @@ impl DocResolver<'_> {
     /// Whether this document declares component `name`.
     fn declares(&self, name: &str) -> bool {
         self.schemas.contains_key(name)
+            || self
+                .unparsed
+                .is_some_and(|unparsed| unparsed.contains_key(name))
     }
 
     /// The `$ref` object `map` with its target laid under it, exactly as
@@ -517,15 +580,23 @@ impl DocResolver<'_> {
     /// [`MAX_RESOLVE_DEPTH`]. On `Some`, the component name is pushed onto
     /// `stack` for the caller to pop.
     fn expand_once(&self, map: &Map<String, Value>, stack: &mut Vec<String>) -> Option<Value> {
-        let Some(Value::String(reference)) = map.get("$ref") else {
-            return None;
-        };
-        let name = reference_name(reference)?;
+        let name = component_ref(map)?;
         if stack.len() >= MAX_RESOLVE_DEPTH || stack.contains(&name) {
             return None;
         }
-        let target = self.target(reference)?;
+        let expanded = self.merge_target(map)?;
         stack.push(name);
+        Some(expanded)
+    }
+
+    /// The `$ref` object `map` with its target laid under it, exactly as
+    /// [`Self::resolve`] expands one hop (siblings win), or `None` when it is
+    /// unresolvable.
+    fn merge_target(&self, map: &Map<String, Value>) -> Option<Value> {
+        let Some(Value::String(reference)) = map.get("$ref") else {
+            return None;
+        };
+        let target = self.target(reference)?;
         Some(match target.as_ref() {
             target @ Value::Object(_) if map.len() == 1 => target.clone(),
             target => {
@@ -622,8 +693,7 @@ impl PairResolver<'_> {
         members: &mut Vec<ValueChange>,
     ) -> (Value, Value) {
         let mut walk = LocalWalk {
-            old_stack: Vec::new(),
-            new_stack: Vec::new(),
+            chain: Vec::new(),
             depth: 0,
             top: None,
             negated: false,
@@ -801,22 +871,18 @@ impl PairResolver<'_> {
                         });
                         self.local_maps(&old_effective, &new_effective, role, walk)
                     }
-                    (Some(_), None) => match self.old.expand_once(before, &mut walk.old_stack) {
-                        Some(expanded) => {
-                            let out = self.local(&expanded, new, role, walk);
-                            walk.old_stack.pop();
-                            out
+                    (Some(_), None) if walk.chain.len() < MAX_RESOLVE_DEPTH => {
+                        match self.old.merge_target(before) {
+                            Some(expanded) => self.expanded(expanded, new.clone(), role, walk),
+                            None => self.local_maps(before, after, role, walk),
                         }
-                        None => self.local_maps(before, after, role, walk),
-                    },
-                    (None, Some(_)) => match self.new.expand_once(after, &mut walk.new_stack) {
-                        Some(expanded) => {
-                            let out = self.local(old, &expanded, role, walk);
-                            walk.new_stack.pop();
-                            out
+                    }
+                    (None, Some(_)) if walk.chain.len() < MAX_RESOLVE_DEPTH => {
+                        match self.new.merge_target(after) {
+                            Some(expanded) => self.expanded(old.clone(), expanded, role, walk),
+                            None => self.local_maps(before, after, role, walk),
                         }
-                        None => self.local_maps(before, after, role, walk),
-                    },
+                    }
                     _ => self.local_maps(before, after, role, walk),
                 }
             }
@@ -838,6 +904,51 @@ impl PairResolver<'_> {
                 (Value::Array(left), Value::Array(right))
             }
             _ => (old.clone(), new.clone()),
+        }
+    }
+
+    /// Continues after a one-sided expansion produced `(old, new)` (#187).
+    /// The walk is a function of the pair it compares, so a pair already on
+    /// the chain repeats: deeper down, the rest repeats periodically and
+    /// nothing more is reported (both sides come back equal); at the same
+    /// path it is an alias loop (`X = {"$ref": X, ...}`) that expansion
+    /// makes no progress on, whose value is the fixpoint, the merged
+    /// siblings without `$ref`. Cutting on a component *name* instead
+    /// compared a literal `$ref` with the other side's expansion, hiding
+    /// changes beneath it and inventing some for a recursive component
+    /// unrolled inline.
+    fn expanded(&self, old: Value, new: Value, role: Role, walk: &mut LocalWalk) -> (Value, Value) {
+        let seen = walk
+            .chain
+            .iter()
+            .rposition(|entry| *entry.old == old && *entry.new == new);
+        match seen {
+            None => {
+                let (old, new) = (Rc::new(old), Rc::new(new));
+                walk.chain.push(Expansion {
+                    path: walk.path.clone(),
+                    old: Rc::clone(&old),
+                    new: Rc::clone(&new),
+                });
+                let out = self.local(&old, &new, role, walk);
+                walk.chain.pop();
+                out
+            }
+            Some(index) if walk.chain[index].path == walk.path => {
+                let fixpoint = |map: &Value, doc: &DocResolver| -> Map<String, Value> {
+                    let Value::Object(map) = map else {
+                        return Map::new();
+                    };
+                    let declared = component_ref(map).is_some_and(|name| doc.declares(&name));
+                    map.iter()
+                        .filter(|(key, _)| !declared || *key != "$ref")
+                        .map(|(key, value)| (key.clone(), value.clone()))
+                        .collect()
+                };
+                let (before, after) = (fixpoint(&old, &self.old), fixpoint(&new, &self.new));
+                self.local_maps(&before, &after, role, walk)
+            }
+            Some(_) => (Value::Null, Value::Null),
         }
     }
 
@@ -1188,15 +1299,52 @@ mod tests {
     fn localize_stops_on_cycles_and_keeps_dangling_refs_literal() {
         let docs = schemas(&[("Loop", reference("Loop"))]);
         let pair = PairResolver::new(&docs, &docs);
-        // Expanding Loop yields Loop again: kept literal once on the stack.
+        // Expanding Loop yields Loop again at the same path, an alias loop
+        // expansion makes no progress on: its value is the fixpoint, the
+        // siblings without `$ref` (none here).
         let (left, right, edges) = localized(&pair, reference("Loop"), json!({"type": "object"}));
         assert!(edges.is_empty());
-        assert_eq!(left, reference("Loop"));
+        assert_eq!(left, json!({}));
         assert_eq!(right, json!({"type": "object"}));
         // Neither target exists: compared as written, so a retarget shows.
         let (left, right, edges) = localized(&pair, reference("Gone"), reference("Missing"));
         assert!(edges.is_empty());
         assert_eq!((left, right), (reference("Gone"), reference("Missing")));
+    }
+
+    #[test]
+    fn localize_cuts_one_sided_expansion_on_a_recurring_pair_not_a_name() {
+        // #187: `B` is recursive through `data`; the new side unrolls it
+        // once. Expansion continues past the second `B` (a name already
+        // expanded) because the compared pair is new, and both sides meet as
+        // references below, which is an edge, not a literal `$ref`.
+        let b = json!({"type": "object", "properties": {"data": reference("B")}});
+        let docs = schemas(&[("B", b)]);
+        let pair = PairResolver::new(&docs, &docs);
+        let unrolled = json!({"type": "object", "properties": {"data":
+            {"type": "object", "properties": {"data": reference("B")}}}});
+        let (left, right, edges) = localized(&pair, reference("B"), unrolled.clone());
+        assert_eq!(left, right);
+        assert_eq!(edges.len(), 1);
+    }
+
+    #[test]
+    fn localize_bounds_one_sided_expansion_chains() {
+        // A chain longer than the cap, met by an inline schema at the bottom:
+        // past MAX_RESOLVE_DEPTH expansions the reference is compared as
+        // written, so the work stays bounded.
+        let entries: Vec<(String, Value)> = (0..=MAX_RESOLVE_DEPTH + 1)
+            .map(|i| (format!("L{i}"), reference(&format!("L{}", i + 1))))
+            .collect();
+        let entries: Vec<(&str, Value)> = entries
+            .iter()
+            .map(|(n, v)| (n.as_str(), v.clone()))
+            .collect();
+        let docs = schemas(&entries);
+        let pair = PairResolver::new(&docs, &docs);
+        let (left, _, edges) = localized(&pair, reference("L0"), json!({"type": "string"}));
+        assert!(edges.is_empty());
+        assert_eq!(left, reference(&format!("L{MAX_RESOLVE_DEPTH}")));
     }
 
     #[test]

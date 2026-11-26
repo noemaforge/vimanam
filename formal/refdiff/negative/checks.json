@@ -105,6 +105,25 @@
       "TO": "L",
       "OWNER": "X",
       "why": "The record sits on a real reference to the alias loop L (in X, the structural check passes) and names L, but no use reaches L or X: only the use-reach term rejects it."
+    },
+    {
+      "case": "n187a",
+      "OP": "drop-any",
+      "PTR": "/properties/data/properties/data/properties/x/type",
+      "why": "A Breaking change beneath where the name-keyed cut stopped (#187) must be reported: dropping it is caught."
+    },
+    {
+      "case": "n187a",
+      "OP": "inject",
+      "PTR": "/properties/data/$ref",
+      "TO": "B",
+      "why": "Unrolling a recursive component inline is no change (#187): the literal `$ref removed` record the name-keyed cut produced at the unrolled copy is caught."
+    },
+    {
+      "case": "n188",
+      "OP": "drop-any",
+      "PTR": "/properties/a/type",
+      "why": "A change inside a `definitions` entry that does not deserialise is still compared (#188): dropping it is caught."
     }
   ]
 }

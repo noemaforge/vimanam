@@ -96,6 +96,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `diff` no longer stops expanding a recursive component by its name when
+  only one side writes it as a `$ref` (#187). Expansion now stops where the
+  compared pair of old and new values recurs, as the Lean reference model
+  specifies. Before, the walk compared a literal `$ref` with the other side's
+  inline schema, which caused two problems:
+  - changes beneath that point were hidden, so a Breaking change could pass
+    `--fail-on-breaking`;
+  - a recursive component unrolled inline (no change at all) reported a
+    Breaking `/type` added and exited 3. On Stripe, inlining every response
+    `$ref` two or three levels deep gave 45 and 754 false Breaking records;
+    it now gives none.
+
+  A pure alias loop (`C = {"$ref": C}`) facing an inline schema now compares
+  as its siblings without `$ref`, instead of reporting a `$ref` removed.
+- `diff` compares a `definitions` entry that is not a valid schema instead
+  of dropping it (#188). Before, a change inside such an entry (one with
+  `"required": "a"`, say) printed "No changes." and exited 0. The entry is
+  now compared as written, its changes are rated as usual, and the report
+  opens with a `> **Warning:**` line naming it (also on stderr). Markdown
+  rendering still leaves it out. **Library:** `ApiDocumentation` has a new
+  `unparsed_schemas` field and `SpecDiff` a new `unparsed_definitions`
+  field (`UnparsedSchema`, `diff::UnparsedDefinition`), so code that builds
+  either as a struct literal must set it.
 - `diff` no longer rates removing a member from a **response** `enum` as
   breaking (#169): a server that stops returning a value cannot break a
   client, so the row is now non-breaking. Request-side enum removal stays

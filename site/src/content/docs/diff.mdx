@@ -92,6 +92,10 @@ A component sent in requests and returned in responses gets one row per directio
 
 Only schema positions the rule tables understand (the schema itself, `properties`, `items`, `additionalProperties`, `allOf`/`oneOf`/`anyOf` and `not`) count as uses of a component. A `$ref` under `default`, `const`, an `enum` member, `if`/`then`/`else`, `prefixItems` or `$defs` is expanded in place instead, so a change reached that way appears at its full pointer (for example `/default/type`, or `/enum/<member>/type` for an `enum` member that is a reference) and is classified `review`. Rewriting an `enum` member without changing what it resolves to (pointing it at an identical component, or inlining it) is one `review` change, not a removed and an added member.
 
+A schema that moves between a `$ref` and an inline copy is compared field by field, also for a recursive component: writing `$ref: Node` as an inline copy of `Node` unrolled a level or two is no change, and a change inside the unrolled copy is reported where it is, with its own verdict.
+
+A `definitions` entry that is not a valid schema (for example `"required": "id"` instead of `["id"]`) is still compared, as written, so a change inside it is reported and rated like any other. The report starts with a `> **Warning:**` line naming the entry, and the same warning goes to stderr. Markdown rendering leaves such an entry out, as before.
+
 ## Include hygiene and token deltas with `--report`
 
 Pass `--report` to append a `Deltas` section comparing both versions:

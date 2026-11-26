@@ -362,6 +362,54 @@ pub struct SpecDiff {
     pub new_version: String,
     /// Every change, in report order (see the module docs).
     pub changes: Vec<Change>,
+    /// `definitions` entries of either spec that do not deserialise as a
+    /// schema (#188), old spec first, each in document order. They were
+    /// compared as written, so changes inside them are in `changes`; the
+    /// report names them because the spec is invalid there.
+    pub unparsed_definitions: Vec<UnparsedDefinition>,
+}
+
+/// A `definitions` entry of one spec that does not deserialise as a schema
+/// (#188). `diff` compares it as written, like any other component, so a
+/// change inside it is still reported and rated.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct UnparsedDefinition {
+    /// Whether the entry is in the old spec (else the new one).
+    pub old: bool,
+    /// The entry's name under `definitions`.
+    pub name: String,
+    /// Why it does not deserialise.
+    pub error: String,
+}
+
+impl std::fmt::Display for UnparsedDefinition {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "`definitions/{}` in the {} spec is not a valid schema ({}); it was compared as written",
+            self.name,
+            if self.old { "old" } else { "new" },
+            self.error
+        )
+    }
+}
+
+/// The `definitions` entries of `old` then `new` that do not deserialise as
+/// a schema.
+fn unparsed_definitions(old: &ApiDocumentation, new: &ApiDocumentation) -> Vec<UnparsedDefinition> {
+    [(true, old), (false, new)]
+        .into_iter()
+        .flat_map(|(is_old, doc)| {
+            doc.unparsed_schemas
+                .iter()
+                .map(move |(name, entry)| UnparsedDefinition {
+                    old: is_old,
+                    name: name.clone(),
+                    error: entry.error.clone(),
+                })
+        })
+        .collect()
 }
 
 impl SpecDiff {
@@ -688,12 +736,7 @@ pub fn diff_with(
     new: &ApiDocumentation,
     matching: EndpointMatching,
 ) -> SpecDiff {
-    diff_with_resolver(
-        old,
-        new,
-        matching,
-        &PairResolver::new(&old.schemas, &new.schemas),
-    )
+    diff_with_resolver(old, new, matching, &PairResolver::for_docs(old, new))
 }
 
 /// [`diff_with`] with a caller-owned resolution cache for the same two specs,
@@ -773,6 +816,7 @@ pub(crate) fn diff_with_resolver(
         new_title: new.title.clone(),
         new_version: new.version.clone(),
         changes,
+        unparsed_definitions: unparsed_definitions(old, new),
     }
 }
 

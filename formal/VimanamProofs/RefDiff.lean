@@ -250,6 +250,61 @@ partial def schemaNorm : J → J
     .obj (normNull kvs)
   | j => j
 
+/-- Whether `models::Schema` deserialises `j` (#188): an object whose typed
+keys hold, when not `null`, the types the struct declares (`title`,
+`description`, `format`, `$ref` strings; `type` a string or an array of
+strings; `properties` an object of schemas; `items` a schema; `required` an
+array of strings; `allOf`/`oneOf`/`anyOf` arrays of schemas; `enum` an
+array; `nullable` a boolean; `additionalProperties` a boolean or a schema).
+Every other key is an extension and holds anything. -/
+partial def parsesAsSchema : J → Bool
+  | .obj kvs => kvs.all fun (k, v) =>
+    let str : J → Bool := fun
+      | .str _ => true
+      | _ => false
+    v.isNull ||
+    if k == "title" || k == "description" || k == "format" || k == "$ref" then str v
+    else if k == "type" then
+      match v with
+      | .str _ => true
+      | .arr xs => xs.all str
+      | _ => false
+    else if k == "properties" then
+      match v with
+      | .obj m => m.all fun (_, x) => parsesAsSchema x
+      | _ => false
+    else if k == "items" then parsesAsSchema v
+    else if k == "required" then
+      match v with
+      | .arr xs => xs.all str
+      | _ => false
+    else if k == "allOf" || k == "oneOf" || k == "anyOf" then
+      match v with
+      | .arr xs => xs.all parsesAsSchema
+      | _ => false
+    else if k == "enum" then
+      match v with
+      | .arr _ => true
+      | _ => false
+    else if k == "nullable" then
+      match v with
+      | .bool _ => true
+      | _ => false
+    else if k == "additionalProperties" then
+      match v with
+      | .bool _ => true
+      | v => parsesAsSchema v
+    else true
+  | _ => false
+
+#guard parsesAsSchema (.obj [("type", .str "object"), ("required", .arr [.str "a"])])
+#guard parsesAsSchema (.obj [("required", .null), ("x-y", .num "1"), ("not", .num "2")])
+-- #188's repro: `required` is a string.
+#guard !parsesAsSchema (.obj [("type", .str "object"), ("required", .str "a")])
+#guard !parsesAsSchema (.obj [("properties", .obj [("a", .obj [("nullable", .str "yes")])])])
+#guard !parsesAsSchema (.obj [("type", .num "1")])
+#guard !parsesAsSchema (.bool true)
+
 #guard (schemaNorm (.obj [("type", .arr [.str "string", .str "null"])])).render
   == "{\"type\":\"string\",\"nullable\":true}"
 #guard (schemaNorm (.obj [("type", .arr [.str "null"])])).render == "{\"type\":\"null\"}"
@@ -556,8 +611,8 @@ mutual
 references by the three rules in the header. `chain` holds the value pairs
 a one-sided expansion produced on the way here: the walk is a function of
 the pair it compares, so meeting one again means the rest repeats
-periodically (see `expand`; main's name-keyed cut instead compares a literal
-`$ref` against an expansion). -/
+periodically (see `expand`; the Rust's name-keyed cut before #187 instead
+compared a literal `$ref` against an expansion). -/
 partial def go (os ns : Side) (chain : List (Pointer × J × J)) (node : Node) (p : Pointer)
     (o n : J) : W Unit := do
   -- Outside the grammar a reference is not a schema use (#186): each side
@@ -680,6 +735,24 @@ def walk (os ns : Side) (o n : J) : Out :=
   -- The sibling is compared at the use (unchanged); the target via a hop.
   out.facts.size == 0 && out.hops.size == 1 && out.hops[0]!.mask == ["nullable"]
 
+-- #187: a one-sided expansion is cut where the compared value pair recurs,
+-- never by component name. `B` is recursive through `data`; unrolling it
+-- inline once is no change, and changing the unrolled copy's `data.data`
+-- to a string is a change there (both were a name cut in the Rust before).
+#guard
+  let b : J := .obj [("type", .str "object"), ("properties", .obj [
+    ("data", .obj [("$ref", .str "#/components/schemas/B")]), ("x", .obj [("type", .str "string")])])]
+  let s : Side := ⟨[("B", b)], [("B", b)]⟩
+  let unrolled (inner : J) : J := .obj [("type", .str "object"), ("properties", .obj [
+    ("data", .obj [("type", .str "object"), ("properties", .obj [
+      ("data", inner), ("x", .obj [("type", .str "string")])])]),
+    ("x", .obj [("type", .str "string")])])]
+  let r := .obj [("$ref", .str "#/components/schemas/B")]
+  let noop := walk s s r (unrolled r)
+  let changed := walk s s r (unrolled (.obj [("type", .str "string")]))
+  noop.facts.size == 0 && noop.hops.size == 1
+    && changed.facts.toList.any fun (p, _) => p == ["properties", "data", "properties", "data", "type"]
+
 /-! ## Spec pairs: uses -/
 
 inductive Dir where
@@ -723,16 +796,20 @@ def endpoints (doc : J) : List Endpoint :=
 /-- The document's components (`parser::extract_schemas`): every
 `components.schemas` entry, then every top-level `definitions` entry whose
 name is not taken, in either OpenAPI version; as deserialised,
-canonicalised. (The Rust skips a `definitions` entry `models::Schema` cannot
-parse, #188; such inputs are not specified.) -/
+canonicalised. A `definitions` entry `models::Schema` cannot deserialise
+(`parsesAsSchema`, #188) is a component all the same, as written: nothing is
+normalised in it, and it is compared like any other (the report also names
+it). Before #188 the Rust dropped it, so a change inside it went unreported. -/
 def side (doc : J) : Side :=
   let entries (j : Option J) : List (String × J) := match j with
     | some (.obj kvs) => kvs
     | _ => []
-  let comps := entries ((doc.field? "components").bind (·.field? "schemas"))
-  let defs := (entries (doc.field? "definitions")).filter fun (k, _) => (comps.lookup k).isNone
+  let comps := (entries ((doc.field? "components").bind (·.field? "schemas"))).map
+    fun (k, v) => (k, schemaNorm v)
+  let defs := ((entries (doc.field? "definitions")).filter fun (k, _) => (comps.lookup k).isNone).map
+    fun (k, v) => (k, if parsesAsSchema v then schemaNorm v else v)
   let all := comps ++ defs
-  ⟨all.map fun (k, v) => (k, canon (schemaNorm v)), all.map fun (k, v) => (k, schemaNorm v)⟩
+  ⟨all.map fun (k, v) => (k, canon v), all⟩
 
 /-- Endpoint matching: exact `(METHOD, path)`. Move pairing (operationId,
 `v<digits>` segments) only renames the use in Markdown and v2 output; the v1
@@ -909,6 +986,15 @@ def next (mask : List String) (neg : Bool) (h : Hop) : St :=
   { old := h.old, new := h.new
     mask := if h.at_.isEmpty then sortDedup (mask ++ h.mask) else h.mask
     neg := neg || underNot h.at_ }
+
+-- #188: an unparseable `definitions` entry is a component, kept as written.
+#guard
+  let bad (t : String) : J := .obj [("type", .str "object"),
+    ("properties", .obj [("a", .obj [("type", .str t)])]), ("required", .str "a")]
+  let doc (t : String) : J := .obj [("definitions", .obj [("Bad", bad t)])]
+  ((side (doc "string")).comps.lookup "Bad").any (· == bad "string")
+    && ((pairContent (side (doc "string")) (side (doc "integer")) "Bad" "Bad").1.map (·.1))
+      == [["properties", "a", "type"]]
 
 /-- Every state reachable from a use's own hops (breadth first, each state
 once; there are finitely many). -/

@@ -14,7 +14,8 @@ a shrunk repro per disagreement class.
 Inputs: the fixed cases in formal/refdiff/cases/ (repros from #182's review
 rounds) and `--seeds` generated pairs (cycles, siblings over refs, retargets,
 aliases, one-sided components, mixed ref spellings, refs under `not`, refs
-outside the schema grammar such as `default`, `if` and `prefixItems`).
+outside the schema grammar such as `default`, `if` and `prefixItems`, and
+`definitions` entries the Rust cannot deserialise).
 
 Comparisons (see formal/README.md, "Reference semantics of `$ref` diffs"):
 
@@ -82,6 +83,10 @@ class Gen:
         # stream, so seeds without them are unchanged.
         self.rog = random.Random(seed * 104729 + 3)
         self.og = self.rog.random() < 0.2
+        # `definitions` entries `models::Schema` cannot deserialise (#188):
+        # their own stream too.
+        self.rbad = random.Random(seed * 1299709 + 5)
+        self.bad = self.rbad.random() < 0.15
 
     # Keywords the schema grammar does not know, each holding a reference:
     # values (`default`, `const`, an `enum` member) and applicators whose
@@ -108,6 +113,41 @@ class Gen:
             s[key] = {"d": {"not": ref} if r.random() < 0.3 else ref}
         else:
             s[key] = ref
+
+    # Values of a typed `models::Schema` key that do not deserialise (#188).
+    BAD = [("required", "s"), ("nullable", "yes"), ("title", 1), ("type", 7),
+           ("items", True), ("format", ["x"]), ("enum", "p"), ("properties", [])]
+
+    def malformed(self, old: dict, new: dict) -> None:
+        """Makes one component, from `rbad`, a `definitions` entry the Rust
+        cannot deserialise, on one side or both (inside the entry or in its
+        first property), so it is kept as written (#188)."""
+        if not self.bad:
+            return
+        r = self.rbad
+
+        def comps(d: dict) -> dict:
+            return d["definitions"] if "swagger" in d else d["components"]["schemas"]
+
+        names = sorted(n for n in comps(old) if n in comps(new)) or sorted(comps(old))
+        if not names:
+            return
+        name = r.choice(names)
+        key, value = r.choice(self.BAD)
+        nested = r.random() < 0.4
+        for d in r.choice([(old,), (new,), (old, new), (old, new)]):
+            s = comps(d).get(name)
+            if not isinstance(s, dict):
+                continue
+            props = s.get("properties")
+            if nested and isinstance(props, dict) and props:
+                s = props[sorted(props)[0]]
+            s[key] = copy.deepcopy(value)
+        # In an OpenAPI 3 document only `definitions` entries are parsed
+        # leniently (a bad `components.schemas` entry rejects the spec).
+        for d in (old, new):
+            if "swagger" not in d and name in d["components"]["schemas"]:
+                d.setdefault("definitions", {})[name] = d["components"]["schemas"].pop(name)
 
     def ref(self, name: str, siblings: bool = True) -> dict:
         r = self.r
@@ -240,7 +280,9 @@ class Gen:
         new_paths = {p: (self.mutate(v, 0.1) if r.random() < 0.3 else copy.deepcopy(v)) for p, v in paths.items()}
         if r.random() < 0.2:
             new_paths["/v2/p0"] = new_paths.pop("/p0")
-        return self.doc(comps, paths), self.doc(new_comps, new_paths)
+        old, new = self.doc(comps, paths), self.doc(new_comps, new_paths)
+        self.malformed(old, new)
+        return old, new
 
 
 # ── running ─────────────────────────────────────────────────────────────────
@@ -417,7 +459,7 @@ def suffix_of(longer: str, shorter: str) -> bool:
 
 
 def classify_grouped(model: Counter, model_neg: set[tuple], rust: Counter,
-                     rust_neg: set[tuple], q1_for=None) -> list[tuple[str, tuple | None, tuple | None]]:
+                     rust_neg: set[tuple]) -> list[tuple[str, tuple | None, tuple | None]]:
     """Pairs up model-only and Rust-only records (as multisets) and names
     each difference."""
     only_m = sorted((model - rust).elements())
@@ -472,29 +514,7 @@ def classify_grouped(model: Counter, model_neg: set[tuple], rust: Counter,
             used_r[r] -= 1
             continue
         found.append(("extra-in-rust" + ("-component" if r[1] != "use" else "-at-use"), None, r))
-    return name_cuts(found, rust, q1_for(found) if q1_for else (lambda rec: True))
-
-
-def name_cuts(found: list, rust: Counter, is_q1) -> list:
-    """Renames the disagreements a component-name cut of one-sided expansion
-    explains (#187). #182's `expand_once` stops when the component is already on its
-    side's expansion stack and compares the literal `{"$ref": X}` with the
-    other side's inline schema (an added/removed `$ref` record at `P/$ref`);
-    the model keeps expanding while the compared value pair is new. Every
-    unmatched record of the same use and owner at or beneath `P` is then
-    `known-rust-bug-#187`, except Review records at a `$ref` key for which
-    the Q1 condition holds (`is_q1`), which keep their class."""
-    cuts = {(r[0], r[1], r[2][: -len("/$ref")]) for r in rust
-            if r[2].endswith("/$ref") and r[3].split(" ")[0] in ("added", "removed")}
-    out = []
-    for kind, m, r in found:
-        rec = m if m is not None else r
-        if (kind.startswith(("missing-in-rust", "extra-in-rust"))
-                and not (rec[2].endswith("/$ref") and rec[4] == "review" and is_q1(rec))
-                and any(u == rec[0] and o == rec[1] and under(rec[2], p) for u, o, p in cuts)):
-            kind = "known-rust-bug-#187"
-        out.append((kind, m, r))
-    return out
+    return found
 
 
 # ── reachability ────────────────────────────────────────────────────────────
@@ -912,7 +932,7 @@ def main() -> int:
         else:
             mg, mneg = model_grouped(m)
             rg, rneg = rust_records(pr, True)
-            found = classify_grouped(mg, mneg, rg, rneg, q1_for)
+            found = classify_grouped(mg, mneg, rg, rneg)
             is_q1 = q1_for(found)
             for kind, mrec, rrec in found:
                 rec = mrec if mrec is not None else rrec

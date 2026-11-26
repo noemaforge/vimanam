@@ -7,6 +7,7 @@ mod diff;
 mod diff_components;
 mod diff_json;
 mod diff_moves;
+mod diff_recursive;
 mod diff_refs;
 mod diff_verdicts;
 mod neutral_json;

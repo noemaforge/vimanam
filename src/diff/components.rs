@@ -8,7 +8,7 @@
 
 use std::collections::HashSet;
 
-use indexmap::{IndexMap, IndexSet};
+use indexmap::IndexSet;
 use serde_json::Value;
 
 use super::{
@@ -148,17 +148,14 @@ impl<'r, 'a> Components<'r, 'a> {
 
         let reach = Reach::new(&pairs, &use_targets, &pair_targets);
 
-        let position = |schemas: &IndexMap<String, crate::models::Schema>, name: &str| {
-            schemas.get_index_of(name).unwrap_or(usize::MAX)
-        };
         let mut changed: Vec<usize> = (0..pairs.len())
             .filter(|&index| !pair_changes[index].is_empty())
             .collect();
         changed.sort_by_cached_key(|&index| {
             let (old, new) = pairs.get_index(index).expect("interned");
             (
-                position(self.resolver.old.schemas, old),
-                position(self.resolver.new.schemas, new),
+                self.resolver.old.position(old),
+                self.resolver.new.position(new),
                 old.clone(),
                 new.clone(),
             )

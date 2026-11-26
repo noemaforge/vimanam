@@ -33,6 +33,13 @@ pub fn write_diff<W: Write>(
     )?;
     writeln!(writer)?;
 
+    // An invalid `definitions` entry is compared as written (#188); the
+    // report says so before anything else.
+    for entry in &diff.unparsed_definitions {
+        writeln!(writer, "> **Warning:** {entry}.")?;
+        writeln!(writer)?;
+    }
+
     if diff.changes.is_empty() {
         writeln!(writer, "**Summary:** No changes.")?;
     } else {
@@ -451,12 +458,37 @@ mod tests {
             new_title: "API".into(),
             new_version: "2".into(),
             changes: Vec::new(),
+            unparsed_definitions: Vec::new(),
         };
         let mut buffer = Vec::new();
         write_diff(&mut buffer, &diff, None).unwrap();
         assert_eq!(
             String::from_utf8(buffer).unwrap(),
             "# API Diff: API 1 → 2\n\n**Summary:** No changes.\n"
+        );
+    }
+
+    #[test]
+    fn write_diff_names_unparsed_definitions() {
+        let diff = SpecDiff {
+            old_title: "API".into(),
+            old_version: "1".into(),
+            new_title: "API".into(),
+            new_version: "2".into(),
+            changes: Vec::new(),
+            unparsed_definitions: vec![super::super::UnparsedDefinition {
+                old: false,
+                name: "Bad".into(),
+                error: "invalid type".into(),
+            }],
+        };
+        let mut buffer = Vec::new();
+        write_diff(&mut buffer, &diff, None).unwrap();
+        assert_eq!(
+            String::from_utf8(buffer).unwrap(),
+            "# API Diff: API 1 → 2\n\n> **Warning:** `definitions/Bad` in the new spec is not \
+             a valid schema (invalid type); it was compared as written.\n\n\
+             **Summary:** No changes.\n"
         );
     }
 
@@ -468,6 +500,7 @@ mod tests {
             new_title: "New".into(),
             new_version: "2".into(),
             changes: Vec::new(),
+            unparsed_definitions: Vec::new(),
         };
         let mut buffer = Vec::new();
         write_diff(&mut buffer, &diff, None).unwrap();

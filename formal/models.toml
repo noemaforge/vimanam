@@ -67,8 +67,7 @@ rust = [
 # drift, re-run the harness.
 [[model]]
 lean = "formal/VimanamProofs/RefDiff.lean"
-read_against = "77d8c81e8a76"
-read_digest = "v1:sha256:a16923fbb09a31c665813a9ed73c686232ab70ab58b12adbb51706a51008de52"
+read_digest = "v1:sha256:0431e7a38bad4d9db5b0f6c9fddf8a09ae70c319c700847b68e15c709cb49ba3"
 rust = [
   "src/resolve.rs#reference_name",
   "src/resolve.rs#DocResolver",
@@ -115,6 +114,10 @@ rust = [
   "src/parser.rs#extract_schemas",
   "src/resolve.rs#RefEdge",
   "src/resolve.rs#PairResolver",
+  "src/resolve.rs#LocalWalk",
+  "src/resolve.rs#Expansion",
+  "src/models.rs#AdditionalProperties",
+  "src/models.rs#UnparsedSchema",
   "src/diff/components.rs",
   "src/diff/json.rs#component_kind_and_details",
   "src/diff/json.rs#component_entries",

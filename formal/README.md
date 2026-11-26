@@ -296,9 +296,13 @@ the same specification in prose.
 
 * **Components** are, in either OpenAPI version, every `components.schemas`
   entry, then every top-level `definitions` entry whose name is not taken
-  (`parser::extract_schemas`; the Rust also skips, with a warning, a
-  `definitions` entry it cannot parse as a schema, a Rust bug, #188, which
-  is not specified here). A `$ref` names a component when it is
+  (`parser::extract_schemas`). A `definitions` entry that
+  `models::Schema` cannot deserialise (`parsesAsSchema`: a typed key such as
+  `required`, `nullable` or `items` holding the wrong JSON type, anywhere in
+  the entry) is a component all the same, kept exactly as written, with
+  none of the deserialisation's normalisation; changes inside it are
+  compared and rated like any other (#188, which dropped it, so they went
+  unreported), and the diff report and stderr name it. A `$ref` names a component when it is
   `#/components/schemas/NAME` or `#/definitions/NAME`, in either kind of
   document, with the token decoded (`~1` is `/`, `~0` is `~`). The two
   spellings are the same name everywhere below. Any other `$ref`, or one
@@ -365,7 +369,12 @@ comparison), with three rules at a schema position holding a `$ref`:
    expansion recurs deeper on the chain the rest is periodic and nothing more
    is reported, and where it recurs at the same position (an alias loop such
    as `X = {"$ref": X, "type": "array"}`) its value is the fixpoint: the
-   merged siblings without `$ref`.
+   merged siblings without `$ref`. The Rust (`PairResolver::expanded`) keys
+   the cut the same way, on the value pair and its path, and additionally
+   compares a reference as written once 64 one-sided expansions are on the
+   chain (`MAX_RESOLVE_DEPTH`), which bounds the work; before #187 it cut on
+   a component *name* already expanded on that side, comparing a literal
+   `$ref` with the other side's expansion.
 3. **As written.** Anything else (a reference facing a non-object or
    nothing, two undeclared references, a value present on one side only) is
    compared as written. A subtree present on one side only is one
@@ -486,8 +495,8 @@ python3 -I scripts/formal/refdiff-harness.py --rust target/release/vimanam --see
 
 The harness generates spec pairs (cycles, siblings over references,
 retargets, aliases, one-sided components, mixed spellings, references under
-`not`, OpenAPI 3.1 `type` arrays, references outside the schema grammar;
-both directions of each), adds
+`not`, OpenAPI 3.1 `type` arrays, references outside the schema grammar,
+`definitions` entries that do not deserialise; both directions of each), adds
 `refdiff/cases/`, and compares, as multisets:
 
 * the grouped view with `--rust`'s `diff --format json --contract 1` records
@@ -505,17 +514,19 @@ far a side was expanded is not observable through the table) and `$ref`
 strings compare by component name. Each disagreement is classified
 (`verdict`, `verdict-under-not`, `retarget-fact-missing`, `attribution-*`,
 `under-not-flag-{extra,missing}-in-rust`, `extra-in-rust-*`,
-`missing-in-rust-*`, `known-rust-bug-#187`), and
+`missing-in-rust-*`), and
 one pair per class is shrunk by delta debugging into `DIR/repro/`. The report
 is `DIR/report.md`.
 
 `--ci` (the `lean` workflow runs it on the fixed cases and seeds 1 to 60
 against a release build) skips shrinking and fails on a Rust error or
 timeout and on any disagreement `refdiff/allowlist.json` does not cover. The
-allowlist holds the known limits: Q1, a Review record at a `$ref` key from a
-content-free alias loop (`C = {"$ref": C}`, possibly with siblings, facing an
-undeclared reference or inline schema: the model takes the fixpoint, the
-Rust compares the literal `$ref`). The Q1 rule's
+allowlist holds the known limits, and is empty since #187. Its last rule,
+Q1, covered a Review record at a `$ref` key from a content-free alias loop
+(`C = {"$ref": C}`, possibly with siblings, facing an undeclared reference
+or inline schema), where the model took the fixpoint and the Rust compared
+the literal `$ref`; the Rust now takes the fixpoint too. The harness still
+supports a rule with `requires: alias-loop`, whose
 alias-loop condition is enforced, not assumed: the record's use must reach,
 on either side, a component in an alias loop or leading into one, named by
 the record's `ref:` values (or its counterpart's at the same use, owner and
@@ -531,10 +542,13 @@ after `--ci`, wraps the binary with `refdiff-mutate.py` to drop, rename,
 inject (optionally under another owner) or re-rate records on the cases in
 `refdiff/negative/` as `checks.json` lists, and fails unless `--ci` rejects
 every one through the allowlist (each case first passes with the unmodified
-binary). Each tightening of the Q1 rule (use reach of a loop named by a
-value, use reach of a pure-alias owner, the structural check) has a check
-that fails when that tightening alone is reverted (`q1e`, `q1b` with
-`OWNER`, `q1d` respectively). Use reach follows every reference
+binary). While the Q1 rule existed, each of its tightenings (use reach of a
+loop named by a value, use reach of a pure-alias owner, the structural
+check) had a check that failed when that tightening alone was reverted
+(`q1e`, `q1b` with `OWNER`, `q1d` respectively); they now guard against the
+rule coming back loose. `n187a` drops the Breaking record beneath the old
+name cut and injects the literal `$ref removed` record the cut produced;
+`n188` drops a change inside an unparseable `definitions` entry. Use reach follows every reference
 in the exported schemas. The model exports them canonicalised, so no
 annotation (an `x-*` or `example` holding a `$ref`, even beside a `$ref`) is
 left to skip; the harness asserts that instead of skipping silently, which
@@ -575,17 +589,14 @@ inlined object member is written in each side's own key order (`Lean.Json`
 sorts keys on input, `serde_json` keeps insertion order); the harness
 re-renders such tokens with sorted keys before comparing.
 
-`known-rust-bug-#187` is not allowlisted. #182's `expand_once` (and the
-resolver before #182) cuts one-sided expansion by component name: a
-component already on that side's expansion stack, facing deeper inline
-content on the other side, is compared as the literal `{"$ref": X}`. The
-model keeps expanding while the compared value pair is new. The Rust then
-misses changes beneath the cut, Breaking ones included, and can also report
-false ones: a recursive component unrolled inline, with nothing changed,
-exits 3. The class names every unmatched record of a use and owner at or
-beneath a pointer `P` where the Rust has an added/removed record at
-`P/$ref` (the cut site included), except Review records at a `$ref` key
-that meet the Q1 condition.
+Before #187 the harness also named a `known-rust-bug-#187` class: records
+beneath a one-sided expansion the Rust cut by component name (88 records in
+4 pairs over seeds 1–1800). The Rust now cuts on the value pair, as the
+model does, and the class is gone; `refdiff/cases/r8-{unroll,unroll-deep,
+hidden,cut}-*` pin the issue's repros (a recursive component unrolled
+inline once is no change; a change beneath the old cut is reported, and
+fails the gate where the cut's own records were not Breaking), and
+`r8-bad-def*` pin #188's.
 
 ### Not covered
 

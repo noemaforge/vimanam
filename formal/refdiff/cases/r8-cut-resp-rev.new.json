@@ -1,0 +1,43 @@
+{
+ "openapi": "3.0.3",
+ "info": {
+  "title": "t",
+  "version": "1"
+ },
+ "paths": {
+  "/a": {
+   "post": {
+    "responses": {
+     "200": {
+      "description": "ok",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Page"
+        }
+       }
+      }
+     }
+    }
+   }
+  }
+ },
+ "components": {
+  "schemas": {
+   "Page": {
+    "$ref": "#/components/schemas/B"
+   },
+   "B": {
+    "type": "object",
+    "properties": {
+     "data": {
+      "$ref": "#/components/schemas/B"
+     },
+     "x": {
+      "type": "string"
+     }
+    }
+   }
+  }
+ }
+}

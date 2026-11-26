@@ -418,7 +418,7 @@ pub fn diff_with(
     new: &ApiDocumentation,
     matching: diff::EndpointMatching,
 ) -> anyhow::Result<Vec<Change>> {
-    let resolver = PairResolver::new(&old.schemas, &new.schemas);
+    let resolver = PairResolver::for_docs(old, new);
     let legacy = diff::diff_with_resolver(old, new, matching, &resolver);
     diff_from(old, new, &legacy, &resolver)
 }
