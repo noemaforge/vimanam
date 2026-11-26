@@ -542,17 +542,45 @@ impl LocalWalk<'_> {
     }
 }
 
-/// The reason a change at `pointer` fails closed, from the regions a walk
-/// closed (in the order it closed them): the first region at or above it.
-pub(crate) fn closed_at(closed: &[(String, FailClosed)], pointer: &str) -> Option<FailClosed> {
-    closed
-        .iter()
-        .find(|(region, _)| {
-            pointer
-                .strip_prefix(region.as_str())
-                .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
-        })
-        .map(|(_, reason)| *reason)
+/// The regions one walk closed, indexed by pointer, so that finding the
+/// region over a change looks up only the change pointer's ancestors
+/// (O(depth) per change, however many regions a large input closes).
+pub(crate) struct ClosedRegions {
+    /// Region pointer -> (the order it was first closed in, its reason).
+    by_pointer: HashMap<String, (usize, FailClosed)>,
+}
+
+impl ClosedRegions {
+    /// The regions a walk recorded, in the order it closed them.
+    pub(crate) fn new(closed: Vec<(String, FailClosed)>) -> Self {
+        let mut by_pointer = HashMap::with_capacity(closed.len());
+        for (order, (pointer, reason)) in closed.into_iter().enumerate() {
+            by_pointer.entry(pointer).or_insert((order, reason));
+        }
+        ClosedRegions { by_pointer }
+    }
+
+    /// The reason a change at `pointer` fails closed: of the regions at or
+    /// above it (whole tokens: `/a` covers `/a/b`, not `/ab`), the one
+    /// closed first.
+    pub(crate) fn at(&self, pointer: &str) -> Option<FailClosed> {
+        if self.by_pointer.is_empty() {
+            return None;
+        }
+        // The root, then each prefix ending before a `/`, then the pointer.
+        let ancestors = std::iter::once(0)
+            .chain(
+                pointer
+                    .match_indices('/')
+                    .map(|(index, _)| index)
+                    .filter(|&i| i > 0),
+            )
+            .chain(std::iter::once(pointer.len()));
+        ancestors
+            .filter_map(|end| self.by_pointer.get(&pointer[..end]))
+            .min_by_key(|(order, _)| *order)
+            .map(|(_, reason)| *reason)
+    }
 }
 
 /// One entry of [`LocalWalk::chain`].
@@ -1429,32 +1457,40 @@ mod tests {
 
     #[test]
     fn closed_regions_cover_their_subtree_only() {
-        use super::closed_at;
+        use super::ClosedRegions;
         use crate::diff::FailClosed;
-        let closed = vec![
+        let first = ClosedRegions::new(vec![(
+            "/properties/a".to_string(),
+            FailClosed::ExpansionCut,
+        )]);
+        assert_eq!(first.at("/properties/a"), Some(FailClosed::ExpansionCut));
+        assert_eq!(
+            first.at("/properties/a/type"),
+            Some(FailClosed::ExpansionCut)
+        );
+        assert_eq!(first.at("/properties/ab"), None);
+        assert_eq!(first.at("/properties"), None);
+        assert_eq!(first.at(""), None);
+        // The root covers everything; of several regions over a change, the
+        // one closed first wins, wherever it sits.
+        let both = ClosedRegions::new(vec![
             ("/properties/a".to_string(), FailClosed::ExpansionCut),
             ("".to_string(), FailClosed::UnparsedDefinition),
-        ];
-        let first = &closed[..1];
+        ]);
         assert_eq!(
-            closed_at(first, "/properties/a"),
-            Some(FailClosed::ExpansionCut)
-        );
-        assert_eq!(
-            closed_at(first, "/properties/a/type"),
-            Some(FailClosed::ExpansionCut)
-        );
-        assert_eq!(closed_at(first, "/properties/ab"), None);
-        assert_eq!(closed_at(first, "/properties"), None);
-        // The root covers everything; the first region that matches wins.
-        assert_eq!(
-            closed_at(&closed, "/properties/ab"),
+            both.at("/properties/ab"),
             Some(FailClosed::UnparsedDefinition)
         );
+        assert_eq!(both.at("/properties/a/x"), Some(FailClosed::ExpansionCut));
+        let root_first = ClosedRegions::new(vec![
+            ("".to_string(), FailClosed::UnparsedDefinition),
+            ("/properties/a".to_string(), FailClosed::ExpansionCut),
+        ]);
         assert_eq!(
-            closed_at(&closed, "/properties/a/x"),
-            Some(FailClosed::ExpansionCut)
+            root_first.at("/properties/a/x"),
+            Some(FailClosed::UnparsedDefinition)
         );
+        assert_eq!(ClosedRegions::new(Vec::new()).at("/x"), None);
     }
 
     #[test]

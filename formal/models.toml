@@ -120,7 +120,7 @@ rust = [
   "src/resolve.rs#LocalWalk",
   "src/resolve.rs#Expansion",
   "src/resolve.rs#EXPANSION_BUDGET",
-  "src/resolve.rs#closed_at",
+  "src/resolve.rs#ClosedRegions",
   "src/diff/mod.rs#fail_closed",
   "src/diff/mod.rs#FailClosed",
   "src/models.rs#AdditionalProperties",

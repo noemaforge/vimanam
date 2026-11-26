@@ -15,7 +15,7 @@ use super::{
     Change, ChangeKind, ComponentRef, Direction, FailClosed, SchemaUse, ValueChange,
     ValueChangeKind, value_changes,
 };
-use crate::resolve::{PairResolver, RefEdge, closed_at};
+use crate::resolve::{ClosedRegions, PairResolver, RefEdge};
 use crate::utils::canonicalize_schema_value;
 
 /// Collects the local comparisons of one diff and, at the end, the changes of
@@ -85,10 +85,11 @@ impl<'r, 'a> Components<'r, 'a> {
         let mut changes = value_changes(&old, &new);
         // Changes inside `required`/`enum` members that hold references.
         changes.extend(members);
+        let closed = ClosedRegions::new(closed);
         let changes = changes
             .into_iter()
             .map(|change| {
-                let reason = closed_at(&closed, &change.pointer);
+                let reason = closed.at(&change.pointer);
                 (change, reason)
             })
             .collect();

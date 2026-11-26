@@ -130,13 +130,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   The report opens with a `> **Warning:**` line naming the entry by JSON
   pointer, the same goes to stderr, and v2 JSON has a new `warnings` array
   (omitted when empty). Markdown rendering still leaves the entry out.
-  **Library:** `ApiDocumentation` has a new `unparsed_schemas` field,
-  `SpecDiff` a new `unparsed_definitions` field,
-  `Parameter`/`Request`/`Response`/`ComponentSchemaChanged` a new
-  `fail_closed: Option<diff::FailClosed>` field and
-  `contract::json::JsonDiff` a new `warnings` field (`UnparsedSchema`,
-  `diff::UnparsedDefinition`, `diff::FailClosed`, `JsonWarning`), so code
-  that builds or exhaustively matches any of them must set or bind it.
+  **Library API break (#187, #188).** The enum variants
+  `diff::ChangeKind::ParameterSchemaChanged`,
+  `diff::ChangeKind::RequestSchemaChanged` and
+  `diff::ChangeKind::ResponseSchemaChanged` (released in earlier versions)
+  gained a `fail_closed: Option<diff::FailClosed>` field. Downstream code
+  that builds one of them as a struct literal must set it, and a pattern
+  that lists their fields without `..` must add it or `..`. The CLI is
+  unaffected. Also new: `diff::ChangeKind::ComponentSchemaChanged` (itself
+  new in this release) has the same `fail_closed` field; the structs
+  `ApiDocumentation` (field `unparsed_schemas`), `diff::SpecDiff` (field
+  `unparsed_definitions`) and `contract::json::JsonDiff` (field
+  `warnings`) gained a field each, which breaks struct literals of them;
+  and the new types are `UnparsedSchema`, `diff::UnparsedDefinition`,
+  `diff::FailClosed` and `contract::json::JsonWarning`.
 - `diff` no longer rates removing a member from a **response** `enum` as
   breaking (#169): a server that stops returning a value cannot break a
   client, so the row is now non-breaking. Request-side enum removal stays
