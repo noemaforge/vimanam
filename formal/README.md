@@ -597,7 +597,7 @@ Known limits of one-sided expansion (#187):
   (`r9-cap`, `r9-budget-over`). Below the limits it reports nothing
   (`r9-budget-under`). The model has the same limits, so the harness agrees.
 * The budget is per walk, so a spec with many uses that each spend it does
-  that much work per use (#195 review follow-up).
+  that much work per use (#196).
 * An unparseable entry reached outside the schema grammar (under `default`,
   `if`, ...) is inlined and Review there, as every change outside the
   grammar is; and the v2 named-type surface lists valid schemas only, so it
