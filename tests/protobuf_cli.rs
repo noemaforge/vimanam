@@ -1164,3 +1164,209 @@ fn symlink_and_submodule_proto_specs_are_not_regular_files() {
         assert!(!out.exists());
     }
 }
+
+/// Writes `text` at `root/relative`, creating parent directories.
+fn write_proto(root: &Path, relative: &str, text: &str) {
+    let path = root.join(relative);
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(path, text).unwrap();
+}
+
+const SIDE_ENTRY: &str = "syntax = \"proto3\";\npackage svc;\nimport \"common/types.proto\";\nservice S { rpc Get(common.T) returns (common.T); }\n";
+const SIDE_TYPES_OLD: &str = "syntax = \"proto3\";\npackage common;\nmessage T { string a = 1; }\n";
+const SIDE_TYPES_NEW: &str = "syntax = \"proto3\";\npackage common;\nmessage T { int64 a = 1; }\n";
+
+fn side_diff_json(args: &[&std::ffi::OsStr]) -> Value {
+    let output = binary()
+        .env("PATH", "")
+        .arg("diff")
+        .args(args)
+        .args(["--format", "json"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    serde_json::from_slice(&output).unwrap()
+}
+
+/// #162: a change inside a transitively imported file is seen only when each
+/// side resolves imports against its own roots. The shared `-I` behaviour is
+/// unchanged: one root serves both sides, so the new side's import silently
+/// resolves to the old tree's file.
+#[test]
+fn per_side_proto_paths_see_changes_in_imported_files() {
+    let t = tempfile::tempdir().unwrap();
+    let old_root = t.path().join("old/proto");
+    let new_root = t.path().join("new/proto");
+    write_proto(&old_root, "svc/api.proto", SIDE_ENTRY);
+    write_proto(&old_root, "common/types.proto", SIDE_TYPES_OLD);
+    write_proto(&new_root, "svc/api.proto", SIDE_ENTRY);
+    write_proto(&new_root, "common/types.proto", SIDE_TYPES_NEW);
+    let old = old_root.join("svc/api.proto");
+    let new = new_root.join("svc/api.proto");
+
+    // Shared -I: both sides import old/proto/common/types.proto.
+    let shared = side_diff_json(&[
+        old.as_os_str(),
+        new.as_os_str(),
+        "-I".as_ref(),
+        old_root.as_os_str(),
+    ]);
+    assert_eq!(shared["summary"]["breaking"], 0, "{shared:#}");
+    assert!(
+        shared["changes"].as_array().unwrap().is_empty(),
+        "{shared:#}"
+    );
+
+    // Per-side roots: the field type change in the imported file is breaking.
+    let args = [
+        old.as_os_str(),
+        new.as_os_str(),
+        "--old-proto-path".as_ref(),
+        old_root.as_os_str(),
+        "--new-proto-path".as_ref(),
+        new_root.as_os_str(),
+    ];
+    let per_side = side_diff_json(&args);
+    assert!(
+        per_side["summary"]["breaking"].as_u64().unwrap() >= 1,
+        "{per_side:#}"
+    );
+    assert!(
+        per_side.to_string().contains("common.T"),
+        "change names the imported message: {per_side:#}"
+    );
+    binary()
+        .arg("diff")
+        .args(args)
+        .arg("--fail-on-breaking")
+        .assert()
+        .code(3);
+
+    // A shared -I alongside both per-side lists is not consulted.
+    let with_shared = side_diff_json(&[
+        old.as_os_str(),
+        new.as_os_str(),
+        "-I".as_ref(),
+        old_root.as_os_str(),
+        "--old-proto-path".as_ref(),
+        old_root.as_os_str(),
+        "--new-proto-path".as_ref(),
+        new_root.as_os_str(),
+    ]);
+    assert_eq!(with_shared["changes"], per_side["changes"]);
+}
+
+/// Each side's imports resolve only against its own roots: an import missing
+/// from the old tree fails to compile rather than being read from the new
+/// tree, even when a shared -I names the new tree.
+#[test]
+fn per_side_proto_paths_do_not_cross_sides() {
+    let t = tempfile::tempdir().unwrap();
+    let old_root = t.path().join("old/proto");
+    let new_root = t.path().join("new/proto");
+    write_proto(&old_root, "svc/api.proto", SIDE_ENTRY);
+    write_proto(&new_root, "svc/api.proto", SIDE_ENTRY);
+    write_proto(&new_root, "common/types.proto", SIDE_TYPES_NEW);
+    let out = file(&t, "out.md", "keep existing");
+    binary()
+        .arg("diff")
+        .arg(old_root.join("svc/api.proto"))
+        .arg(new_root.join("svc/api.proto"))
+        .arg("-I")
+        .arg(&new_root)
+        .arg("--old-proto-path")
+        .arg(&old_root)
+        .arg("--new-proto-path")
+        .arg(&new_root)
+        .arg("-o")
+        .arg(&out)
+        .assert()
+        .code(1)
+        .stderr(predicates::str::contains("common/types.proto"));
+    assert_eq!(fs::read_to_string(&out).unwrap(), "keep existing");
+}
+
+/// The two sides may use different layouts and root counts, and a side
+/// without its own flag keeps using the shared -I roots.
+#[test]
+fn per_side_proto_paths_allow_different_layouts() {
+    let t = tempfile::tempdir().unwrap();
+    // Old: a flat tree with one root.
+    let old_root = t.path().join("old");
+    write_proto(&old_root, "api.proto", SIDE_ENTRY);
+    write_proto(&old_root, "common/types.proto", SIDE_TYPES_OLD);
+    // New: sources and vendored imports under two separate roots.
+    let new_src = t.path().join("new/src/proto");
+    let new_vendor = t.path().join("new/third_party");
+    write_proto(&new_src, "svc/api.proto", SIDE_ENTRY);
+    write_proto(&new_vendor, "common/types.proto", SIDE_TYPES_NEW);
+    let old = old_root.join("api.proto");
+    let new = new_src.join("svc/api.proto");
+
+    let json = side_diff_json(&[
+        old.as_os_str(),
+        new.as_os_str(),
+        "-I".as_ref(),
+        old_root.as_os_str(),
+        "--new-proto-path".as_ref(),
+        new_src.as_os_str(),
+        "--new-proto-path".as_ref(),
+        new_vendor.as_os_str(),
+    ]);
+    assert!(
+        json["summary"]["breaking"].as_u64().unwrap() >= 1,
+        "{json:#}"
+    );
+    assert!(json.to_string().contains("common.T"), "{json:#}");
+}
+
+/// Per-side roots are rejected with exit 1, before any output is created, in
+/// Git-ref mode and for inputs that are not `.proto` sources.
+#[test]
+fn per_side_proto_paths_reject_git_refs_and_non_proto_inputs() {
+    let t = tempfile::tempdir().unwrap();
+    let out = file(&t, "out.md", "keep existing");
+    for flag in ["--old-proto-path", "--new-proto-path"] {
+        binary()
+            .current_dir(t.path())
+            .args(["diff", "--from-ref", "a", "--to-ref", "b", "--spec"])
+            .arg("api.proto")
+            .arg(flag)
+            .arg(t.path())
+            .arg("-o")
+            .arg(&out)
+            .assert()
+            .code(1)
+            .stderr(predicates::str::contains("file-pair diffs only"));
+    }
+
+    let openapi = file(
+        &t,
+        "openapi.json",
+        r#"{"openapi":"3.0.0","info":{"title":"t","version":"1"},"paths":{}}"#,
+    );
+    let sdl = file(&t, "schema.graphql", "type Query { a: String }\n");
+    let proto = file(&t, "api.proto", "syntax = \"proto3\";\nmessage M {}\n");
+    let descriptor = fixture("health-v1.0.0.pb");
+    for (old, new) in [
+        (&openapi, &openapi),
+        (&sdl, &sdl),
+        (&descriptor, &descriptor),
+        (&proto, &descriptor),
+    ] {
+        binary()
+            .arg("diff")
+            .arg(old)
+            .arg(new)
+            .arg("--old-proto-path")
+            .arg(t.path())
+            .arg("-o")
+            .arg(&out)
+            .assert()
+            .code(1)
+            .stderr(predicates::str::contains("require .proto source files"));
+    }
+    assert_eq!(fs::read_to_string(&out).unwrap(), "keep existing");
+}

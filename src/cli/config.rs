@@ -251,6 +251,16 @@ pub struct DiffArgs {
     #[arg(short = 'I', long = "proto-path", value_name = "DIR", value_hint = ValueHint::DirPath)]
     pub proto_paths: Vec<PathBuf>,
 
+    /// Protobuf import root for OLD only (file-pair `.proto` diffs); when
+    /// given, replaces -I for the old side
+    #[arg(long = "old-proto-path", value_name = "DIR", value_hint = ValueHint::DirPath)]
+    pub old_proto_paths: Vec<PathBuf>,
+
+    /// Protobuf import root for NEW only (file-pair `.proto` diffs); when
+    /// given, replaces -I for the new side
+    #[arg(long = "new-proto-path", value_name = "DIR", value_hint = ValueHint::DirPath)]
+    pub new_proto_paths: Vec<PathBuf>,
+
     /// Compatibility dimensions for protobuf --fail-on-breaking (OpenAPI unchanged)
     #[arg(long, value_enum, default_value_t = BreakingArg::All)]
     pub breaking: BreakingArg,
@@ -338,6 +348,34 @@ pub struct DiffArgs {
     /// Token budget for --context (detail is lowered until it fits)
     #[arg(long, value_name = "N", requires = "context")]
     pub max_tokens: Option<usize>,
+}
+
+impl DiffArgs {
+    /// Import roots for the old side: `--old-proto-path` when given (the
+    /// shared `-I` roots are then not consulted for that side, so the other
+    /// side's tree cannot leak in), otherwise `-I`.
+    pub fn old_proto_roots(&self) -> &[PathBuf] {
+        if self.old_proto_paths.is_empty() {
+            &self.proto_paths
+        } else {
+            &self.old_proto_paths
+        }
+    }
+
+    /// Import roots for the new side: `--new-proto-path` when given,
+    /// otherwise `-I`.
+    pub fn new_proto_roots(&self) -> &[PathBuf] {
+        if self.new_proto_paths.is_empty() {
+            &self.proto_paths
+        } else {
+            &self.new_proto_paths
+        }
+    }
+
+    /// Whether either per-side protobuf root flag was given.
+    pub fn has_side_proto_roots(&self) -> bool {
+        !self.old_proto_paths.is_empty() || !self.new_proto_paths.is_empty()
+    }
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, ValueEnum, Debug)]

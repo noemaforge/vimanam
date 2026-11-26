@@ -60,6 +60,17 @@ vimanam diff --from-ref v1.0.0 --to-ref v2.0.0 \
   --spec proto/api.proto -I proto --breaking wire --fail-on-breaking
 ```
 
+### Per-side import roots
+
+A shared `-I` list serves both sides of a file-pair diff, so when `old/` and `new/` are two checkouts of the same tree, both sides resolve `import "common/types.proto"` from whichever root comes first and changes inside imported files go unseen. Give each side its own roots instead:
+
+```bash
+vimanam diff old/proto/svc/api.proto new/proto/svc/api.proto \
+  --old-proto-path old/proto --new-proto-path new/proto --fail-on-breaking
+```
+
+`--old-proto-path` and `--new-proto-path` are repeatable, and each side may use a different layout or number of roots. A side's own list replaces `-I` for that side: the shared roots are not consulted (so the other side's tree cannot leak in), and a side without its own flag keeps using `-I`. Each side's imports resolve only against its own roots and its entry file's directory. Both flags need `.proto` source files for OLD and NEW: they are rejected (exit 1, before any output is written) for OpenAPI, GraphQL and descriptor-set inputs, which have no imports to resolve, and with `--from-ref`/`--to-ref`, where `-I` already resolves inside each commit.
+
 `--breaking <wire|source|all>` scopes only the exit-code gate (`all` is the default). The rendered report and JSON output always include every detected fact.
 
 ### Native compatibility rules

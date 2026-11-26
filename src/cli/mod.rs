@@ -100,8 +100,8 @@ fn run_diff<W: Write>(
             !args.exact_paths,
             "--exact-paths is OpenAPI-only; GraphQL and protobuf diffs do not support it"
         );
-        let old = old_input.protobuf(&args.proto_paths)?;
-        let new = new_input.protobuf(&args.proto_paths)?;
+        let old = old_input.protobuf(args.old_proto_roots())?;
+        let new = new_input.protobuf(args.new_proto_roots())?;
         let changes = crate::contract::protobuf::diff(&old, &new)?;
         let scope = args.breaking.scope();
         let breaking = changes

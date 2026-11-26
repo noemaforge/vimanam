@@ -235,7 +235,33 @@ impl Input {
     }
 }
 
+/// `--old-proto-path` / `--new-proto-path` give each side of a file-pair
+/// `.proto` diff its own import roots. They are checked before any input is
+/// read or output created: Git-ref mode already resolves `-I` inside each
+/// commit, and every other input kind (OpenAPI, GraphQL, descriptor sets)
+/// has no imports to resolve, so the flags would otherwise be silently ignored.
+fn check_side_proto_roots(args: &DiffArgs) -> Result<()> {
+    if !args.has_side_proto_roots() {
+        return Ok(());
+    }
+    anyhow::ensure!(
+        args.from_ref.is_none() && args.to_ref.is_none(),
+        "--old-proto-path/--new-proto-path apply to file-pair diffs only; with --from-ref/--to-ref, -I/--proto-path already resolves imports inside each ref"
+    );
+    for path in [&args.old, &args.new].into_iter().flatten() {
+        anyhow::ensure!(
+            !path.is_dir()
+                && path
+                    .extension()
+                    .is_some_and(|e| e.eq_ignore_ascii_case("proto")),
+            "--old-proto-path/--new-proto-path require .proto source files for OLD and NEW; {path:?} is not one (OpenAPI, GraphQL and descriptor-set inputs have no imports to resolve)"
+        );
+    }
+    Ok(())
+}
+
 pub(super) fn read(args: &DiffArgs) -> Result<(Input, Input)> {
+    check_side_proto_roots(args)?;
     match (&args.old, &args.new, &args.from_ref, &args.to_ref) {
         (Some(old), Some(new), None, None) => Ok((Input::file(old)?, Input::file(new)?)),
         (None, None, Some(from), Some(to)) => {
