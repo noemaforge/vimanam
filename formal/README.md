@@ -395,10 +395,13 @@ the table rates members, so it is handled apart (`setCmp`,
   `locate` rates Review (the component changed, not the set; a deleted target
   is likewise Review there, the inlined side against the literal `$ref`);
 * a member only the old side writes is paired with the first unpaired member
-  only the new side writes when either holds a reference and both resolve to
-  the same canonical content (inlined, then canonicalised): a reference
-  retargeted to an identically shaped component, a member inlined or a
-  member extracted into a component. That is one change of the member at
+  only the new side writes (both taken in the order of their JSON text with
+  sorted keys, so neither side's written order matters) when either holds a
+  reference and both inline to equal JSON values: a reference retargeted to
+  an identical component, a member inlined or a member extracted into a
+  component. Equality is of values, not schemas: nothing is stripped or
+  sorted, so a `description`, `x-*` key or nested set order that differs
+  makes it a replacement. That is one change of the member at
   `/enum/<old member>`, which neither table has a row for (Review), never a
   member removed plus one added (neither main nor the resolver before #182
   failed CI on such a refactor);
@@ -523,16 +526,26 @@ every one through the allowlist (each case first passes with the unmodified
 binary). Each tightening of the Q1 rule (use reach of a loop named by a
 value, use reach of a pure-alias owner, the structural check) has a check
 that fails when that tightening alone is reverted (`q1e`, `q1b` with
-`OWNER`, `q1d` respectively). Use reach follows references outside
-annotations of schema objects, as both sides do. That skip has no negative
-check: the model exports use schemas and components canonicalised, so an
+`OWNER`, `q1d` respectively). Use reach follows every reference
+in the exported schemas. The model exports them canonicalised, so no
 annotation (an `x-*` or `example` holding a `$ref`, even beside a `$ref`) is
-gone before the harness walks them, and reverting the skip changes nothing
-it can see. The `g*` cases put
+left to skip; the harness asserts that instead of skipping silently, which
+matters only if the export ever carries raw schemas. The `g*` cases put
 components outside the grammar (#186): dropping or re-rating a record there,
 or a grammar record of a component also inlined there, must fail.
 
 Known limits of inlining (each matches the resolver before #182):
+
+* Set members are compared as written, so two members that inline to the
+  same value do not collapse into one: `enum: [{"k": "v"}, {"$ref": A}]` to
+  `enum: [{"$ref": B}]`, with `A = B = {"k": "v"}`, pairs one old member with
+  the new one and reports the other removed (Breaking in a request; the
+  resolver before #182 compared inlined members and reported nothing). A
+  follow-up could compare the sets of inlined values first.
+* Inlining cuts a cycle at a component already on the chain, by name, so two
+  identical self-recursive components inline to different literal cut
+  points (`{"$ref": A}` against `{"$ref": B}`) and a member retargeted from
+  one to the other is a replacement, not a rewrite.
 
 * A chain of more than 64 references under `default` (or anywhere outside
   the grammar) is cut at the limit on both sides alike, so a change past it

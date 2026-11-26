@@ -530,16 +530,20 @@ ANNOTATIONS = ("description", "title", "example", "examples", "deprecated")
 
 
 def schema_refs(v, node: str = "schema"):
-    """Every component name `v` references, except under an annotation
-    (`x-*`, `example`, ...) of a schema object, which neither side follows
-    or inlines (canonicalisation drops it)."""
+    """Every component name `v` references. An annotation (`x-*`, `example`,
+    ...) of a schema object would be skipped (neither side follows or inlines
+    one), but the model exports schemas canonicalised, so none is left: this
+    asserts that rather than skipping silently, and only matters if the
+    export ever carries raw schemas."""
     if isinstance(v, dict):
         r = ref_name(v.get("$ref"))
         if r is not None:
             yield r
         for k, c in v.items():
-            if k == "$ref" or (node == "schema" and (k.startswith("x-") or k in ANNOTATIONS)):
+            if k == "$ref":
                 continue
+            assert not (node == "schema" and (k.startswith("x-") or k in ANNOTATIONS)), (
+                f"annotation {k!r} in an exported schema: the model export is not canonicalised")
             yield from schema_refs(c, node_child(node, k))
     elif isinstance(v, list):
         for i, c in enumerate(v):

@@ -30,7 +30,7 @@ use serde_json::{Map, Value};
 
 use crate::diff::{ValueChange, diff_set_member, pointer_of, set_member_rewritten};
 use crate::models::Schema;
-use crate::utils::{canonicalize_schema_value, decode_json_pointer_token};
+use crate::utils::decode_json_pointer_token;
 
 /// Maximum number of `$ref` expansions on one chain in
 /// [`DocResolver::resolve`]. Termination is already guaranteed by the cycle
@@ -63,6 +63,28 @@ pub(crate) fn contains_ref(value: &Value) -> bool {
         Value::Array(items) => items.iter().any(contains_ref),
         _ => false,
     }
+}
+
+/// `value` as compact JSON with every object's keys sorted: an order of
+/// values that does not depend on how they were written.
+fn sorted_text(value: &Value) -> String {
+    fn sort(value: &Value) -> Value {
+        match value {
+            Value::Object(map) => {
+                let mut entries: Vec<(&String, &Value)> = map.iter().collect();
+                entries.sort_by(|a, b| a.0.cmp(b.0));
+                Value::Object(
+                    entries
+                        .into_iter()
+                        .map(|(key, child)| (key.clone(), sort(child)))
+                        .collect(),
+                )
+            }
+            Value::Array(items) => Value::Array(items.iter().map(sort).collect()),
+            other => other.clone(),
+        }
+    }
+    sort(value).to_string()
 }
 
 /// Every `$ref` string anywhere in `value`, in document order.
@@ -627,8 +649,9 @@ impl PairResolver<'_> {
     /// the new set to compare. A member written the same on both sides that
     /// holds a reference is compared inside the member. A member only the old
     /// side writes is paired with the first unpaired member only the new side
-    /// writes when either holds a reference and both resolve to the same
-    /// canonical content: the member was rewritten (retargeted to an
+    /// writes (both in the order of their key-sorted JSON text) when either
+    /// holds a reference and both inline to equal JSON values (nothing dropped
+    /// or sorted: a member is a value): the member was rewritten (retargeted to an
     /// identical component, inlined or extracted), which is one change of the
     /// member, and the new member is replaced by the old one in the returned
     /// set so that the set comparison does not report it added and removed.
@@ -662,21 +685,28 @@ impl PairResolver<'_> {
             }
             out
         }
-        let (old_only, new_only) = (only(before, after), only(after, before));
-        let canonical = |doc: &DocResolver, member: &Value| {
-            let mut value = doc.inline(member, &mut Vec::new());
-            canonicalize_schema_value(&mut value);
-            value
-        };
-        let new_canonical: Vec<Value> = new_only.iter().map(|m| canonical(&self.new, m)).collect();
+        // Paired in the order of their JSON text with sorted keys, so the
+        // pairing does not depend on how either side orders its set.
+        fn by_text(mut members: Vec<&Value>) -> Vec<&Value> {
+            members.sort_by_cached_key(|member| sorted_text(member));
+            members
+        }
+        let (old_only, new_only) = (by_text(only(before, after)), by_text(only(after, before)));
+        // Members are values: compared as inlined JSON, with nothing dropped
+        // or sorted (schema canonicalisation would drop `description` and
+        // sort nested sets, which are part of a value).
+        let new_inlined: Vec<Value> = new_only
+            .iter()
+            .map(|member| self.new.inline(member, &mut Vec::new()))
+            .collect();
         let mut used = vec![false; new_only.len()];
         let mut rewritten: Vec<(&Value, &Value)> = Vec::new();
         for old in old_only {
-            let old_canonical = canonical(&self.old, old);
+            let old_inlined = self.old.inline(old, &mut Vec::new());
             let found = (0..new_only.len()).find(|&index| {
                 !used[index]
                     && (contains_ref(old) || contains_ref(new_only[index]))
-                    && new_canonical[index] == old_canonical
+                    && new_inlined[index] == old_inlined
             });
             if let Some(index) = found {
                 used[index] = true;

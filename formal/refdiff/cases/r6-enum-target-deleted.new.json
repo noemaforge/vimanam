@@ -46,8 +46,7 @@
  "components": {
   "schemas": {
    "B": {
-    "type": "string",
-    "description": "same shape"
+    "type": "string"
    }
   }
  }

@@ -519,18 +519,24 @@ partial def hasRef : J → Bool
   (`Node.opaq`, at `p/<member>/...`), where `locate` makes every change
   Review: the referenced component changed, not the set;
 * a member only the old side writes is paired with the first unpaired member
-  only the new side writes when either holds a reference and both resolve to
-  the same content (inlined, then canonicalised): the member was rewritten
+  only the new side writes (both taken in the order of their JSON text) when
+  either holds a reference and both inline to equal JSON values (nothing
+  stripped or sorted: a member is a value, not a schema): the member was rewritten
   (a reference retargeted to an identical component, inlined, or
   extracted), not replaced. That is one change of the member at
   `p/<old member>`, which neither table has a row for (Review);
 * every other member is added or removed whole, as `diff_sets` reports it,
   with the set's verdict. -/
 def setCmp (os ns : Side) (p : Pointer) (xs ys : List J) : W Unit := do
-  let oldOnly := (xs.filter fun x => !ys.contains x).eraseDups
-  let newOnly := (ys.filter fun y => !xs.contains y).eraseDups
-  let same (x y : J) : Bool :=
-    (hasRef x || hasRef y) && canon (os.inline [] x) == canon (ns.inline [] y)
+  -- Paired in the order of their JSON text (keys sorted), so the pairing
+  -- does not depend on how either side orders its set.
+  let byText (zs : List J) := zs.mergeSort (fun a b => decide (a.render ≤ b.render))
+  let oldOnly := byText (xs.filter fun x => !ys.contains x).eraseDups
+  let newOnly := byText (ys.filter fun y => !xs.contains y).eraseDups
+  -- Members are values: equal as JSON once inlined, with nothing dropped or
+  -- sorted (schema canonicalisation would drop `description` and sort nested
+  -- sets, which are part of a value).
+  let same (x y : J) : Bool := (hasRef x || hasRef y) && os.inline [] x == ns.inline [] y
   let pairs := (oldOnly.foldl (fun (acc : List (J × J) × List J) x =>
     match newOnly.find? fun y => !acc.2.contains y && same x y with
     | some y => (acc.1 ++ [(x, y)], acc.2 ++ [y])
@@ -1067,6 +1073,16 @@ private def oas3 (comps : List (String × J)) (resp : J) : J :=
   g.length == 1 && g[0]!.severity == .review && g[0]!.ptr.length == 2
     && h.length == 1 && h[0]!.severity == .review
     && k.length == 1 && k[0]!.ptr.getLast? == some "type"
+
+-- A member is a value: inlining to `{"code": 1}` from a component that also
+-- has a `description` is a different value, so a replacement, not a rewrite.
+#guard
+  let a := [("A", .obj [("code", .num "1"), ("description", .str "x")])]
+  let enum1 (m : J) := .obj [("enum", .arr [m])]
+  let g := grouped (oas3 a (enum1 (ref "A"))) (oas3 a (enum1 (obj1 "code" (.num "1"))))
+  g.length == 2 && g.all fun r => match r.ch with
+    | .added _ | .removed _ => true
+    | _ => false
 
 -- An inlined self-reference stops at the component already on the chain.
 #guard

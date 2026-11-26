@@ -108,6 +108,8 @@ rust = [
   "src/resolve.rs#ANNOTATIONS",
   "src/resolve.rs#Role",
   "src/resolve.rs#component_ref",
+  "src/resolve.rs#contains_ref",
+  "src/resolve.rs#sorted_text",
   "src/resolve.rs#overlay_keys",
   "src/parser.rs#extract_schemas",
   "src/resolve.rs#RefEdge",

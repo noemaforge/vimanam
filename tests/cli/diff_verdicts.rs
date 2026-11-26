@@ -410,3 +410,39 @@ fn an_enum_member_whose_target_is_deleted_is_reviewed() {
     assert!(!records.is_empty());
     assert!(records.iter().all(|(_, s, _)| s == "review"), "{records:?}");
 }
+
+/// `enum: [{$ref: A}]` → `enum: [inline]` on a request body.
+fn member_inlined(component: Value, inline: Value) -> (Vec<(String, String, Option<String>)>, i32) {
+    let old = spec(
+        json!({"enum": [r("A")]}),
+        object(),
+        json!({"A": component.clone()}),
+    );
+    let new = spec(json!({"enum": [inline]}), object(), json!({"A": component}));
+    diff_records(&old, &new)
+}
+
+#[test]
+fn an_enum_member_is_a_value_so_annotations_and_order_count() {
+    // Schema canonicalisation would drop `description` and `x-*` and sort
+    // nested `required`, but in an `enum` member they are part of the value:
+    // each of these is a member replaced, Breaking for a request.
+    for (component, inline) in [
+        (json!({"code": 1, "description": "x"}), json!({"code": 1})),
+        (json!({"code": 1, "x-note": "x"}), json!({"code": 1})),
+        (
+            json!({"required": ["b", "a"]}),
+            json!({"required": ["a", "b"]}),
+        ),
+    ] {
+        let (records, code) = member_inlined(component, inline);
+        assert_eq!(code, 3, "{records:?}");
+        let severities: Vec<&str> = records.iter().map(|(_, s, _)| s.as_str()).collect();
+        assert_eq!(severities, ["breaking", "non_breaking"], "{records:?}");
+    }
+    // The same value, keys in another order, is a rewrite.
+    let (records, code) = member_inlined(json!({"a": 1, "b": 2}), json!({"b": 2, "a": 1}));
+    assert_eq!(code, 0, "{records:?}");
+    assert_eq!(records.len(), 1, "{records:?}");
+    assert_eq!(records[0].1, "review");
+}

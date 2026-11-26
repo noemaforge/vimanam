@@ -59,8 +59,7 @@
     "type": "string"
    },
    "B": {
-    "type": "string",
-    "description": "same shape"
+    "type": "string"
    }
   }
  }
