@@ -499,71 +499,71 @@ theorem component_negated_matches_inline (d : Direction) (pre p : Pointer) (k : 
   rw [component_negated_review]
   cases d <;> simp [inline, severity, requestSeverity, responseSeverity, hu, bodyDropped_of_ne _ _ hpp]
 
-/-! ## Findings: no-ops the table rates Breaking (#184)
+/-! ## No-ops (#184)
 
 `noop` knows only the boolean keywords with a default (`nullable`,
-`additionalProperties`), so "the only no-ops" below means the only no-ops of
-that kind. Other no-ops are out of scope: `type: "string"` to
-`type: ["string"]` is rated Breaking too (also noted in #184). Once #184 is
-fixed these findings should become guarantees: no `noop` change is Breaking.
+`additionalProperties`): writing or dropping one at its default value. Both
+tables rate every such no-op Non-breaking, wherever the pointer's grammar
+puts the keyword, except under `not` (Review, as everything there). Before
+#184 was fixed, `became` ignored the default and three of them were Breaking
+(`History.lean`, `pre184_*`). Other no-ops are out of scope: `type: "string"`
+to `type: ["string"]` is still rated Breaking (#167).
 -/
 
-theorem requestRule_noop_breaking :
-    ∀ l k, k.Wf → noop l k = true → requestRule l k = .breaking →
-      (l = .nullable ∧ k = .added .fls) ∨ (l = .additionalProperties ∧ k = .removed .tru) :=
+theorem requestRule_noop :
+    ∀ l k, k.Wf → noop l k = true → requestRule l k = .nonBreaking :=
   forall_of_check
-    (P := fun l k => k.Wf → noop l k = true → requestRule l k = .breaking →
-      (l = .nullable ∧ k = .added .fls) ∨ (l = .additionalProperties ∧ k = .removed .tru))
-    (by decide)
+    (P := fun l k => k.Wf → noop l k = true → requestRule l k = .nonBreaking) (by decide)
 
-theorem responseRule_noop_breaking :
-    ∀ l k, k.Wf → noop l k = true → responseRule l k = .breaking →
-      l = .nullable ∧ k = .removed .fls :=
+theorem responseRule_noop :
+    ∀ l k, k.Wf → noop l k = true → responseRule l k = .nonBreaking :=
   forall_of_check
-    (P := fun l k => k.Wf → noop l k = true → responseRule l k = .breaking →
-      l = .nullable ∧ k = .removed .fls)
-    (by decide)
+    (P := fun l k => k.Wf → noop l k = true → responseRule l k = .nonBreaking) (by decide)
 
-/-- Finding (open, #184): `became` reads a removed boolean as flipping to the
-opposite value and an added one as a change from it, ignoring the keyword's
-default. So `request_schema_severity` rates two no-ops Breaking: writing
-`nullable: false` (already the default) and dropping
-`additionalProperties: true` (absent already means `true`). Among the no-ops
-`noop` recognises (boolean keywords at their default), these are the only
-ones it rates Breaking. -/
-theorem request_noop_breaking (p : Pointer) (k : Kind) (hk : k.Wf)
-    (hnoop : noop (locate p) k = true) (h : requestSeverity p k = .breaking) :
-    (locate p = .nullable ∧ k = .added .fls) ∨
-      (locate p = .additionalProperties ∧ k = .removed .tru) := by
-  unfold requestSeverity at h
-  split at h
-  · cases h
-  · exact requestRule_noop_breaking _ _ hk hnoop h
+/-- `request_schema_severity` rates writing or dropping `nullable` or
+`additionalProperties` at its default Non-breaking, unless under `not`. -/
+theorem request_noop_nonBreaking (p : Pointer) (k : Kind) (hk : k.Wf)
+    (hn : underNot p = false) (hnoop : noop (locate p) k = true) :
+    requestSeverity p k = .nonBreaking := by
+  simp [requestSeverity, hn, requestRule_noop _ _ hk hnoop]
 
-/-- The two no-ops of `request_noop_breaking` do occur: both are rated
-Breaking at a top-level keyword. -/
-theorem request_noop_breaking_witness :
-    requestSeverity ["nullable"] (.added .fls) = .breaking ∧ noop .nullable (.added .fls) ∧
-    requestSeverity ["additionalProperties"] (.removed .tru) = .breaking ∧
-      noop .additionalProperties (.removed .tru) := by
+/-- `response_schema_severity` rates the same no-ops Non-breaking, unless
+under `not` (the root rule never fires on them). -/
+theorem response_noop_nonBreaking (p : Pointer) (k : Kind) (hk : k.Wf) (hr : p ≠ [])
+    (hn : underNot p = false) (hnoop : noop (locate p) k = true) :
+    responseSeverity p k = .nonBreaking := by
+  have hd : bodyDropped p k = false := by unfold bodyDropped; split <;> simp_all
+  simp [responseSeverity, hd, hn, responseRule_noop _ _ hk hnoop]
+
+/-- No no-op is ever Breaking, under `not` or not, in either table. -/
+theorem noop_never_breaking (p : Pointer) (k : Kind) (hk : k.Wf) (hr : p ≠ [])
+    (hnoop : noop (locate p) k = true) :
+    requestSeverity p k ≠ .breaking ∧ responseSeverity p k ≠ .breaking := by
+  cases hn : underNot p
+  · rw [request_noop_nonBreaking p k hk hn hnoop, response_noop_nonBreaking p k hk hr hn hnoop]
+    simp
+  · have hd : bodyDropped p k = false := by unfold bodyDropped; split <;> simp_all
+    simp [requestSeverity, responseSeverity, hn, hd]
+
+/-- The three no-ops of #184, as the issue reports them: request
+`nullable: false` added, request `additionalProperties: true` removed, and
+response `nullable: false` removed are Non-breaking (were Breaking). -/
+theorem issue184_repros :
+    requestSeverity ["nullable"] (.added .fls) = .nonBreaking ∧ noop .nullable (.added .fls) ∧
+    requestSeverity ["additionalProperties"] (.removed .tru) = .nonBreaking ∧
+      noop .additionalProperties (.removed .tru) ∧
+    responseSeverity ["nullable"] (.removed .fls) = .nonBreaking ∧
+      noop .nullable (.removed .fls) := by
   decide
 
-/-- Finding (open, #184): for the same reason `response_schema_severity` rates
-dropping `nullable: false` (a no-op) Breaking, and among the no-ops `noop`
-recognises it is the only one it rates Breaking away from the root. -/
-theorem response_noop_breaking (p : Pointer) (k : Kind) (hk : k.Wf) (hr : p ≠ [])
-    (hnoop : noop (locate p) k = true) (h : responseSeverity p k = .breaking) :
-    locate p = .nullable ∧ k = .removed .fls := by
-  have hd : bodyDropped p k = false := by unfold bodyDropped; split <;> simp_all
-  unfold responseSeverity at h
-  simp only [hd, Bool.false_eq_true, ↓reduceIte] at h
-  split at h
-  · cases h
-  · exact responseRule_noop_breaking _ _ hk hnoop h
-
-/-- The no-op of `response_noop_breaking` does occur. -/
-theorem response_noop_breaking_witness :
-    responseSeverity ["nullable"] (.removed .fls) = .breaking ∧ noop .nullable (.removed .fls) := by
+/-- The same three reached through a shared component (#181): the component
+record follows its direction's table, so it is Non-breaking too. -/
+theorem issue184_component_repros :
+    severity (.componentSchemaChanged .request false ["nullable"] (.added .fls)) = .nonBreaking ∧
+    severity (.componentSchemaChanged .request false ["additionalProperties"] (.removed .tru))
+      = .nonBreaking ∧
+    severity (.componentSchemaChanged .response false ["nullable"] (.removed .fls))
+      = .nonBreaking := by
   decide
 
 end Vimanam.Severity

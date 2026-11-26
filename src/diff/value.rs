@@ -168,6 +168,46 @@ fn encode_json_pointer_token(token: &str) -> String {
     token.replace('~', "~0").replace('/', "~1")
 }
 
+/// The JSON pointer of the decoded `tokens`, from the root.
+pub(crate) fn pointer_of(tokens: &[String]) -> String {
+    tokens
+        .iter()
+        .map(|token| format!("/{}", encode_json_pointer_token(token)))
+        .collect()
+}
+
+/// Reports the differences between `old` and `new`, the two sides' inlined
+/// forms of the `required`/`enum` member `member` of the set at `set_pointer`,
+/// inside that member (`set_pointer/<member>/...`), compared as plain JSON
+/// (#186): a referenced component changed, not the set, and `locate` rates
+/// every such pointer `Other`.
+pub(crate) fn diff_set_member(
+    set_pointer: &str,
+    member: &Value,
+    old: &Value,
+    new: &Value,
+    out: &mut Vec<ValueChange>,
+) {
+    let mut path = set_pointer.to_string();
+    push_segment(&mut path, &set_element_segment(member));
+    diff_nodes(old, new, Node::Opaque, &mut path, out);
+}
+
+/// One `required`/`enum` member rewritten without changing what it resolves
+/// to (#186): `old` (the old side's member, which names it) became `new`, as
+/// a change at `set_pointer/<old>`, which neither table has a row for.
+pub(crate) fn set_member_rewritten(set_pointer: &str, old: &Value, new: &Value) -> ValueChange {
+    let mut path = set_pointer.to_string();
+    push_segment(&mut path, &set_element_segment(old));
+    ValueChange {
+        pointer: path,
+        kind: ValueChangeKind::Changed {
+            old: old.clone(),
+            new: new.clone(),
+        },
+    }
+}
+
 /// The pointer segment used for a member of a `required`/`enum` set: the bare
 /// string for string members, compact JSON otherwise.
 fn set_element_segment(value: &Value) -> String {

@@ -136,22 +136,28 @@ old Rust violates:
   request, a narrowing, was reported as member additions, each Non-breaking.
   Violates `EnumReport.request_narrowing_breaking`.
 
-Against the current Rust (open, filed as #184, not fixed in this change).
-Once #184 is fixed these should become guarantees, "no change `noop` calls a
-no-op is Breaking", replacing the two finding theorems:
+* `pre184_request_noop_breaking`, `pre184_response_noop_breaking` (#184):
+  until the fix, `became` read a removed boolean as flipping and an added one
+  as a change, ignoring the keyword's default. So the request table rated
+  writing `nullable: false` (already the default) and dropping
+  `additionalProperties: true` (absent already means `true`) Breaking, and
+  the response table dropping `nullable: false`, though none changes what the
+  schema admits. Among the no-ops `noop` recognises these were the only ones;
+  `pre184_witnesses` shows each. Violates `noop_never_breaking`.
+  `fix184_request_only_noops` and `fix184_response_only_noops` show the fix
+  changed the verdict of no-ops and of nothing else.
 
-* `request_noop_breaking`: `became` reads a removed boolean as flipping and an
-  added one as a change, ignoring the keyword's default. So the request table
-  rates writing `nullable: false` (already the default) and dropping
-  `additionalProperties: true` (absent already means `true`) as Breaking,
-  though neither changes what the schema admits. Among the no-ops `noop`
-  recognises (boolean keywords at their default), these are the only ones it
-  rates Breaking. Other no-ops are outside `noop`: `type: "string"` to
-  `type: ["string"]` is also rated Breaking (noted in #184). The first is asserted as Breaking by
-  `severity_request_schema_breaking_rows` today.
-* `response_noop_breaking`: for the same reason the response table rates
-  dropping `nullable: false` Breaking; it is the only such no-op `noop`
-  recognises.
+### No-ops (#184)
+
+| Theorem | Guarantee |
+|---|---|
+| `requestRule_noop`, `responseRule_noop` | Writing or dropping `nullable` or `additionalProperties` at its default (`noop`) is Non-breaking in each table's rule. |
+| `request_noop_nonBreaking`, `response_noop_nonBreaking` | The same for the whole table, at any pointer whose grammar puts the keyword there, unless under `not` (Review). |
+| `noop_never_breaking` | No such no-op is Breaking, under `not` or not, in either table. |
+| `issue184_repros`, `issue184_component_repros` | The three repros of #184 (request `nullable: false` added, request `additionalProperties: true` removed, response `nullable: false` removed) are Non-breaking, inline and through a shared component. |
+
+Other no-ops are outside `noop`: `type: "string"` to `type: ["string"]` is
+still rated Breaking (#167).
 
 ## What the model does not cover
 
@@ -360,21 +366,62 @@ comparison), with three rules at a schema position holding a `$ref`:
 A "schema position" is one of the grammar `diff_values` walks (`Node` in
 `Severity.lean`): the root, `properties`/`patternProperties` values,
 `allOf`/`oneOf`/`anyOf` members, `items`, `additionalProperties` and `not`.
-A `$ref` anywhere else is a value, compared as written, even where JSON
-Schema 2020-12 has a subschema (`if`/`then`/`else`, `prefixItems`, `$defs`,
-`dependentSchemas`, ...) and under `default`. #182 follows references at
-every non-annotation position and rates what it finds there by the direction
-table, which can be Breaking (#186; before #182 such changes were Review,
-at their opaque pointer). The model does not follow them, so for such a
-reference it reports nothing, and the `refdiff/cases/r4-ref-*` cases pin
-that. The intended output is to be decided in the Lean model with the fix
-for #186. The harness puts a disagreement in `known-rust-bug-#186` only when
-it is reached through such a reference and nowhere else: its owner pair has
-a side reachable from the target of an out-of-grammar reference that the
-use reaches, and that the use does not also reach through grammar positions
-alone; or its pointer is at or beneath such a reference in its owner. A
-disagreement both sides report (a verdict or `under_not` mismatch) is never
-put there.
+
+**Outside the grammar (#186).** Where the walk leaves the grammar
+(`Node.opaq` or `Node.set`: `default`, `const`, `enum` and `required`
+members, `if`/`then`/`else`, `prefixItems`, tuple `items`, `$defs`,
+`dependentSchemas`, `propertyNames`, `contains`, unknown keywords, ...), a
+`$ref` is not a schema use the table can rate: some of these are values
+(`default`, `const`, set members), and the rest are applicators whose effect
+is not "the value must match" in the direction the table assumes. So no hop
+is made there. Each side is **inlined** in full (`Side.inline`, `DocResolver::inline`): every
+reference to a declared component is replaced by the component as
+deserialised (not canonicalised) with its siblings merged over it,
+recursively, leaving the object as written where its component is already on
+the chain (by name) or 64 deep, and the two are compared as plain JSON at
+the current owner (`rawCmp`). Beneath `$defs`/`definitions`, which
+`canonicalize_schema` still treats as maps of schemas, the inlined result is
+canonicalised (`canonOutside`). `locate` rates every such change Review.
+This is what diffing before #182 reported (Review at `/default/type`,
+`/if/type`, `/prefixItems/0/type`, `/$defs/d/not/type`), and the
+`refdiff/cases/r4-ref-*` and `r6-ref-const` cases pin it.
+
+A `required`/`enum` set directly under a schema (`Node.set`) is the one place
+the table rates members, so it is handled apart (`setCmp`,
+`PairResolver::set_members`):
+
+* a member written the same on both sides that holds a reference is inlined
+  per side and compared *inside* the member, at `/enum/<member>/...`, which
+  `locate` rates Review (the component changed, not the set; a deleted target
+  is likewise Review there, the inlined side against the literal `$ref`);
+* a member only the old side writes is paired with the first unpaired member
+  only the new side writes (both taken in the order of their JSON text with
+  sorted keys, so neither side's written order matters) when either holds a
+  reference and both inline to equal JSON values: a reference retargeted to
+  an identical component, a member inlined or a member extracted into a
+  component. Equality is of values, not schemas: nothing is stripped or
+  sorted, so a `description`, `x-*` key or nested set order that differs
+  makes it a replacement. That is one change of the member at
+  `/enum/<old member>`, which neither table has a row for (Review), never a
+  member removed plus one added (neither main nor the resolver before #182
+  failed CI on such a refactor);
+* every other member is added or removed whole, rated by the set rules as
+  before, including a reference retargeted to a differently shaped
+  component.
+
+A member is addressed by its JSON text as the old side writes it, so when
+two members are equal but written with different key order, the pointer
+follows the old side (deterministic for a given pair of inputs). Before #182 the inlined members were compared as set members,
+so a component change behind an `enum` member was a member removed plus one
+added (Breaking for a request); that read the reference as part of the value
+and the value as changed. Whether such a member should instead be the
+literal object `{"$ref": ...}` (JSON Schema's reading, which would report
+nothing) is open; Review keeps the change visible without gating on it.
+`r6-ref-enum` and the `r6-enum-*` cases pin it. A component reached this way and also
+through the grammar gets its own records there, with the table's verdict.
+`prefixItems` is a real JSON Schema 2020-12 subschema list, but the table has
+no rule for tuple positions, so it stays Review rather than borrowing the
+root's rules.
 
 ### Owners, states and reach
 
@@ -431,7 +478,8 @@ python3 -I scripts/formal/refdiff-harness.py --rust target/release/vimanam --see
 
 The harness generates spec pairs (cycles, siblings over references,
 retargets, aliases, one-sided components, mixed spellings, references under
-`not`, OpenAPI 3.1 `type` arrays; both directions of each), adds
+`not`, OpenAPI 3.1 `type` arrays, references outside the schema grammar;
+both directions of each), adds
 `refdiff/cases/`, and compares, as multisets:
 
 * the grouped view with `--rust`'s `diff --format json --contract 1` records
@@ -449,7 +497,7 @@ far a side was expanded is not observable through the table) and `$ref`
 strings compare by component name. Each disagreement is classified
 (`verdict`, `verdict-under-not`, `retarget-fact-missing`, `attribution-*`,
 `under-not-flag-{extra,missing}-in-rust`, `extra-in-rust-*`,
-`missing-in-rust-*`, `known-rust-bug-#187`, `known-rust-bug-#186`), and
+`missing-in-rust-*`, `known-rust-bug-#187`), and
 one pair per class is shrunk by delta debugging into `DIR/repro/`. The report
 is `DIR/report.md`.
 
@@ -459,7 +507,7 @@ timeout and on any disagreement `refdiff/allowlist.json` does not cover. The
 allowlist holds the known limits: Q1, a Review record at a `$ref` key from a
 content-free alias loop (`C = {"$ref": C}`, possibly with siblings, facing an
 undeclared reference or inline schema: the model takes the fixpoint, the
-Rust compares the literal `$ref`), and `known-rust-bug-#186`. The Q1 rule's
+Rust compares the literal `$ref`). The Q1 rule's
 alias-loop condition is enforced, not assumed: the record's use must reach,
 on either side, a component in an alias loop or leading into one, named by
 the record's `ref:` values (or its counterpart's at the same use, owner and
@@ -475,10 +523,49 @@ after `--ci`, wraps the binary with `refdiff-mutate.py` to drop, rename,
 inject (optionally under another owner) or re-rate records on the cases in
 `refdiff/negative/` as `checks.json` lists, and fails unless `--ci` rejects
 every one through the allowlist (each case first passes with the unmodified
-binary). Each tightening of the Q1 and #186 rules (use reach of a loop named
-by a value, use reach of a pure-alias owner, the structural check, the
-grammar-reached exclusion, the guard for records both sides report) has a
-check that fails when that tightening alone is reverted.
+binary). Each tightening of the Q1 rule (use reach of a loop named by a
+value, use reach of a pure-alias owner, the structural check) has a check
+that fails when that tightening alone is reverted (`q1e`, `q1b` with
+`OWNER`, `q1d` respectively). Use reach follows every reference
+in the exported schemas. The model exports them canonicalised, so no
+annotation (an `x-*` or `example` holding a `$ref`, even beside a `$ref`) is
+left to skip; the harness asserts that instead of skipping silently, which
+matters only if the export ever carries raw schemas. The `g*` cases put
+components outside the grammar (#186): dropping or re-rating a record there,
+or a grammar record of a component also inlined there, must fail.
+
+Known limits of inlining (each matches the resolver before #182):
+
+* Set members are compared as written, so two members that inline to the
+  same value do not collapse into one: `enum: [{"k": "v"}, {"$ref": A}]` to
+  `enum: [{"$ref": B}]`, with `A = B = {"k": "v"}`, pairs one old member with
+  the new one and reports the other removed (Breaking in a request; the
+  resolver before #182 compared inlined members and reported nothing). A
+  follow-up could compare the sets of inlined values first.
+* Inlining cuts a cycle at a component already on the chain, by name, so two
+  identical self-recursive components inline to different literal cut
+  points (`{"$ref": A}` against `{"$ref": B}`) and a member retargeted from
+  one to the other is a replacement, not a rewrite.
+
+* A chain of more than 64 references under `default` (or anywhere outside
+  the grammar) is cut at the limit on both sides alike, so a change past it
+  is not reported (exit 0, no record).
+* Canonicalisation does not reach applicators such as `if` or
+  `dependentSchemas`, so an annotation or ordering edit inside a component
+  inlined there is a Review record, not nothing.
+* A reference retargeted outside the grammar (`if: {$ref: P}` to
+  `if: {$ref: Q}`) gets no `/$ref` retarget fact; the inlined contents are
+  compared, so differently shaped targets give Review records and
+  identically shaped ones give none.
+* Under `$defs`/`definitions` the reached schemas are canonicalised
+  (annotations dropped, `required`/`enum` sorted, as `canonicalize_schema`
+  does) but compared by index, not as sets; `canon` sorts them too, so a
+  reordering is no change on either side (`r6-defs-*`).
+
+A `required`/`enum` member is addressed by its compact JSON text, so an
+inlined object member is written in each side's own key order (`Lean.Json`
+sorts keys on input, `serde_json` keeps insertion order); the harness
+re-renders such tokens with sorted keys before comparing.
 
 `known-rust-bug-#187` is not allowlisted. #182's `expand_once` (and the
 resolver before #182) cuts one-sided expansion by component name: a
@@ -494,7 +581,6 @@ that meet the Q1 condition.
 
 ### Not covered
 
-`$ref`s outside the schema grammar (followed by #182, #186; see above),
 `$ref`s to `components/parameters`, `requestBodies` and `responses`,
 external references, non-object component targets beyond "compare as
 written", endpoint moves (v1 output never pairs them), and every structural

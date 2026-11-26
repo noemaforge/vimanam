@@ -28,6 +28,7 @@ use std::rc::Rc;
 use indexmap::IndexMap;
 use serde_json::{Map, Value};
 
+use crate::diff::{ValueChange, diff_set_member, pointer_of, set_member_rewritten};
 use crate::models::Schema;
 use crate::utils::decode_json_pointer_token;
 
@@ -62,6 +63,28 @@ pub(crate) fn contains_ref(value: &Value) -> bool {
         Value::Array(items) => items.iter().any(contains_ref),
         _ => false,
     }
+}
+
+/// `value` as compact JSON with every object's keys sorted: an order of
+/// values that does not depend on how they were written.
+fn sorted_text(value: &Value) -> String {
+    fn sort(value: &Value) -> Value {
+        match value {
+            Value::Object(map) => {
+                let mut entries: Vec<(&String, &Value)> = map.iter().collect();
+                entries.sort_by(|a, b| a.0.cmp(b.0));
+                Value::Object(
+                    entries
+                        .into_iter()
+                        .map(|(key, child)| (key.clone(), sort(child)))
+                        .collect(),
+                )
+            }
+            Value::Array(items) => Value::Array(items.iter().map(sort).collect()),
+            other => other.clone(),
+        }
+    }
+    sort(value).to_string()
 }
 
 /// Every `$ref` string anywhere in `value`, in document order.
@@ -368,16 +391,33 @@ pub(crate) struct RefEdge {
 /// them are left as written.
 const ANNOTATIONS: [&str; 5] = ["description", "title", "example", "examples", "deprecated"];
 
-/// The schema-grammar role of a node while [`PairResolver::localize`] walks it.
-/// It only decides where refs are left alone (annotations); every other
-/// position treats a `$ref` object as a reference, as [`DocResolver::resolve`]
-/// does.
+/// The schema-grammar role of a node while [`PairResolver::localize`] walks
+/// it: the grammar `diff_values` and the severity table read (`value::Node`),
+/// plus annotations.
+///
+/// Only a schema position treats a `$ref` object as a reference (an edge, or
+/// a one-sided expansion). Outside the grammar (`default`, `const`, `enum`
+/// and `required` members, `if`/`then`/`else`, `prefixItems`, tuple `items`,
+/// `$defs`, `dependentSchemas`, unknown keywords, ...) a reference is not a
+/// schema use the table can rate (#186): each side is inlined there as
+/// [`DocResolver::resolve`] would, and compared as plain JSON at the use (or
+/// the component) that holds it, where every change is Review.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Role {
+    /// A schema object (`Node::Schema`).
     Schema,
-    /// `properties`-like maps and `allOf`-like lists: children are schemas.
+    /// A `properties`-like map or an `allOf`-like list: children are schemas
+    /// (`Node::PropertyMap`, `Node::SchemaList`); the container itself is
+    /// never a reference.
     Container,
-    Other,
+    /// Outside the grammar (`Node::Opaque`): inlined.
+    Value,
+    /// A `required`/`enum` set (`Node::Set`): its members are values, kept
+    /// as written; a member written the same on both sides that holds a
+    /// reference is inlined per side and compared inside the member.
+    Set,
+    /// An annotation of a schema object: left as written (canonicalisation
+    /// drops it).
     Annotation,
 }
 
@@ -385,14 +425,15 @@ impl Role {
     fn child(self, key: &str) -> Role {
         match self {
             Role::Schema => match key {
-                "properties" | "patternProperties" | "definitions" | "$defs" | "allOf"
-                | "oneOf" | "anyOf" => Role::Container,
+                "properties" | "patternProperties" | "allOf" | "oneOf" | "anyOf" => Role::Container,
                 "items" | "additionalProperties" | "not" => Role::Schema,
+                "required" | "enum" => Role::Set,
                 _ if key.starts_with("x-") || ANNOTATIONS.contains(&key) => Role::Annotation,
-                _ => Role::Other,
+                _ => Role::Value,
             },
             Role::Container => Role::Schema,
-            Role::Other | Role::Annotation => self,
+            Role::Set => Role::Value,
+            Role::Value | Role::Annotation => self,
         }
     }
 }
@@ -427,6 +468,11 @@ struct LocalWalk<'w> {
     /// Whether the walk is at or beneath a schema `not` keyword.
     negated: bool,
     edges: &'w mut Vec<RefEdge>,
+    /// The decoded tokens from the walked schema to the current node.
+    path: Vec<String>,
+    /// Changes inside `required`/`enum` members that hold references (see
+    /// [`Role::Set`]), at pointers from the walked schema.
+    members: &'w mut Vec<ValueChange>,
 }
 
 impl DocResolver<'_> {
@@ -498,6 +544,41 @@ impl DocResolver<'_> {
     }
 }
 
+impl DocResolver<'_> {
+    /// `value` with every component reference replaced by its target (siblings
+    /// merged over it), recursively, as [`Self::resolve`] expands them; a
+    /// component already on `stack` (by name), or past [`MAX_RESOLVE_DEPTH`]
+    /// of them, stays the object as written. What [`PairResolver::localize`]
+    /// compares outside the schema grammar (#186).
+    fn inline(&self, value: &Value, stack: &mut Vec<String>) -> Value {
+        match value {
+            Value::Object(map) => {
+                if component_ref(map).is_some_and(|name| self.declares(&name)) {
+                    match self.expand_once(map, stack) {
+                        Some(expanded) => {
+                            let out = self.inline(&expanded, stack);
+                            stack.pop();
+                            out
+                        }
+                        None => value.clone(),
+                    }
+                } else {
+                    map.iter()
+                        .map(|(key, child)| (key.clone(), self.inline(child, stack)))
+                        .collect::<Map<String, Value>>()
+                        .into()
+                }
+            }
+            Value::Array(items) => items
+                .iter()
+                .map(|item| self.inline(item, stack))
+                .collect::<Vec<Value>>()
+                .into(),
+            other => other.clone(),
+        }
+    }
+}
+
 impl PairResolver<'_> {
     /// Whether component `name` provably resolves identically in both
     /// documents (it is declared, unchanged, and reaches only such
@@ -521,15 +602,24 @@ impl PairResolver<'_> {
     /// that reference is expanded in place (as [`DocResolver::resolve`]
     /// would) and the walk continues into it, so a schema moving between
     /// inline and referenced form is compared field by field; the inline side
-    /// shrinks at every step, so this terminates. Everything else, including
-    /// subtrees present on one side only and references under annotation
-    /// keywords, is kept as written. Key order is preserved, and a value
-    /// without component refs is returned unchanged.
-    pub(crate) fn localize(
+    /// shrinks at every step, so this terminates. Only schema positions of the
+    /// grammar the severity table reads hold references; outside it (see
+    /// [`Role`]) both sides are inlined in full and no edge is recorded (#186).
+    /// Everything else, including subtrees present on one side only and
+    /// references under annotation keywords, is kept as written. Key order is
+    /// preserved, and a value without component refs is returned unchanged.
+    ///
+    /// A `required`/`enum` member is a value: the sets are kept as written,
+    /// and for each member written the same on both sides that holds a
+    /// reference, the two sides' inlined forms are compared inside the member
+    /// and the changes appended to `members` (#186); comparing the returned
+    /// values reports nothing there.
+    pub(crate) fn localize_with_members(
         &self,
         old: &Value,
         new: &Value,
         edges: &mut Vec<RefEdge>,
+        members: &mut Vec<ValueChange>,
     ) -> (Value, Value) {
         let mut walk = LocalWalk {
             old_stack: Vec::new(),
@@ -538,15 +628,133 @@ impl PairResolver<'_> {
             top: None,
             negated: false,
             edges,
+            path: Vec::new(),
+            members,
         };
         self.local(old, new, Role::Schema, &mut walk)
     }
 
+    /// [`Self::localize_with_members`], for callers that only need the
+    /// localized values.
+    pub(crate) fn localize(
+        &self,
+        old: &Value,
+        new: &Value,
+        edges: &mut Vec<RefEdge>,
+    ) -> (Value, Value) {
+        self.localize_with_members(old, new, edges, &mut Vec::new())
+    }
+
+    /// Two `required`/`enum` sets whose members are values (#186), returning
+    /// the new set to compare. A member written the same on both sides that
+    /// holds a reference is compared inside the member. A member only the old
+    /// side writes is paired with the first unpaired member only the new side
+    /// writes (both in the order of their key-sorted JSON text) when either
+    /// holds a reference and both inline to equal JSON values (nothing dropped
+    /// or sorted: a member is a value): the member was rewritten (retargeted to an
+    /// identical component, inlined or extracted), which is one change of the
+    /// member, and the new member is replaced by the old one in the returned
+    /// set so that the set comparison does not report it added and removed.
+    /// Every other member is left to the set comparison.
+    fn set_members(&self, before: &[Value], after: &[Value], walk: &mut LocalWalk) -> Vec<Value> {
+        // Sets without references (almost all) need none of this.
+        if !(before.iter().any(contains_ref) || after.iter().any(contains_ref)) {
+            return after.to_vec();
+        }
+        let pointer = pointer_of(&walk.path);
+        let mut seen: Vec<&Value> = Vec::new();
+        for member in before.iter().filter(|member| contains_ref(member)) {
+            if seen.contains(&member) || !after.contains(member) {
+                continue;
+            }
+            seen.push(member);
+            if self.values_equal(member, member) {
+                continue;
+            }
+            let old = self.old.inline(member, &mut Vec::new());
+            let new = self.new.inline(member, &mut Vec::new());
+            diff_set_member(&pointer, member, &old, &new, walk.members);
+        }
+
+        fn only<'v>(these: &'v [Value], those: &[Value]) -> Vec<&'v Value> {
+            let mut out: Vec<&Value> = Vec::new();
+            for member in these {
+                if !those.contains(member) && !out.contains(&member) {
+                    out.push(member);
+                }
+            }
+            out
+        }
+        // Paired in the order of their JSON text with sorted keys, so the
+        // pairing does not depend on how either side orders its set.
+        fn by_text(mut members: Vec<&Value>) -> Vec<&Value> {
+            members.sort_by_cached_key(|member| sorted_text(member));
+            members
+        }
+        let (old_only, new_only) = (by_text(only(before, after)), by_text(only(after, before)));
+        // Members are values: compared as inlined JSON, with nothing dropped
+        // or sorted (schema canonicalisation would drop `description` and
+        // sort nested sets, which are part of a value).
+        let new_inlined: Vec<Value> = new_only
+            .iter()
+            .map(|member| self.new.inline(member, &mut Vec::new()))
+            .collect();
+        let mut used = vec![false; new_only.len()];
+        let mut rewritten: Vec<(&Value, &Value)> = Vec::new();
+        for old in old_only {
+            let old_inlined = self.old.inline(old, &mut Vec::new());
+            let found = (0..new_only.len()).find(|&index| {
+                !used[index]
+                    && (contains_ref(old) || contains_ref(new_only[index]))
+                    && new_inlined[index] == old_inlined
+            });
+            if let Some(index) = found {
+                used[index] = true;
+                walk.members
+                    .push(set_member_rewritten(&pointer, old, new_only[index]));
+                rewritten.push((new_only[index], old));
+            }
+        }
+        after
+            .iter()
+            .map(|member| {
+                rewritten
+                    .iter()
+                    .find(|(new, _)| *new == member)
+                    .map_or_else(|| member.clone(), |(_, old)| (*old).clone())
+            })
+            .collect()
+    }
+
     fn local(&self, old: &Value, new: &Value, role: Role, walk: &mut LocalWalk) -> (Value, Value) {
-        if role == Role::Annotation {
-            return (old.clone(), new.clone());
+        match role {
+            Role::Annotation => return (old.clone(), new.clone()),
+            Role::Set if old.is_array() && new.is_array() => {
+                if self.values_equal(old, new) {
+                    return (old.clone(), new.clone());
+                }
+                if let (Value::Array(before), Value::Array(after)) = (old, new) {
+                    let after = self.set_members(before, after, walk);
+                    return (old.clone(), Value::Array(after));
+                }
+                return (old.clone(), new.clone());
+            }
+            Role::Value | Role::Set => {
+                // Equal values over unchanged components inline identically.
+                if self.values_equal(old, new) {
+                    return (old.clone(), new.clone());
+                }
+                return (
+                    self.old.inline(old, &mut Vec::new()),
+                    self.new.inline(new, &mut Vec::new()),
+                );
+            }
+            Role::Schema | Role::Container => {}
         }
         match (old, new) {
+            (Value::Object(before), Value::Object(after)) if role == Role::Container => {
+                self.local_maps(before, after, role, walk)
+            }
             (Value::Object(before), Value::Object(after)) => {
                 // Only a reference whose own document declares its target is
                 // a component reference; an undeclared one stays as written,
@@ -618,7 +826,9 @@ impl PairResolver<'_> {
                 let (mut left, mut right) = (Vec::new(), Vec::new());
                 walk.depth += 1;
                 for index in 0..common {
+                    walk.path.push(index.to_string());
                     let (a, b) = self.local(&before[index], &after[index], child, walk);
+                    walk.path.pop();
                     left.push(a);
                     right.push(b);
                 }
@@ -652,7 +862,9 @@ impl PairResolver<'_> {
                     let outer_negated = walk.negated;
                     walk.negated |= role == Role::Schema && key == "not";
                     walk.depth += 1;
+                    walk.path.push(key.clone());
                     let (a, b) = self.local(old_child, new_child, role.child(key), walk);
+                    walk.path.pop();
                     walk.depth -= 1;
                     walk.negated = outer_negated;
                     left.insert(key.clone(), a);
@@ -996,6 +1208,53 @@ mod tests {
         let (left, right, edges) = localized(&pair, value.clone(), value.clone());
         assert!(edges.is_empty());
         assert_eq!((left, right), (value.clone(), value));
+    }
+
+    /// #186: outside the schema grammar a reference is not an edge; each side
+    /// is inlined in full (cycles cut by name), as resolution would.
+    #[test]
+    fn localize_inlines_refs_outside_the_schema_grammar() {
+        let (old, new) = (graph("string"), graph("integer"));
+        let pair = PairResolver::new(&old, &new);
+        let value = json!({
+            "type": "object",
+            "properties": {"a": reference("A")},
+            "default": reference("C"),
+            "if": reference("B"),
+            "prefixItems": [reference("C")],
+            "$defs": {"d": {"not": reference("C")}},
+            "enum": [reference("C")],
+            "const": reference("Node"),
+        });
+        let mut members = Vec::new();
+        let mut raw_edges = Vec::new();
+        pair.localize_with_members(&value, &value, &mut raw_edges, &mut members);
+        assert_eq!(
+            members
+                .iter()
+                .map(|change| change.pointer.as_str())
+                .collect::<Vec<_>>(),
+            [r##"/enum/{"$ref":"#~1components~1schemas~1C"}/type"##]
+        );
+        let (left, right, edges) = localized(&pair, value.clone(), value);
+        // Only the `properties` use is an edge.
+        assert_eq!(edges, [("A".to_string(), "A".to_string())]);
+        for (side, ty) in [(&left, "string"), (&right, "integer")] {
+            assert_eq!(side["properties"]["a"], json!({}));
+            assert_eq!(side["default"], json!({"type": ty}));
+            assert_eq!(side["if"], json!({"type": "array", "items": {"type": ty}}));
+            assert_eq!(side["prefixItems"], json!([{"type": ty}]));
+            assert_eq!(side["$defs"]["d"]["not"], json!({"type": ty}));
+            // Set members stay as written; their change is reported inside.
+            assert_eq!(side["enum"], json!([reference("C")]));
+            // `Node` is unchanged on both sides: equal, so left as written.
+            assert_eq!(side["const"], reference("Node"));
+        }
+        // Equal values over unchanged components are left as written.
+        let same = json!({"default": reference("Other")});
+        let (left, right, edges) = localized(&pair, same.clone(), same.clone());
+        assert!(edges.is_empty());
+        assert_eq!((left, right), (same.clone(), same));
     }
 
     #[test]

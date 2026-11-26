@@ -1,2 +1,3 @@
 [
+{"change": {"after": "integer", "before": "string", "op": "changed"}, "dir": "response", "neg": false, "owner": null, "ptr": "/$defs/d/not/type", "severity": "review", "use": "POST /a response:200"}
 ]

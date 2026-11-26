@@ -6,7 +6,7 @@ it dispatches to, `request_schema_severity` (parameter and request-body
 schemas: what the client sends) and `response_schema_severity` (what the
 client receives), together with the schema-pointer grammar they classify
 pointers with (`Node`, `locate`, `under_not` in `src/diff/value.rs`) and the
-boolean-keyword helper `became`.
+boolean-keyword helpers `became` and `at_default`.
 
 The definitions are the Rust, rule for rule, in the Rust's match order, and
 nothing else: the specification and the direction theorems live in
@@ -168,15 +168,26 @@ def underNot (p : Pointer) : Bool := underNotGo .schema p
 
 /-! ## The tables (`src/diff/mod.rs`) -/
 
-/-- `became`: the change leaves a boolean keyword equal to `flag` (added or
-changed to it, or removed when its old value was the opposite). -/
-def became (k : Kind) (flag : Bool) : Bool :=
+/-- `became`: the change moves a boolean keyword whose absent value is `dflt`
+to `flag` (#184). Added counts only when `flag` is not the default (writing
+the default changes nothing); changed counts when the new value is `flag`;
+removed counts only when the old value was not `flag` and the default is
+(dropping the keyword leaves its default). -/
+def became (k : Kind) (flag dflt : Bool) : Bool :=
   match k with
-  | .added v | .changed _ v => v.bool? == some flag
+  | .added v => v.bool? == some flag && flag != dflt
+  | .changed _ v => v.bool? == some flag
   | .removed v =>
     match v.bool? with
-    | some was => was != flag
+    | some was => was != flag && dflt == flag
     | none => false
+
+/-- `at_default`: a boolean keyword written or dropped at its default value
+`dflt`, which changes nothing (#184). -/
+def atDefault (k : Kind) (dflt : Bool) : Bool :=
+  match k with
+  | .added v | .removed v => v.bool? == some dflt
+  | .changed _ _ => false
 
 /-- The match of `request_schema_severity`, after its `under_not` check. -/
 def requestRule : Loc → Kind → Severity
@@ -189,10 +200,14 @@ def requestRule : Loc → Kind → Severity
   | .enumElement, .added _ => .nonBreaking
   | .enum, .added _ => .breaking
   | .enum, .removed _ => .nonBreaking
-  | .additionalProperties, k => if became k false then .breaking else .review
+  | .additionalProperties, k =>
+    if atDefault k true then .nonBreaking
+    else if became k false true then .breaking
+    else .review
   | .nullable, k =>
-    if became k true then .nonBreaking
-    else if became k false then .breaking
+    if atDefault k false then .nonBreaking
+    else if became k true false then .nonBreaking
+    else if became k false false then .breaking
     else .review
   | _, _ => .review
 
@@ -212,9 +227,11 @@ def responseRule : Loc → Kind → Severity
   | .enum, .added _ => .nonBreaking
   | .requiredElement, .removed _ => .breaking
   | .requiredElement, .added _ => .nonBreaking
+  | .additionalProperties, k => if atDefault k true then .nonBreaking else .review
   | .nullable, k =>
-    if became k true then .breaking
-    else if became k false then .nonBreaking
+    if atDefault k false then .nonBreaking
+    else if became k true false then .breaking
+    else if became k false false then .nonBreaking
     else .review
   | _, _ => .review
 

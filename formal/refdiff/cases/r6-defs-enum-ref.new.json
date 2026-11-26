@@ -1,0 +1,41 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "t",
+    "version": "1"
+  },
+  "paths": {
+    "/p": {
+      "post": {
+        "responses": {
+          "200": {
+            "description": "ok",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "definitions": {
+                    "d": {
+                      "$ref": "#/components/schemas/P"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "P": {
+        "type": "string",
+        "enum": [
+          "b",
+          "a"
+        ]
+      }
+    }
+  }
+}

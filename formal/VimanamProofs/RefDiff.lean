@@ -44,6 +44,19 @@ way `diff_values` does, except at a `$ref`:
 3. **Anything else**, including a reference to an undeclared component and a
    reference facing a non-object or nothing, is compared as written.
 
+Rules 1 and 2 apply only at schema positions of the `diff_values` grammar
+(`Node.schema`). Where the walk leaves the grammar (`Node.opaq`, `Node.set`:
+`default`, `const`, `enum` members, `if`, `prefixItems`, `$defs`, ...), a
+reference is not a schema use the table can rate (#186): both sides are
+inlined in full (`Side.inline`, components as deserialised, cut by name on
+the chain or after `maxResolveDepth`) and compared as plain JSON (`rawCmp`)
+at the current owner, where `locate` makes every change Review, as diffing
+did before #182. A `required`/`enum` set keeps its members as written
+(`setCmp`): a member written the same on both sides that holds a reference
+is inlined and compared inside the member, Review; a member rewritten to the
+same canonical content (retargeted, inlined, extracted) is one Review change
+of the member; any other member is added or removed with the set's verdict.
+
 A hop is a *state* `(X, Y, mask, neg)`. The pair's content is visible at a
 state except under the masked top-level keys (overlay masking: a key a
 sibling overrides at the hop comes from the sibling, not from the
@@ -69,9 +82,9 @@ owner (or its owner was so reached); verdicts there are Review, as
   location change), the request body, or a response status present on both
   sides, with the schemas `diff/mod.rs` takes for them (`uses`). Schemas are
   read as `models::Schema` deserialisation leaves them (`schemaNorm`).
-* References are followed only at positions of the `diff_values` grammar
-  (`Node`); elsewhere (`default`, `if`, `prefixItems`, `$defs`, ...) a
-  `$ref` is a value. #182 follows them there too (#186).
+* References are hops only at schema positions of the `diff_values` grammar
+  (`Node`); elsewhere (`default`, `if`, `prefixItems`, `$defs`, ...) they are
+  inlined (#186, see above).
 * Not modelled: parameter, request-body and response `$ref`s, non-object
   component targets beyond "compare as written", and everything outside
   schema comparison (structural endpoint changes).
@@ -262,8 +275,11 @@ def canonType : J → J
   | j => j
 
 /-- Strips annotations (`description`, `title`, `example(s)`, `deprecated`,
-`x-*`) from schema objects, recursing through the schema grammar. `required`
-and `enum` stay unsorted: the model compares them as sets. Applied before
+`x-*`) from schema objects, recursing through the schema grammar, and sorts
+`required` and `enum` arrays by their JSON text (`SET_KEYS`). At a schema
+position the walk compares them as sets, where order does not matter; under
+`$defs`/`definitions`, which this recursion reaches and `diff_values` does
+not treat as schemas, they are compared by index, where it does. Applied before
 references are followed, which is equivalent to main's resolve-then-
 canonicalise because stripping is per key at fixed grammar positions and
 merging a reference keeps every key at its position. -/
@@ -281,6 +297,10 @@ partial def canon : J → J
             | .arr xs => .arr (xs.map canon)
             | v => v)
         else if k == "type" then (k, canonType v)
+        else if k == "required" || k == "enum" then
+          (k, match v with
+            | .arr xs => .arr (xs.mergeSort (fun a b => decide (a.render ≤ b.render)))
+            | v => v)
         else (k, v)
   | j => j
 
@@ -305,9 +325,12 @@ def refName? (r : String) : Option String :=
 #guard refName? "#/components/schemas/x~1y" == some "x/y"
 #guard refName? "other.json#/X" == none
 
-/-- One document's (canonicalised) components. -/
+/-- One document's components: canonicalised (`comps`, what a hop
+compares) and as deserialised (`raw`, what a reference outside the schema
+grammar is replaced by: `DocResolver::component_value`). The same names. -/
 structure Side where
   comps : List (String × J)
+  raw : List (String × J)
 
 def Side.target (s : Side) (name : String) : J := (s.comps.lookup name).getD .null
 
@@ -361,6 +384,22 @@ def merge (t : J) (sibs : List (String × J)) : J :=
   match t with
   | .obj tk => .obj ((tk.filter fun (k, _) => !(sibs.any (·.1 == k))) ++ sibs)
   | _ => .obj sibs
+
+/-- `j` with every component reference replaced by its target as
+deserialised (siblings merged over it), recursively, as
+`DocResolver::inline` does outside the schema grammar (#186): a component
+already on `stack` (by name), or past `maxResolveDepth` of them, stays the
+object as written. -/
+partial def Side.inline (s : Side) (stack : List String) (j : J) : J :=
+  match s.declRef? j with
+  | some (x, sibs) =>
+    if stack.length ≥ maxResolveDepth || stack.contains x then j
+    else s.inline (x :: stack) (merge ((s.raw.lookup x).getD .null) sibs)
+  | none =>
+    match j with
+    | .obj kvs => .obj (kvs.map fun (k, v) => (k, s.inline stack v))
+    | .arr xs => .arr (xs.map (s.inline stack))
+    | j => j
 
 /-! ## Changes and the local walk -/
 
@@ -421,6 +460,96 @@ def setSegment : J → String
   | .str s => s
   | j => j.render
 
+/-- `diff_nodes` with no references left: objects key-wise, sets as sets,
+other arrays by index, scalars by equality. Used beneath a position the
+schema grammar does not know (`Node.opaq`, `Node.set`), where nothing is a
+schema any more. -/
+partial def rawCmp (node : Node) (p : Pointer) (o n : J) : W Unit := do
+  match o, n with
+  | .obj ok, .obj nk =>
+    for (k, ov) in ok do
+      match nk.lookup k with
+      | some nv => rawCmp (node.child k) (p ++ [k]) ov nv
+      | none => emit (p ++ [k]) (.removed ov)
+    for (k, nv) in nk do
+      if (ok.lookup k).isNone then emit (p ++ [k]) (.added nv)
+  | .arr xs, .arr ys =>
+    match node with
+    | .set _ =>
+      for x in xs do
+        if !ys.contains x then emit (p ++ [setSegment x]) (.removed x)
+      for y in ys do
+        if !xs.contains y then emit (p ++ [setSegment y]) (.added y)
+    | _ =>
+      let common := min xs.length ys.length
+      for i in [0:common] do
+        rawCmp (node.child (toString i)) (p ++ [toString i]) xs[i]! ys[i]!
+      for i in [common:xs.length] do
+        emit (p ++ [toString i]) (.removed xs[i]!)
+      for i in [common:ys.length] do
+        emit (p ++ [toString i]) (.added ys[i]!)
+  | _, _ => if o == n then pure () else emit p (.changed o n)
+
+/-- Whether the walk is at a position the schema grammar does not know: a
+`Node.opaq` or `Node.set` node. It is entered only from a schema node
+(`Node.child`), so `p`'s last token is the keyword that left the grammar. -/
+def outsideGrammar : Node → Bool
+  | .opaq | .set _ => true
+  | _ => false
+
+/-- `canonicalize_schema` beneath `$defs`/`definitions` (which it treats as
+maps of schemas though `diff_values` does not): applied to what inlining put
+there, as the Rust canonicalises after inlining. Elsewhere outside the
+grammar canonicalisation does not reach. -/
+def canonOutside (p : Pointer) (j : J) : J :=
+  match p.getLast?, j with
+  | some k, .obj m => if k == "$defs" || k == "definitions" then .obj (m.map fun (n, s) => (n, canon s)) else j
+  | _, _ => j
+
+/-- Whether `j` holds a `$ref` object anywhere (`resolve::contains_ref`). -/
+partial def hasRef : J → Bool
+  | .obj kvs => (kvs.lookup "$ref").isSome || kvs.any fun (_, v) => hasRef v
+  | .arr xs => xs.any hasRef
+  | _ => false
+
+/-- A `required`/`enum` set at `p` (`Node.set`). Its members are values (#186):
+
+* a member written the same on both sides is in both; if it holds a
+  reference, it is inlined per side and compared inside the member
+  (`Node.opaq`, at `p/<member>/...`), where `locate` makes every change
+  Review: the referenced component changed, not the set;
+* a member only the old side writes is paired with the first unpaired member
+  only the new side writes (both taken in the order of their JSON text) when
+  either holds a reference and both inline to equal JSON values (nothing
+  stripped or sorted: a member is a value, not a schema): the member was rewritten
+  (a reference retargeted to an identical component, inlined, or
+  extracted), not replaced. That is one change of the member at
+  `p/<old member>`, which neither table has a row for (Review);
+* every other member is added or removed whole, as `diff_sets` reports it,
+  with the set's verdict. -/
+def setCmp (os ns : Side) (p : Pointer) (xs ys : List J) : W Unit := do
+  -- Paired in the order of their JSON text (keys sorted), so the pairing
+  -- does not depend on how either side orders its set.
+  let byText (zs : List J) := zs.mergeSort (fun a b => decide (a.render ≤ b.render))
+  let oldOnly := byText (xs.filter fun x => !ys.contains x).eraseDups
+  let newOnly := byText (ys.filter fun y => !xs.contains y).eraseDups
+  -- Members are values: equal as JSON once inlined, with nothing dropped or
+  -- sorted (schema canonicalisation would drop `description` and sort nested
+  -- sets, which are part of a value).
+  let same (x y : J) : Bool := (hasRef x || hasRef y) && os.inline [] x == ns.inline [] y
+  let pairs := (oldOnly.foldl (fun (acc : List (J × J) × List J) x =>
+    match newOnly.find? fun y => !acc.2.contains y && same x y with
+    | some y => (acc.1 ++ [(x, y)], acc.2 ++ [y])
+    | none => acc) ([], [])).1
+  for x in xs do
+    if !ys.contains x && !(pairs.any (·.1 == x)) then emit (p ++ [setSegment x]) (.removed x)
+  for y in ys do
+    if !xs.contains y && !(pairs.any (·.2 == y)) then emit (p ++ [setSegment y]) (.added y)
+  for (x, y) in pairs do
+    emit (p ++ [setSegment x]) (.changed x y)
+  for x in (xs.filter ys.contains).eraseDups do
+    rawCmp .opaq (p ++ [setSegment x]) (os.inline [] x) (ns.inline [] x)
+
 mutual
 
 /-- Compares `o` and `n` at `p` (a `node` of the schema grammar), resolving
@@ -431,6 +560,14 @@ periodically (see `expand`; main's name-keyed cut instead compares a literal
 `$ref` against an expansion). -/
 partial def go (os ns : Side) (chain : List (Pointer × J × J)) (node : Node) (p : Pointer)
     (o n : J) : W Unit := do
+  -- Outside the grammar a reference is not a schema use (#186): each side
+  -- is inlined as it was before #181 and compared as plain JSON, at this
+  -- owner, where `locate` rates everything Review.
+  if outsideGrammar node then
+    match node, o, n with
+    | .set _, .arr xs, .arr ys => setCmp os ns p xs ys
+    | _, _, _ => rawCmp node p (canonOutside p (os.inline [] o)) (canonOutside p (ns.inline [] n))
+    return
   let ro := if node == .schema then os.declRef? o else none
   let rn := if node == .schema then ns.declRef? n else none
   match ro, rn with
@@ -536,8 +673,8 @@ def walk (os ns : Side) (o n : J) : Out :=
   ((go os ns [] .schema [] o n).run {}).2
 
 #guard
-  let s : Side := ⟨[("A", .obj [("type", .str "string")])]⟩
-  let t : Side := ⟨[("A", .obj [("type", .str "integer")])]⟩
+  let s : Side := ⟨[("A", .obj [("type", .str "string")])], [("A", .obj [("type", .str "string")])]⟩
+  let t : Side := ⟨[("A", .obj [("type", .str "integer")])], [("A", .obj [("type", .str "integer")])]⟩
   let r := .obj [("$ref", .str "#/components/schemas/A"), ("nullable", .bool true)]
   let out := walk s t r r
   -- The sibling is compared at the use (unchanged); the target via a hop.
@@ -594,7 +731,8 @@ def side (doc : J) : Side :=
     | _ => []
   let comps := entries ((doc.field? "components").bind (·.field? "schemas"))
   let defs := (entries (doc.field? "definitions")).filter fun (k, _) => (comps.lookup k).isNone
-  ⟨(comps ++ defs).map fun (k, v) => (k, canon (schemaNorm v))⟩
+  let all := comps ++ defs
+  ⟨all.map fun (k, v) => (k, canon (schemaNorm v)), all.map fun (k, v) => (k, schemaNorm v)⟩
 
 /-- Endpoint matching: exact `(METHOD, path)`. Move pairing (operationId,
 `v<digits>` segments) only renames the use in Markdown and v2 output; the v1
@@ -902,6 +1040,55 @@ private def oas3 (comps : List (String × J)) (resp : J) : J :=
   let same := props [("x", obj1 "type" (.str "string"))]
   let g := grouped (oas3 [("P", same), ("D", same)] (ref "P")) (oas3 [("P", same), ("D", same)] (ref "D"))
   g.length == 1 && g[0]!.severity == .review
+
+-- Outside the grammar (#186) a reference is inlined at the use, not a hop:
+-- one Review record at its full pointer, as before #182.
+#guard
+  let check (r : J) (ptr : Pointer) :=
+    let g := grouped (oas3 [("P", obj1 "type" (.str "string"))] r)
+      (oas3 [("P", obj1 "type" (.str "integer"))] r)
+    g.length == 1 && g[0]!.owner == .use && g[0]!.ptr == ptr && g[0]!.severity == .review
+  check (.obj [("type", .str "object"), ("default", ref "P")]) ["default", "type"]
+    && check (obj1 "if" (ref "P")) ["if", "type"]
+    && check (obj1 "prefixItems" (.arr [ref "P"])) ["prefixItems", "0", "type"]
+    && check (obj1 "$defs" (obj1 "d" (obj1 "not" (ref "P")))) ["$defs", "d", "not", "type"]
+
+-- A set member holding a reference: membership by the written member, the
+-- component's change inside it, Review (not an enum member removed).
+#guard
+  let r := .obj [("type", .str "object"), ("enum", .arr [ref "P"])]
+  let g := grouped (oas3 [("P", obj1 "type" (.str "string"))] r)
+    (oas3 [("P", obj1 "type" (.str "integer"))] r)
+  g.length == 1 && g[0]!.ptr.length == 3 && g[0]!.ptr.getLast? == some "type"
+    && g[0]!.severity == .review
+
+-- A member retargeted to an identically shaped component, or inlined, is
+-- one Review change of the member, not a member removed plus one added.
+#guard
+  let ab := [("A", obj1 "type" (.str "string")), ("B", obj1 "type" (.str "string"))]
+  let enum1 (m : J) := .obj [("type", .str "string"), ("enum", .arr [m])]
+  let g := grouped (oas3 ab (enum1 (ref "A"))) (oas3 ab (enum1 (ref "B")))
+  let h := grouped (oas3 ab (enum1 (ref "A"))) (oas3 ab (enum1 (obj1 "type" (.str "string"))))
+  let k := grouped (oas3 ab (enum1 (ref "A"))) (oas3 [("A", obj1 "type" (.str "integer"))] (enum1 (ref "A")))
+  g.length == 1 && g[0]!.severity == .review && g[0]!.ptr.length == 2
+    && h.length == 1 && h[0]!.severity == .review
+    && k.length == 1 && k[0]!.ptr.getLast? == some "type"
+
+-- A member is a value: inlining to `{"code": 1}` from a component that also
+-- has a `description` is a different value, so a replacement, not a rewrite.
+#guard
+  let a := [("A", .obj [("code", .num "1"), ("description", .str "x")])]
+  let enum1 (m : J) := .obj [("enum", .arr [m])]
+  let g := grouped (oas3 a (enum1 (ref "A"))) (oas3 a (enum1 (obj1 "code" (.num "1"))))
+  g.length == 2 && g.all fun r => match r.ch with
+    | .added _ | .removed _ => true
+    | _ => false
+
+-- An inlined self-reference stops at the component already on the chain.
+#guard
+  let t (ty : String) := .obj [("type", .str ty), ("default", ref "T")]
+  let g := grouped (oas3 [("T", t "object")] (ref "T")) (oas3 [("T", t "array")] (ref "T"))
+  g.length == 2 && g.all (·.owner == .pair "T" "T")
 
 -- Under `not`, a component's enum narrowing is Review, as it is inline.
 #guard

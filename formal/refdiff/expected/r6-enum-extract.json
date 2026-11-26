@@ -1,0 +1,4 @@
+[
+{"change": {"after": {"$ref": "#/components/schemas/A"}, "before": {"type": "string"}, "op": "changed"}, "dir": "request", "neg": false, "owner": null, "ptr": "/enum/{\"type\":\"string\"}", "severity": "review", "use": "POST /a body"},
+{"change": {"after": {"$ref": "#/components/schemas/A"}, "before": {"type": "string"}, "op": "changed"}, "dir": "response", "neg": false, "owner": null, "ptr": "/enum/{\"type\":\"string\"}", "severity": "review", "use": "POST /a response:200"}
+]

@@ -25,19 +25,19 @@
       "case": "g1",
       "OP": "flip",
       "PTR": "/properties/q",
-      "why": "P is reached through properties.a and through default: a verdict mismatch is never put down to #186."
+      "why": "P is reached through properties.a (a component record) and inlined under default (a Review record at the use, #186): flipping the component record's verdict is caught."
     },
     {
       "case": "g2",
       "OP": "flip",
       "PTR": "/type",
-      "why": "Q is reached through the grammar and through D.default: not #186."
+      "why": "Q is reached through the grammar and inlined under D.default: flipping the grammar record's verdict is caught."
     },
     {
       "case": "g4",
       "OP": "flip",
       "PTR": "/properties/q",
-      "why": "P is reached through the grammar and through U (reached through default): not #186."
+      "why": "P is reached through the grammar and inlined, through U, under default: flipping the grammar record's verdict is caught."
     },
     {
       "case": "q1b",
@@ -58,20 +58,53 @@
       "case": "g1",
       "OP": "drop-any",
       "PTR": "/properties/q/type",
-      "why": "Dropping a Breaking record of a component the use reaches through the grammar (properties.a) is not #186, though default reaches it too."
+      "why": "Dropping the Breaking component record and the Review record inlined under default is caught."
     },
     {
       "case": "g4",
       "OP": "drop-any",
       "PTR": "/properties/q/type",
-      "why": "As g1, with P reached through the grammar and through U behind default."
+      "why": "As g1, with P inlined through U under default."
     },
     {
       "case": "g5",
       "OP": "rate",
       "PTR": "/default/nullable",
       "SEV": "breaking",
-      "why": "A record both sides report beneath an out-of-grammar reference (the overlay sibling at /default) with different verdicts is a verdict mismatch, never #186."
+      "why": "The Review record inlined under default (/default/nullable, the reference's sibling) rated Breaking is a verdict mismatch."
+    },
+    {
+      "case": "g5",
+      "OP": "drop-any",
+      "PTR": "/default",
+      "why": "A record outside the schema grammar (#186: default) is compared like any other: dropping it is caught."
+    },
+    {
+      "case": "g2",
+      "OP": "drop-any",
+      "PTR": "/default/type",
+      "why": "A record inlined under a component's default (D, reached through properties.d) is compared at that component: dropping it is caught."
+    },
+    {
+      "case": "g6",
+      "OP": "rate",
+      "PTR": "/if/type",
+      "SEV": "breaking",
+      "why": "#186: a change reached through if is Review; rating it Breaking, as main did before the fix, is caught."
+    },
+    {
+      "case": "g6",
+      "OP": "drop-any",
+      "PTR": "/if/type",
+      "why": "#186: the Review record at /if/type is required, as before #182."
+    },
+    {
+      "case": "q1e",
+      "OP": "inject",
+      "PTR": "/properties/zz/$ref",
+      "TO": "L",
+      "OWNER": "X",
+      "why": "The record sits on a real reference to the alias loop L (in X, the structural check passes) and names L, but no use reaches L or X: only the use-reach term rejects it."
     }
   ]
 }
