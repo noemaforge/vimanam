@@ -297,14 +297,19 @@ def severity : Change → Severity
   | .componentSchemaChanged .request false p k => requestSeverity p k
   | .componentSchemaChanged .response false p k => responseSeverity p k
 
-/-- #188: a change inside a component pair one of whose sides is a
-`definitions` entry that does not deserialise as a schema (kept as written)
-fails closed. The spec is invalid there, so a change the table cannot
-classify (Review) is Breaking; Breaking and Non-breaking verdicts stand.
-The retarget record of a pair is never inside the entry and is not passed
-through this (`unparsed` is false for it). -/
-def failClosed (unparsed : Bool) (s : Severity) : Severity :=
-  if unparsed && s == .review then .breaking else s
+/-- A change the comparison could not see properly fails closed: a change
+the table cannot classify (Review) is Breaking; Breaking and Non-breaking
+verdicts stand. `closed` is set (`diff::FailClosed`) for a change
+* inside a `definitions` entry that does not deserialise as a schema,
+  compared as written (#188): owned by a component pair with such a side, or
+  at or beneath a one-sided expansion of one;
+* at or beneath a one-sided reference the walk refused to expand, past the
+  expansion budget or the chain cap (#187): compared as written, its
+  `$ref` added or removed is never a silent pass.
+The retarget record of a pair is never inside either and is not passed
+through this. -/
+def failClosed (closed : Bool) (s : Severity) : Severity :=
+  if closed && s == .review then .breaking else s
 
 /-- `diff::severity` on a `ComponentSchemaChanged` whose `unparsed` flag is
 set: never Review. -/

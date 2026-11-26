@@ -399,7 +399,8 @@ def maxResolveDepth : Nat := 64
 tree of chains: two cycles of lengths `a` and `b` facing each other branch
 until the pair recurs, about `a·b` levels deep, so the walk is exponential
 in that. Past the budget a one-sided reference is compared as written, which
-always reports a `$ref` added or removed there (Review), never nothing. -/
+always reports a `$ref` added or removed there, and everything at and beneath
+it fails closed (`closeAt`): a cut never hides a Breaking change. -/
 def expansionBudget : Nat := 4096
 
 /-- `j` as a reference to a component this side declares: the name and the
@@ -509,6 +510,10 @@ structure Out where
   cuts : Array Pointer := #[]
   /-- One-sided expansions made so far (`expansionBudget`). -/
   expansions : Nat := 0
+  /-- Where a change fails closed at and beneath (`Severity.failClosed`): a
+  one-sided reference refused past the budget or the chain cap, and a
+  one-sided expansion of a `definitions` entry that does not deserialise. -/
+  closed : Array Pointer := #[]
 
 abbrev W := StateM Out
 
@@ -633,6 +638,14 @@ def spent (chain : List (Pointer × J × J)) : W Bool := do
   set { out with expansions := out.expansions + 1 }
   return false
 
+/-- Changes at and beneath `p` fail closed (`Out.closed`). -/
+def closeAt (p : Pointer) : W Unit :=
+  modify fun out => { out with closed := out.closed.push p }
+
+/-- Whether a change at `p` fails closed in a walk that closed `closed`. -/
+def closedAt (closed : Array Pointer) (p : Pointer) : Bool :=
+  closed.any (·.isPrefixOf p)
+
 mutual
 
 /-- Compares `o` and `n` at `p` (a `node` of the schema grammar), resolving
@@ -664,15 +677,21 @@ partial def go (os ns : Side) (chain : List (Pointer × J × J)) (node : Node) (
     modify fun out => { out with hops := out.hops.push ⟨p, x, y, sortDedup mask⟩ }
   | some (x, so), none =>
     if n.isObj then
-      if ← spent chain then plain os ns chain node p o n else
-      let o' := merge (os.target x) so
-      expand os ns chain node p o' n
+      if ← spent chain then
+        closeAt p
+        plain os ns chain node p o n
+      else
+        if os.unparsed.contains x then closeAt p
+        expand os ns chain node p (merge (os.target x) so) n
     else plain os ns chain node p o n
   | none, some (y, sn) =>
     if o.isObj then
-      if ← spent chain then plain os ns chain node p o n else
-      let n' := merge (ns.target y) sn
-      expand os ns chain node p o n'
+      if ← spent chain then
+        closeAt p
+        plain os ns chain node p o n
+      else
+        if ns.unparsed.contains y then closeAt p
+        expand os ns chain node p o (merge (ns.target y) sn)
     else plain os ns chain node p o n
   | none, none => plain os ns chain node p o n
 
@@ -983,9 +1002,11 @@ structure Rec where
   ptr : Pointer
   ch : Ch
   neg : Bool
-  /-- The owner pair has a side that is a `definitions` entry that does not
-  deserialise (#188); never set on a retarget fact. -/
-  unparsed : Bool := false
+  /-- The change fails closed (`Severity.failClosed`): its owner pair has a
+  side that is a `definitions` entry that does not deserialise (#188), or it
+  sits at or beneath a pointer its walk closed (`Out.closed`); never set on
+  a retarget fact. -/
+  closed : Bool := false
   deriving Inhabited
 
 instance : BEq Rec where
@@ -994,12 +1015,13 @@ instance : BEq Rec where
 
 /-- The verdict: Review under `not` and for retargets, otherwise the
 direction's table on the owner-relative pointer; inside a pair with an
-unparseable side (#188), `failClosed` makes a Review Breaking. -/
+unparseable side (#188), or beneath a refused or unparsed one-sided
+expansion, `failClosed` makes a Review Breaking. -/
 def Rec.severity (r : Rec) : Severity :=
   match r.ch with
   | .retargeted _ _ => .review
   | c =>
-    failClosed r.unparsed <|
+    failClosed r.closed <|
     if r.neg then .review else
     match r.dir with
     | .request => requestSeverity r.ptr c.kind
@@ -1017,6 +1039,10 @@ over the pair's own comparison. -/
 def pairContent (os ns : Side) (x y : String) : List (Pointer × Ch) × List Hop :=
   let out := walk os ns (os.target x) (ns.target y)
   (suppress out.facts.toList, out.hops.toList)
+
+/-- Where a pair's own walk closed (`Out.closed`). -/
+def pairClosed (os ns : Side) (x y : String) : Array Pointer :=
+  (walk os ns (os.target x) (ns.target y)).closed
 
 /-- The state a hop leads to from a state (or from the use: `mask = []`,
 `neg = false`). A hop at the owner's root inherits the outer mask. -/
@@ -1049,15 +1075,17 @@ partial def reach (os ns : Side) (todo : List St) (seen : List St) : List St :=
 def groupedUse (os ns : Side) (u : Use) : List Rec :=
   let out := walk os ns u.old u.new
   let atUse := (suppress out.facts.toList).map fun (p, c) =>
-    ({ use := u.id, dir := u.dir, owner := .use, ptr := p, ch := c, neg := false } : Rec)
+    ({ use := u.id, dir := u.dir, owner := .use, ptr := p, ch := c, neg := false,
+       closed := closedAt out.closed p } : Rec)
   let states := reach os ns (out.hops.toList.map (next [] false)) []
   let fromPairs := states.flatMap fun s =>
     let (facts, _) := pairContent os ns s.old s.new
     let own := Owner.pair s.old s.new
     let unparsed := os.unparsed.contains s.old || ns.unparsed.contains s.new
+    let closed := pairClosed os ns s.old s.new
     let vis := (facts.filter (visible s.mask ·.1)).map fun (p, c) =>
       ({ use := u.id, dir := u.dir, owner := own, ptr := p, ch := c, neg := s.neg,
-         unparsed } : Rec)
+         closed := unparsed || closedAt closed p } : Rec)
     if s.old == s.new then vis
     else { use := u.id, dir := u.dir, owner := own, ptr := [], ch := .retargeted s.old s.new,
            neg := s.neg } :: vis

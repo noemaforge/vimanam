@@ -28,7 +28,7 @@ use std::rc::Rc;
 use indexmap::IndexMap;
 use serde_json::{Map, Value};
 
-use crate::diff::{ValueChange, diff_set_member, pointer_of, set_member_rewritten};
+use crate::diff::{FailClosed, ValueChange, diff_set_member, pointer_of, set_member_rewritten};
 use crate::models::{ApiDocumentation, Schema, UnparsedSchema};
 use crate::utils::decode_json_pointer_token;
 
@@ -45,8 +45,10 @@ pub(crate) const MAX_RESOLVE_DEPTH: usize = 64;
 /// the tree of chains: two reference cycles of lengths `a` and `b` facing
 /// each other branch until the pair recurs, about `a·b` levels down, so the
 /// walk is exponential in that. Past the budget a one-sided reference is
-/// compared as written, which reports its `$ref` added or removed there
-/// (Review): a cut is visible, never silent. The largest walk on the real
+/// compared as written, which reports its `$ref` added or removed there, and
+/// every change at and beneath it fails closed ([`FailClosed::ExpansionCut`]:
+/// Review becomes Breaking), so a cut is never silent and never hides a
+/// Breaking change from `--fail-on-breaking`. The largest walk on the real
 /// specs measured needs far fewer (see `formal/README.md`); RefDiff.lean's
 /// `expansionBudget` is the same number.
 pub(crate) const EXPANSION_BUDGET: usize = 4096;
@@ -532,6 +534,25 @@ impl LocalWalk<'_> {
         self.expansions += 1;
         true
     }
+
+    /// Changes at and beneath the current position fail closed, for
+    /// `reason` (RefDiff.lean's `closeAt`).
+    fn close(&mut self, reason: FailClosed) {
+        self.closed.push((pointer_of(&self.path), reason));
+    }
+}
+
+/// The reason a change at `pointer` fails closed, from the regions a walk
+/// closed (in the order it closed them): the first region at or above it.
+pub(crate) fn closed_at(closed: &[(String, FailClosed)], pointer: &str) -> Option<FailClosed> {
+    closed
+        .iter()
+        .find(|(region, _)| {
+            pointer
+                .strip_prefix(region.as_str())
+                .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
+        })
+        .map(|(_, reason)| *reason)
 }
 
 /// One entry of [`LocalWalk::chain`].
@@ -549,6 +570,9 @@ struct LocalWalk<'w> {
     chain: Vec<Expansion>,
     /// One-sided expansions made so far ([`EXPANSION_BUDGET`]).
     expansions: usize,
+    /// Where changes fail closed at and beneath, as JSON pointers from the
+    /// walked schema, and why (RefDiff.lean's `Out.closed`).
+    closed: &'w mut Vec<(String, FailClosed)>,
     /// JSON depth below the walked schema, and the top-level key the walk is
     /// under (see [`RefEdge::at`]).
     depth: usize,
@@ -635,7 +659,10 @@ impl DocResolver<'_> {
         };
         let target = self.target(reference)?;
         Some(match target.as_ref() {
-            target @ Value::Object(_) if map.len() == 1 => target.clone(),
+            // A bare reference is its target, whatever its JSON type (a
+            // `definitions` entry kept as written can be `5`, #188), as
+            // RefDiff.lean's `merge t []` is.
+            target if map.len() == 1 => target.clone(),
             target => {
                 let mut merged = match target {
                     Value::Object(target_map) => target_map.clone(),
@@ -728,10 +755,12 @@ impl PairResolver<'_> {
         new: &Value,
         edges: &mut Vec<RefEdge>,
         members: &mut Vec<ValueChange>,
+        closed: &mut Vec<(String, FailClosed)>,
     ) -> (Value, Value) {
         let mut walk = LocalWalk {
             chain: Vec::new(),
             expansions: 0,
+            closed,
             depth: 0,
             top: None,
             negated: false,
@@ -750,7 +779,7 @@ impl PairResolver<'_> {
         new: &Value,
         edges: &mut Vec<RefEdge>,
     ) -> (Value, Value) {
-        self.localize_with_members(old, new, edges, &mut Vec::new())
+        self.localize_with_members(old, new, edges, &mut Vec::new(), &mut Vec::new())
     }
 
     /// Two `required`/`enum` sets whose members are values (#186), returning
@@ -910,16 +939,36 @@ impl PairResolver<'_> {
                         self.local_maps(&old_effective, &new_effective, role, walk)
                     }
                     // Refused past the cap or the budget (`spend`): compared
-                    // as written below.
-                    (Some(_), None) if walk.spend() => match self.old.merge_target(before) {
-                        Some(expanded) => self.expanded(expanded, new.clone(), role, walk),
-                        None => self.local_maps(before, after, role, walk),
-                    },
-                    (None, Some(_)) if walk.spend() => match self.new.merge_target(after) {
-                        Some(expanded) => self.expanded(old.clone(), expanded, role, walk),
-                        None => self.local_maps(before, after, role, walk),
-                    },
-                    _ => self.local_maps(before, after, role, walk),
+                    // as written, and changes there fail closed. Expanding a
+                    // `definitions` entry kept as written (#188) fails closed
+                    // beneath it too.
+                    (Some(name), None) => {
+                        if !walk.spend() {
+                            walk.close(FailClosed::ExpansionCut);
+                            return self.local_maps(before, after, role, walk);
+                        }
+                        if self.old.is_unparsed(&name) {
+                            walk.close(FailClosed::UnparsedDefinition);
+                        }
+                        match self.old.merge_target(before) {
+                            Some(expanded) => self.expanded(expanded, new.clone(), role, walk),
+                            None => self.local_maps(before, after, role, walk),
+                        }
+                    }
+                    (None, Some(name)) => {
+                        if !walk.spend() {
+                            walk.close(FailClosed::ExpansionCut);
+                            return self.local_maps(before, after, role, walk);
+                        }
+                        if self.new.is_unparsed(&name) {
+                            walk.close(FailClosed::UnparsedDefinition);
+                        }
+                        match self.new.merge_target(after) {
+                            Some(expanded) => self.expanded(old.clone(), expanded, role, walk),
+                            None => self.local_maps(before, after, role, walk),
+                        }
+                    }
+                    (None, None) => self.local_maps(before, after, role, walk),
                 }
             }
             (Value::Array(before), Value::Array(after)) => {
@@ -1379,6 +1428,36 @@ mod tests {
     }
 
     #[test]
+    fn closed_regions_cover_their_subtree_only() {
+        use super::closed_at;
+        use crate::diff::FailClosed;
+        let closed = vec![
+            ("/properties/a".to_string(), FailClosed::ExpansionCut),
+            ("".to_string(), FailClosed::UnparsedDefinition),
+        ];
+        let first = &closed[..1];
+        assert_eq!(
+            closed_at(first, "/properties/a"),
+            Some(FailClosed::ExpansionCut)
+        );
+        assert_eq!(
+            closed_at(first, "/properties/a/type"),
+            Some(FailClosed::ExpansionCut)
+        );
+        assert_eq!(closed_at(first, "/properties/ab"), None);
+        assert_eq!(closed_at(first, "/properties"), None);
+        // The root covers everything; the first region that matches wins.
+        assert_eq!(
+            closed_at(&closed, "/properties/ab"),
+            Some(FailClosed::UnparsedDefinition)
+        );
+        assert_eq!(
+            closed_at(&closed, "/properties/a/x"),
+            Some(FailClosed::ExpansionCut)
+        );
+    }
+
+    #[test]
     fn localize_bounds_one_sided_expansion_chains() {
         // A chain longer than the cap, met by an inline schema at the bottom:
         // past MAX_RESOLVE_DEPTH expansions the reference is compared as
@@ -1426,7 +1505,13 @@ mod tests {
         });
         let mut members = Vec::new();
         let mut raw_edges = Vec::new();
-        pair.localize_with_members(&value, &value, &mut raw_edges, &mut members);
+        pair.localize_with_members(
+            &value,
+            &value,
+            &mut raw_edges,
+            &mut members,
+            &mut Vec::new(),
+        );
         assert_eq!(
             members
                 .iter()

@@ -67,6 +67,41 @@ def enc(name: str) -> str:
     return name.replace("~", "~0").replace("/", "~1")
 
 
+def parses_as_schema(v) -> bool:
+    """RefDiff.lean's `parsesAsSchema`: whether `models::Schema` deserialises
+    `v` (typed keys hold their types, recursing through typed schema keys)."""
+    if not isinstance(v, dict):
+        return False
+    def strs(x):
+        return isinstance(x, list) and all(isinstance(m, str) for m in x)
+    for k, x in v.items():
+        if x is None:
+            continue
+        if k in ("title", "description", "format", "$ref"):
+            ok = isinstance(x, str)
+        elif k == "type":
+            ok = isinstance(x, str) or strs(x)
+        elif k == "properties":
+            ok = isinstance(x, dict) and all(parses_as_schema(c) for c in x.values())
+        elif k == "items":
+            ok = parses_as_schema(x)
+        elif k == "required":
+            ok = strs(x)
+        elif k in ("allOf", "oneOf", "anyOf"):
+            ok = isinstance(x, list) and all(parses_as_schema(c) for c in x)
+        elif k == "enum":
+            ok = isinstance(x, list)
+        elif k == "nullable":
+            ok = isinstance(x, bool)
+        elif k == "additionalProperties":
+            ok = isinstance(x, bool) or parses_as_schema(x)
+        else:
+            ok = True
+        if not ok:
+            return False
+    return True
+
+
 class Gen:
     """Small spec pairs that stress `$ref` handling. Adapted from the #182
     reviewers' gen.py, without the 70-hop chain (main's 64-hop cap is a known
@@ -117,6 +152,7 @@ class Gen:
     # Values of a typed `models::Schema` key that do not deserialise (#188).
     BAD = [("required", "s"), ("nullable", "yes"), ("title", 1), ("type", 7),
            ("items", True), ("format", ["x"]), ("enum", "p"), ("properties", [])]
+    SCALARS = [5, [1], "s", True]
 
     def malformed(self, old: dict, new: dict) -> None:
         """Makes one component, from `rbad`, a `definitions` entry the Rust
@@ -135,14 +171,47 @@ class Gen:
         name = r.choice(names)
         key, value = r.choice(self.BAD)
         nested = r.random() < 0.4
+        # An entry that is not an object at all (`5`, `[1]`, ...), on some
+        # seeds (#195 review).
+        scalar = r.random() < 0.2
         for d in r.choice([(old,), (new,), (old, new), (old, new)]):
             s = comps(d).get(name)
+            if scalar and name in comps(d):
+                comps(d)[name] = copy.deepcopy(r.choice(self.SCALARS))
+                continue
             if not isinstance(s, dict):
                 continue
             props = s.get("properties")
             if nested and isinstance(props, dict) and props:
                 s = props[sorted(props)[0]]
             s[key] = copy.deepcopy(value)
+        # Inline the entry in place of one reference to it in the new
+        # operations, so the old side expands it one-sidedly (#195 review).
+        # An operation schema is a typed position (a malformed one rejects
+        # the spec), so only content that parses is inlined: the new side's
+        # entry when it parses (it may differ from the old one), else the
+        # old side's.
+        inline = next((comps(d)[name] for d in (new, old)
+                       if name in comps(d) and parses_as_schema(comps(d)[name])), None)
+        if r.random() < 0.5 and inline is not None:
+            refs = ["#/components/schemas/" + enc(name), "#/definitions/" + enc(name)]
+            sites: list = []
+
+            def find(v):
+                if isinstance(v, dict):
+                    for k, c in v.items():
+                        if isinstance(c, dict) and set(c) == {"$ref"} and c["$ref"] in refs:
+                            sites.append((v, k))
+                        else:
+                            find(c)
+                elif isinstance(v, list):
+                    for c in v:
+                        find(c)
+
+            find(new["paths"])
+            if sites:
+                parent, k = r.choice(sites)
+                parent[k] = copy.deepcopy(inline)
         # In an OpenAPI 3 document only `definitions` entries are parsed
         # leniently (a bad `components.schemas` entry rejects the spec).
         for d in (old, new):

@@ -12,10 +12,10 @@ use indexmap::IndexSet;
 use serde_json::Value;
 
 use super::{
-    Change, ChangeKind, ComponentRef, Direction, SchemaUse, ValueChange, ValueChangeKind,
-    value_changes,
+    Change, ChangeKind, ComponentRef, Direction, FailClosed, SchemaUse, ValueChange,
+    ValueChangeKind, value_changes,
 };
-use crate::resolve::{PairResolver, RefEdge};
+use crate::resolve::{PairResolver, RefEdge, closed_at};
 use crate::utils::canonicalize_schema_value;
 
 /// Collects the local comparisons of one diff and, at the end, the changes of
@@ -57,13 +57,14 @@ impl<'r, 'a> Components<'r, 'a> {
     }
 
     /// The local changes between two serialized schemas (`Null` when absent)
-    /// of one use, with references compared as edges; records the edges.
+    /// of one use, with references compared as edges, each with why it fails
+    /// closed if it does; records the edges.
     pub(super) fn compare(
         &mut self,
         use_: SchemaUse,
         old: &Value,
         new: &Value,
-    ) -> Vec<ValueChange> {
+    ) -> Vec<(ValueChange, Option<FailClosed>)> {
         let (changes, edges) = self.local_changes(old, new);
         if !edges.is_empty() {
             self.uses.push(use_);
@@ -72,16 +73,25 @@ impl<'r, 'a> Components<'r, 'a> {
         changes
     }
 
-    fn local_changes(&self, old: &Value, new: &Value) -> (Vec<ValueChange>, Vec<RefEdge>) {
-        let (mut edges, mut members) = (Vec::new(), Vec::new());
+    /// The local changes between two schemas, each with why it fails closed
+    /// (beneath a region the walk closed), and the relevant edges.
+    fn local_changes(&self, old: &Value, new: &Value) -> (Vec<Local>, Vec<RefEdge>) {
+        let (mut edges, mut members, mut closed) = (Vec::new(), Vec::new(), Vec::new());
         let (mut old, mut new) =
             self.resolver
-                .localize_with_members(old, new, &mut edges, &mut members);
+                .localize_with_members(old, new, &mut edges, &mut members, &mut closed);
         canonicalize_schema_value(&mut old);
         canonicalize_schema_value(&mut new);
         let mut changes = value_changes(&old, &new);
         // Changes inside `required`/`enum` members that hold references.
         changes.extend(members);
+        let changes = changes
+            .into_iter()
+            .map(|change| {
+                let reason = closed_at(&closed, &change.pointer);
+                (change, reason)
+            })
+            .collect();
         (changes, self.relevant(edges))
     }
 
@@ -112,7 +122,7 @@ impl<'r, 'a> Components<'r, 'a> {
         // work is linear in the size of the changed components no matter how
         // many reference paths reach them.
         let mut pair_targets: Targets = Vec::new();
-        let mut pair_changes: Vec<Vec<ValueChange>> = Vec::new();
+        let mut pair_changes: Vec<Vec<Local>> = Vec::new();
         let mut next = 0;
         while next < pairs.len() {
             let (old, new) = pairs.get_index(next).expect("interned");
@@ -125,15 +135,19 @@ impl<'r, 'a> Components<'r, 'a> {
             // typed consumers depend on the name. Review either way.
             let mut changes = changes;
             if old != new {
+                // Never inside either component: it does not fail closed.
                 changes.insert(
                     0,
-                    ValueChange {
-                        pointer: "/$ref".to_string(),
-                        kind: ValueChangeKind::Changed {
-                            old: Value::String(old.clone()),
-                            new: Value::String(new.clone()),
+                    (
+                        ValueChange {
+                            pointer: "/$ref".to_string(),
+                            kind: ValueChangeKind::Changed {
+                                old: Value::String(old.clone()),
+                                new: Value::String(new.clone()),
+                            },
                         },
-                    },
+                        None,
+                    ),
                 );
             }
             pair_changes.push(changes);
@@ -172,8 +186,15 @@ impl<'r, 'a> Components<'r, 'a> {
             // pair's own changes fail closed; the retarget record (first,
             // when the names differ) is not inside either entry.
             let unparsed = self.resolver.old.is_unparsed(old) || self.resolver.new.is_unparsed(new);
-            for (position, change) in pair_changes[index].iter().enumerate() {
-                let unparsed = unparsed && !(old != new && position == 0);
+            for (position, (change, closed)) in pair_changes[index].iter().enumerate() {
+                let retarget = old != new && position == 0;
+                let fail_closed = if retarget {
+                    None
+                } else if unparsed {
+                    Some(FailClosed::UnparsedDefinition)
+                } else {
+                    *closed
+                };
                 let reaching = reach.uses_of(index, &change.pointer);
                 for direction in [Direction::Request, Direction::Response] {
                     // Plain uses keep the directional verdict; uses reaching
@@ -196,7 +217,7 @@ impl<'r, 'a> Components<'r, 'a> {
                                 direction,
                                 change: change.clone(),
                                 negated,
-                                unparsed,
+                                fail_closed,
                                 uses,
                             },
                         });
@@ -207,6 +228,9 @@ impl<'r, 'a> Components<'r, 'a> {
         out
     }
 }
+
+/// One local change and why it fails closed, if it does.
+type Local = (ValueChange, Option<FailClosed>);
 
 /// One edge as the reachability search sees it (see [`RefEdge`]).
 struct Target {

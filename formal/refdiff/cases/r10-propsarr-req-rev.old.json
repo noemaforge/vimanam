@@ -1,0 +1,33 @@
+{
+ "swagger": "2.0",
+ "info": {
+  "title": "t",
+  "version": "1"
+ },
+ "paths": {
+  "/x": {
+   "post": {
+    "responses": {
+     "200": {
+      "description": "ok"
+     }
+    },
+    "parameters": [
+     {
+      "in": "body",
+      "name": "b",
+      "schema": {
+       "type": "object",
+       "properties": {
+        "a": {
+         "type": "integer"
+        }
+       }
+      }
+     }
+    ]
+   }
+  }
+ },
+ "definitions": {}
+}

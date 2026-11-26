@@ -111,25 +111,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   A pure alias loop (`C = {"$ref": C}`) facing an inline schema now compares
   as its siblings without `$ref`, instead of reporting a `$ref` removed.
   The work is bounded: past 64 one-sided expansions on one chain, or 4,096
-  in one schema comparison, the reference is compared as written, which
-  shows as a `$ref` record (Review) and never as "no changes". Two
+  in one schema comparison, the reference is compared as written and fails
+  closed: the `$ref` record there, and any change the rule table leaves to
+  review beneath it, is Breaking (v1 details `fail_closed: "expansion_cut"`,
+  v2 native kind `expansion_cut`), so a change hidden behind the cut still
+  trips `--fail-on-breaking`. Two
   reference cycles facing each other no longer grow exponentially: 9 and 10
   components take 0.8 s.
 - `diff` compares a `definitions` entry that is not a valid schema instead
   of dropping it (#188). Before, a change inside such an entry (one with
   `"required": "a"`, say) printed "No changes." and exited 0. The entry is
   now compared as written and fails closed: a change inside it that the
-  rule table leaves to review is Breaking (v1 details
-  `unparsed_definition: true`, v2 native kind
-  `unparsed_definition_changed`); Breaking and Non-breaking verdicts stand.
+  rule table leaves to review is Breaking, whether the entry is compared
+  with its counterpart or expanded against an inline schema (v1 details
+  `fail_closed: "unparsed_definition"`, v2 native kind
+  `unparsed_definition_changed`; Markdown rows say "fails closed");
+  Breaking and Non-breaking verdicts stand.
   The report opens with a `> **Warning:**` line naming the entry by JSON
   pointer, the same goes to stderr, and v2 JSON has a new `warnings` array
   (omitted when empty). Markdown rendering still leaves the entry out.
   **Library:** `ApiDocumentation` has a new `unparsed_schemas` field,
-  `SpecDiff` a new `unparsed_definitions` field, `ComponentSchemaChanged` a
-  new `unparsed` field and `contract::json::JsonDiff` a new `warnings` field
-  (`UnparsedSchema`, `diff::UnparsedDefinition`, `JsonWarning`), so code
-  that builds any of them as a struct literal must set it.
+  `SpecDiff` a new `unparsed_definitions` field,
+  `Parameter`/`Request`/`Response`/`ComponentSchemaChanged` a new
+  `fail_closed: Option<diff::FailClosed>` field and
+  `contract::json::JsonDiff` a new `warnings` field (`UnparsedSchema`,
+  `diff::UnparsedDefinition`, `diff::FailClosed`, `JsonWarning`), so code
+  that builds or exhaustively matches any of them must set or bind it.
 - `diff` no longer rates removing a member from a **response** `enum` as
   breaking (#169): a server that stops returning a value cannot break a
   client, so the row is now non-breaking. Request-side enum removal stays

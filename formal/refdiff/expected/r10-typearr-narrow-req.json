@@ -1,0 +1,3 @@
+[
+{"change": {"after": "string", "before": "integer | string", "op": "changed"}, "dir": "request", "neg": false, "owner": null, "ptr": "/type", "severity": "breaking", "use": "POST /x body"}
+]

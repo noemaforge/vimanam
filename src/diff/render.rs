@@ -228,8 +228,22 @@ fn change_label(kind: &ChangeKind) -> &'static str {
     }
 }
 
-/// The `Detail` column.
+/// The `Detail` column, plus why the change fails closed when it does
+/// (only then, so other rows are unchanged).
 fn change_detail(kind: &ChangeKind) -> String {
+    let detail = plain_detail(kind);
+    match super::fail_closed_of(kind) {
+        Some(super::FailClosed::UnparsedDefinition) => {
+            format!("{detail}; fails closed: invalid `definitions` entry")
+        }
+        Some(super::FailClosed::ExpansionCut) => {
+            format!("{detail}; fails closed: `$ref` expansion limit reached")
+        }
+        None => detail,
+    }
+}
+
+fn plain_detail(kind: &ChangeKind) -> String {
     match kind {
         ChangeKind::EndpointAdded => "-".to_string(),
         ChangeKind::EndpointRemoved { was_deprecated } => if *was_deprecated {
@@ -268,6 +282,7 @@ fn change_detail(kind: &ChangeKind) -> String {
             name,
             location,
             change,
+            ..
         } => format!("`{name}` ({location}) {}", describe_value_change(change)),
         ChangeKind::ResponseAdded { status } | ChangeKind::ResponseRemoved { status } => {
             status.clone()
@@ -276,8 +291,8 @@ fn change_detail(kind: &ChangeKind) -> String {
             format!("{} → {}", operation_id(old), operation_id(new))
         }
         ChangeKind::DeprecatedChanged { .. } => "-".to_string(),
-        ChangeKind::RequestSchemaChanged { change } => describe_value_change(change),
-        ChangeKind::ResponseSchemaChanged { status, change } => {
+        ChangeKind::RequestSchemaChanged { change, .. } => describe_value_change(change),
+        ChangeKind::ResponseSchemaChanged { status, change, .. } => {
             format!("{status} {}", describe_value_change(change))
         }
         ChangeKind::ComponentSchemaChanged {

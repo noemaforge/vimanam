@@ -127,15 +127,15 @@
     },
     {
       "case": "n187b",
-      "OP": "drop",
-      "PTR": "/properties/p1",
-      "why": "Past the expansion budget (#187 review) a one-sided reference is compared as written, so the cut is a visible `$ref` record: dropping it (a silent cut) is caught."
+      "OP": "drop-any",
+      "PTR": "/properties/p1/$ref",
+      "why": "Past the expansion budget a one-sided reference is compared as written and fails closed: its `$ref` record is visible and Breaking; dropping it (a silent cut) is caught."
     },
     {
       "case": "n187c",
-      "OP": "drop",
-      "PTR": "/properties/p0",
-      "why": "Past 64 one-sided expansions on a chain the reference is compared as written, in the model too: dropping the `$ref` record there is caught."
+      "OP": "drop-any",
+      "PTR": "/$ref",
+      "why": "Past 64 one-sided expansions on a chain the reference is compared as written, in the model too, and fails closed: dropping the `$ref` record is caught."
     },
     {
       "case": "n188b",
@@ -143,6 +143,20 @@
       "PTR": "/properties",
       "SEV": "review",
       "why": "A change inside an unparseable `definitions` entry that the table leaves to review fails closed as Breaking (#188 review): re-rating it Review is caught."
+    },
+    {
+      "case": "n187d",
+      "OP": "rate",
+      "PTR": "/properties/z/$ref",
+      "SEV": "review",
+      "why": "A reference refused at the expansion budget fails closed (#195 round 2): with `z`'s real change hidden behind the cut, re-rating its `$ref` record Review (exit 0) is caught."
+    },
+    {
+      "case": "n188c",
+      "OP": "rate",
+      "PTR": "/required",
+      "SEV": "review",
+      "why": "A one-sided expansion of an unparseable `definitions` entry fails closed beneath it (#195 round 2): re-rating the use-owned change Review is caught."
     }
   ]
 }

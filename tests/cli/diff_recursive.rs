@@ -305,12 +305,43 @@ fn blow(old: usize, new: usize, width: usize) -> (Value, Value) {
     )
 }
 
+/// Runs `vimanam args`, killing it and failing the test once `limit` has
+/// passed (a regression must fail fast, not hang the suite): the exit code
+/// and stdout.
+fn bounded(args: &[&str], limit: Duration) -> (i32, Vec<u8>) {
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("stdout");
+    let mut child = std::process::Command::new(assert_cmd::cargo::cargo_bin("vimanam"))
+        .args(args)
+        .stdout(std::fs::File::create(&out).unwrap())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    let start = Instant::now();
+    let status = loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            break status;
+        }
+        if start.elapsed() > limit {
+            let _ = child.kill();
+            let _ = child.wait();
+            panic!(
+                "`vimanam {}` did not finish within {limit:?}",
+                args.join(" ")
+            );
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    (status.code().unwrap(), std::fs::read(&out).unwrap())
+}
+
 #[test]
 fn facing_reference_cycles_stay_within_the_expansion_budget() {
     // Without a budget 3/4 cycles (width 2) did not finish in a minute and
     // 9/10 grows without bound; with it each is a fraction of a second in a
     // release build. Past the budget the reference is compared as written,
-    // so the cut shows as a `$ref` record (fails closed), never as nothing.
+    // so the cut shows as a Breaking `$ref` record (fails closed), never as
+    // nothing.
     for (old, new) in [(3, 4), (9, 10)] {
         let dir = tempfile::tempdir().unwrap();
         let (a, b) = blow(old, new, 2);
@@ -318,9 +349,8 @@ fn facing_reference_cycles_stay_within_the_expansion_budget() {
             write_spec(&dir, "old.json", &a),
             write_spec(&dir, "new.json", &b),
         );
-        let start = Instant::now();
-        let output = vimanam()
-            .args([
+        let (code, stdout) = bounded(
+            &[
                 "diff",
                 &a,
                 &b,
@@ -329,16 +359,11 @@ fn facing_reference_cycles_stay_within_the_expansion_budget() {
                 "json",
                 "--contract",
                 "1",
-            ])
-            .output()
-            .unwrap();
-        let elapsed = start.elapsed();
-        assert!(
-            elapsed < Duration::from_secs(30),
-            "{old}/{new}: {elapsed:?}"
+            ],
+            Duration::from_secs(30),
         );
-        assert_eq!(output.status.code(), Some(3));
-        let doc: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(code, 3, "{old}/{new}");
+        let doc: Value = serde_json::from_slice(&stdout).unwrap();
         assert!(
             doc["changes"].as_array().unwrap().iter().any(|change| {
                 change["details"]["schema_change"]["pointer"]
@@ -365,13 +390,69 @@ fn facing_reference_cycles_stay_within_the_expansion_budget() {
 #[test]
 fn past_the_expansion_cap_the_reference_is_compared_as_written() {
     // 5/7 cycles of width 1: a no-op unroll whose pair recurs only past 64
-    // one-sided expansions. Compared as written there, as the model does: a
-    // visible (Review) `$ref` record plus what the literal comparison shows.
+    // one-sided expansions. Compared as written there, as the model does,
+    // and failing closed: the `$ref` record is Breaking, never Review.
     let (records, code) = case("r9-cap");
     assert_eq!(code, 3);
     assert!(
         records
             .iter()
-            .any(|(pointer, severity)| pointer.ends_with("/$ref") && severity == "review")
+            .any(|(pointer, severity)| pointer.ends_with("/$ref") && severity == "breaking")
     );
+    assert!(records.iter().all(|(_, severity)| severity != "review"));
+}
+
+#[test]
+fn one_sided_expansion_of_an_unparseable_definition_fails_closed() {
+    // The use writes `$ref Bad` on one side and an inline schema on the
+    // other, so `Bad` (not a valid schema) is expanded in place and its
+    // changes belong to the use: they fail closed there too (#195 round 2).
+    for stem in [
+        "r10-reqstr-add",
+        "r10-propsarr",
+        "r10-enum-str",
+        "r10-nonobj5",
+        "r10-nonobjarr",
+    ] {
+        for position in ["req", "resp"] {
+            for reversed in ["", "-rev"] {
+                let name = format!("{stem}-{position}{reversed}");
+                let (records, code) = case(&name);
+                assert_eq!(code, 3, "{name}: {records:?}");
+                assert!(
+                    records.iter().all(|(_, severity)| severity != "review"),
+                    "{name}: {records:?}"
+                );
+            }
+        }
+    }
+    let (records, _) = case("r10-reqstr-add-req");
+    assert_eq!(records, [("/required".to_string(), "breaking".to_string())]);
+}
+
+#[test]
+fn a_change_hidden_past_the_expansion_budget_fails_closed() {
+    // `a` spends the budget on a no-op (4094 or 4095 one-sided expansions
+    // and the one into `W`); `z` is `$ref Z` against an inline copy whose
+    // `f` changed type. One under the budget the real change is seen; at
+    // the budget `z` is refused and compared as written, and its `$ref`
+    // record is Breaking, so the gate still fails (main and this PR's
+    // round-1 head exited 0 there).
+    let (records, code) = case("r9-budget-edge-4094");
+    assert_eq!(code, 3);
+    assert_eq!(
+        records,
+        [(
+            "/properties/z/properties/f/type".to_string(),
+            "breaking".to_string()
+        )]
+    );
+    for name in ["r9-budget-edge-4095", "r9-budget-edge-4095-rev"] {
+        let (records, code) = case(name);
+        assert_eq!(code, 3, "{name}");
+        assert!(
+            records.contains(&("/properties/z/$ref".to_string(), "breaking".to_string())),
+            "{name}: {records:?}"
+        );
+    }
 }

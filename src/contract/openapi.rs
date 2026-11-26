@@ -573,7 +573,7 @@ fn compare_aligned(
             direction,
             change: value,
             negated,
-            unparsed,
+            fail_closed,
             uses,
         } = &change.kind
         {
@@ -584,7 +584,7 @@ fn compare_aligned(
                     component,
                     *direction,
                     *negated,
-                    *unparsed,
+                    *fail_closed,
                     value,
                     uses,
                     diff::severity(change),
@@ -665,7 +665,7 @@ fn compare_aligned(
                     ChangeKind::ResultRemoved
                 }
             }
-            K::RequestSchemaChanged { change } => {
+            K::RequestSchemaChanged { change, .. } => {
                 if is_schema_deprecation_pointer(&change.pointer) {
                     continue;
                 }
@@ -679,7 +679,9 @@ fn compare_aligned(
                 schema_kind(change, true)
             }
             K::ComponentSchemaChanged { .. } => unreachable!("handled above"),
-            K::ResponseSchemaChanged { status: s, change } => {
+            K::ResponseSchemaChanged {
+                status: s, change, ..
+            } => {
                 if is_schema_deprecation_pointer(&change.pointer) {
                     continue;
                 }
@@ -701,11 +703,14 @@ fn compare_aligned(
             severity: verdict(diff::severity(change)),
             impacts: vec!["source".into()],
             native: native(Some(e), &pointer, parameter_in, status, resolved),
-            native_kind: serde_json::to_value(record_kind)
-                .unwrap()
-                .as_str()
-                .unwrap()
-                .into(),
+            native_kind: match diff::fail_closed_of(&change.kind) {
+                Some(reason) => reason.native_kind().into(),
+                None => serde_json::to_value(record_kind)
+                    .unwrap()
+                    .as_str()
+                    .unwrap()
+                    .into(),
+            },
             details,
             uses: Vec::new(),
         };
@@ -982,7 +987,7 @@ fn component_fact(
     component: &diff::ComponentRef,
     direction: diff::Direction,
     negated: bool,
-    unparsed: bool,
+    fail_closed: Option<diff::FailClosed>,
     change: &ValueChange,
     uses: &[diff::SchemaUse],
     severity: diff::Severity,
@@ -1002,7 +1007,7 @@ fn component_fact(
     };
     let coordinate = format!("/types/{}", escape(name));
     let mut entries = serde_json::Map::new();
-    for (key, value) in diff::json::component_entries(component, negated, unparsed) {
+    for (key, value) in diff::json::component_entries(component, negated, fail_closed) {
         entries.insert(key.into(), value);
     }
     entries.insert("direction".into(), json!(direction.as_str()));
@@ -1052,14 +1057,11 @@ fn component_fact(
             None,
             false,
         ),
-        // #188: a change inside a `definitions` entry that is not a valid
-        // schema has its own rule (Breaking unless the table classifies it).
-        native_kind: if unparsed {
-            "unparsed_definition_changed"
-        } else {
-            "component_schema_changed"
-        }
-        .into(),
+        // A change that fails closed has its own rule (Breaking unless the
+        // table classifies it).
+        native_kind: fail_closed
+            .map_or("component_schema_changed", diff::FailClosed::native_kind)
+            .into(),
         details: Value::Object(entries),
         uses: ids,
     };

@@ -110,7 +110,7 @@ to pointers through `locate` and `under_not`; nothing uses `native_decide`.
 | `operation_id` | Table pin: only gaining an `operationId` is Non-breaking. |
 | `component_follows_direction` | `ComponentSchemaChanged` (#181) with a plain reach uses the table of its direction, so every theorem above holds for component changes too. |
 | `component_negated_review` | `ComponentSchemaChanged` reached through `not` (`negated`) is Review. |
-| `failClosed_never_review`, `failClosed_plain`, `failClosed_keeps_classified` | #188: a `ComponentSchemaChanged` inside a pair with a side that does not deserialise (`unparsed`) is never Review (`failClosed` makes Review Breaking); without the flag nothing changes, and a Breaking or Non-breaking verdict always stands. |
+| `failClosed_never_review`, `failClosed_plain`, `failClosed_keeps_classified` | A change that fails closed (`diff::FailClosed`: inside a `definitions` entry that does not deserialise, #188, or at or beneath a one-sided `$ref` refused past the expansion budget or chain cap, #187) is never Review (`failClosed` makes Review Breaking); without the flag nothing changes, and a Breaking or Non-breaking verdict always stands. |
 | `component_matches_inline` | Reporting a component change once gives each occurrence's verdict: for a `$ref` in schema position at `pre` (not under `not`), the change at component pointer `p ≠ []` gets the verdict the inlined change at `pre ++ p` gets. |
 | `component_negated_matches_inline` | A reach through `not` agrees with inlining: the inlined change under `not` is Review, as the `negated` component change is. |
 | `request_noop_breaking`, `request_noop_breaking_witness` | Finding (open), see below. |
@@ -310,8 +310,11 @@ the same specification in prose.
   and parses. Changes inside such an entry are compared as for any other
   component and **fail closed** (`Severity.failClosed`): one the rule
   table leaves to review is Breaking, while Breaking and Non-breaking
-  verdicts stand, so `--fail-on-breaking` trips on any change there; the
-  retarget record of a pair is not inside the entry and stays Review. The
+  verdicts stand, so `--fail-on-breaking` trips on any change there. That
+  holds for a pair with such a side and for a one-sided expansion of one
+  against an inline schema (everything at and beneath it in that walk,
+  `Out.closed`); the retarget record of a pair is not inside the entry and
+  stays Review. The
   diff report, stderr and the v2 JSON `warnings` name the entry. A `$ref` names a component when it is
   `#/components/schemas/NAME` or `#/definitions/NAME`, in either kind of
   document, with the token decoded (`~1` is `/`, `~0` is `~`). The two
@@ -383,8 +386,12 @@ comparison), with three rules at a schema position holding a `$ref`:
    `LocalWalk::spend`): once 64 one-sided expansions are on the chain
    (`maxResolveDepth`), and once the walk has made `expansionBudget`
    (4,096) of them in all, a one-sided reference is compared as written
-   (rule 3), which reports its `$ref` added or removed there: a cut is
-   visible, never "no changes". The chain cut bounds each chain; only the
+   (rule 3), which reports its `$ref` added or removed there, and every
+   change at and beneath it **fails closed** (`closeAt`, `failClosed`):
+   Review becomes Breaking, so a change hidden behind the cut cannot pass
+   `--fail-on-breaking` (`r9-budget-edge-4094/4095`: one expansion under
+   the budget the real change is seen, at it the cut `$ref` record is
+   Breaking). The chain cut bounds each chain; only the
    budget bounds the walk, since two reference cycles of lengths `a` and
    `b` facing each other branch until the pair recurs about `a·b` levels
    down (exponential work without it, #195 review). The budget is spent in
@@ -571,7 +578,9 @@ rule coming back loose. `n187a` drops the Breaking record beneath the old
 name cut and injects the literal `$ref removed` record the cut produced;
 `n188` drops a change inside an unparseable `definitions` entry; `n187b`
 and `n187c` drop the visible `$ref` record past the budget and the chain
-cap; `n188b` re-rates a fail-closed record Review. Use reach follows every reference
+cap; `n187d` re-rates the cut record at the budget boundary Review (which
+would let a hidden Breaking change exit 0); `n188b` and `n188c` re-rate a
+fail-closed record Review, owned by a pair and by a use. Use reach follows every reference
 in the exported schemas. The model exports them canonicalised, so no
 annotation (an `x-*` or `example` holding a `$ref`, even beside a `$ref`) is
 left to skip; the harness asserts that instead of skipping silently, which
@@ -584,15 +593,16 @@ Known limits of one-sided expansion (#187):
 * A no-op that needs more than 64 one-sided expansions on one chain, or
   more than 4,096 in one walk, to line up (a recursive component unrolled
   differently on each side, deep enough) is compared as written past the
-  limit: a Review `$ref` record plus whatever the literal comparison shows
-  (a `type` added is Breaking), so it can exit 3 (`r9-cap`,
-  `r9-budget-over`). Below the limits it reports nothing (`r9-budget-under`).
-  The model has the same limits, so the harness agrees.
-* Only a change owned by a component pair fails closed for an unparseable
-  entry (#188). When such an entry is expanded one-sidedly against an
-  inline schema its changes belong to the use and keep the table's verdict,
-  and the v2 named-type surface lists valid schemas only, so it reports the
-  entry's type as removed or added (Review) when only one side parses.
+  limit and fails closed: a Breaking `$ref` record, so it exits 3
+  (`r9-cap`, `r9-budget-over`). Below the limits it reports nothing
+  (`r9-budget-under`). The model has the same limits, so the harness agrees.
+* The budget is per walk, so a spec with many uses that each spend it does
+  that much work per use (#195 review follow-up).
+* An unparseable entry reached outside the schema grammar (under `default`,
+  `if`, ...) is inlined and Review there, as every change outside the
+  grammar is; and the v2 named-type surface lists valid schemas only, so it
+  reports the entry's type as removed or added (Review) when only one side
+  parses.
 
 Known limits of inlining (each matches the resolver before #182):
 

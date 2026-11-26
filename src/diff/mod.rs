@@ -179,6 +179,8 @@ pub enum ChangeKind {
         location: String,
         /// The field-level change in the resolved, canonicalized schema.
         change: ValueChange,
+        /// Why the change fails closed, if it does ([`FailClosed`]).
+        fail_closed: Option<FailClosed>,
     },
     /// A response status was added.
     ResponseAdded {
@@ -206,6 +208,8 @@ pub enum ChangeKind {
     RequestSchemaChanged {
         /// The field-level change in the resolved, canonicalized schema.
         change: ValueChange,
+        /// Why the change fails closed, if it does ([`FailClosed`]).
+        fail_closed: Option<FailClosed>,
     },
     /// A field-level change in the resolved schema of one response.
     ResponseSchemaChanged {
@@ -213,6 +217,8 @@ pub enum ChangeKind {
         status: String,
         /// The field-level change in the resolved, canonicalized schema.
         change: ValueChange,
+        /// Why the change fails closed, if it does ([`FailClosed`]).
+        fail_closed: Option<FailClosed>,
     },
     /// A field-level change inside a shared component (a `$ref` target),
     /// reported once per usage direction instead of once per operation or
@@ -231,17 +237,62 @@ pub enum ChangeKind {
         /// reverses every compatibility direction, so such a record is
         /// Review; uses that reach it plainly are a separate record.
         negated: bool,
-        /// Whether either side of the pair is a `definitions` entry that does
-        /// not deserialise as a schema, compared as written (#188); never
-        /// set on the `/$ref` retarget record. The spec is invalid there, so
-        /// a change the rule table leaves to review is Breaking instead:
-        /// `--fail-on-breaking` fails closed.
-        unparsed: bool,
+        /// Why the change fails closed, if it does ([`FailClosed`]): a side
+        /// of the pair is a `definitions` entry that does not deserialise, or
+        /// the change is beneath a cut or unparsed one-sided expansion in the
+        /// pair's comparison. Never set on the `/$ref` retarget record.
+        fail_closed: Option<FailClosed>,
         /// Every parameter, request body or response of this direction that
         /// reaches the component, directly or through other components, in
         /// report order.
         uses: Vec<SchemaUse>,
     },
+}
+
+/// Why a schema change fails closed: the comparison could not see that part
+/// of the schema properly, so a change the rule table leaves to review is
+/// Breaking instead and `--fail-on-breaking` trips (Severity.lean's
+/// `failClosed`). Breaking and Non-breaking verdicts stand.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum FailClosed {
+    /// Inside a `definitions` entry that does not deserialise as a schema,
+    /// compared as written (#188).
+    UnparsedDefinition,
+    /// At or beneath a one-sided `$ref` that was not expanded because the
+    /// walk reached its expansion budget or the chain cap (#187), so it was
+    /// compared as written.
+    ExpansionCut,
+}
+
+impl FailClosed {
+    /// The reason's snake-case name, as JSON details and v2 native kinds
+    /// spell it.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            FailClosed::UnparsedDefinition => "unparsed_definition",
+            FailClosed::ExpansionCut => "expansion_cut",
+        }
+    }
+
+    /// The v2 native kind of a change that fails closed for this reason.
+    pub fn native_kind(self) -> &'static str {
+        match self {
+            FailClosed::UnparsedDefinition => "unparsed_definition_changed",
+            FailClosed::ExpansionCut => "expansion_cut",
+        }
+    }
+}
+
+/// Why a schema change fails closed, if it does; `None` for other kinds.
+pub fn fail_closed_of(kind: &ChangeKind) -> Option<FailClosed> {
+    match kind {
+        ChangeKind::ParameterSchemaChanged { fail_closed, .. }
+        | ChangeKind::RequestSchemaChanged { fail_closed, .. }
+        | ChangeKind::ResponseSchemaChanged { fail_closed, .. }
+        | ChangeKind::ComponentSchemaChanged { fail_closed, .. } => *fail_closed,
+        _ => None,
+    }
 }
 
 /// The pair of components a shared-component change was found in: each
@@ -654,8 +705,15 @@ pub fn severity(change: &Change) -> Severity {
             }
         }
         ChangeKind::ParameterLocationChanged { .. } => Severity::Breaking,
-        ChangeKind::ParameterSchemaChanged { change, .. }
-        | ChangeKind::RequestSchemaChanged { change } => request_schema_severity(change),
+        ChangeKind::ParameterSchemaChanged {
+            change,
+            fail_closed,
+            ..
+        }
+        | ChangeKind::RequestSchemaChanged {
+            change,
+            fail_closed,
+        } => self::fail_closed(fail_closed.is_some(), request_schema_severity(change)),
         ChangeKind::ResponseAdded { .. } => Severity::NonBreaking,
         ChangeKind::ResponseRemoved { .. } => Severity::Breaking,
         ChangeKind::OperationIdChanged {
@@ -664,15 +722,19 @@ pub fn severity(change: &Change) -> Severity {
         } => Severity::NonBreaking,
         ChangeKind::OperationIdChanged { .. } => Severity::Breaking,
         ChangeKind::DeprecatedChanged { .. } => Severity::NonBreaking,
-        ChangeKind::ResponseSchemaChanged { change, .. } => response_schema_severity(change),
+        ChangeKind::ResponseSchemaChanged {
+            change,
+            fail_closed,
+            ..
+        } => self::fail_closed(fail_closed.is_some(), response_schema_severity(change)),
         ChangeKind::ComponentSchemaChanged {
             direction,
             change,
             negated,
-            unparsed,
+            fail_closed,
             ..
-        } => fail_closed(
-            *unparsed,
+        } => self::fail_closed(
+            fail_closed.is_some(),
             match (negated, direction) {
                 (true, _) => Severity::Review,
                 (false, Direction::Request) => request_schema_severity(change),
@@ -682,11 +744,10 @@ pub fn severity(change: &Change) -> Severity {
     }
 }
 
-/// #188: inside a component pair with a side that does not deserialise as a
-/// schema, a change the table leaves to review is Breaking; classified
-/// verdicts stand (Severity.lean's `failClosed`).
-fn fail_closed(unparsed: bool, severity: Severity) -> Severity {
-    if unparsed && severity == Severity::Review {
+/// A change that fails closed ([`FailClosed`]) is never Review: Review
+/// becomes Breaking; classified verdicts stand (Severity.lean's `failClosed`).
+fn fail_closed(closed: bool, severity: Severity) -> Severity {
+    if closed && severity == Severity::Review {
         Severity::Breaking
     } else {
         severity
@@ -1169,13 +1230,14 @@ fn diff_parameter_pair(
             location: new_param.parameter_in.clone(),
         },
     };
-    for change in components.compare(use_, &old_schema, &new_schema) {
+    for (change, fail_closed) in components.compare(use_, &old_schema, &new_schema) {
         changes.push(Change {
             endpoint: endpoint.clone(),
             kind: ChangeKind::ParameterSchemaChanged {
                 name: new_param.name.clone(),
                 location: new_param.parameter_in.clone(),
                 change,
+                fail_closed,
             },
         });
     }
@@ -1212,7 +1274,7 @@ fn schema_changes(
     old: Option<&crate::models::Schema>,
     new: Option<&crate::models::Schema>,
     components: &mut Components,
-) -> Vec<ValueChange> {
+) -> Vec<(ValueChange, Option<FailClosed>)> {
     let (old, new) = (
         old.map_or(Value::Null, schema_json),
         new.map_or(Value::Null, schema_json),
@@ -1305,9 +1367,13 @@ fn diff_request_body(
                 new_body.schema.as_ref(),
                 components,
             ) {
+                let (change, fail_closed) = change;
                 changes.push(Change {
                     endpoint: endpoint.clone(),
-                    kind: ChangeKind::RequestSchemaChanged { change },
+                    kind: ChangeKind::RequestSchemaChanged {
+                        change,
+                        fail_closed,
+                    },
                 });
             }
         }
@@ -1342,12 +1408,13 @@ fn diff_responses(
                 status: status.clone(),
             },
         };
-        for change in schema_changes(use_, old_schema, new_schema, components) {
+        for (change, fail_closed) in schema_changes(use_, old_schema, new_schema, components) {
             changes.push(Change {
                 endpoint: endpoint.clone(),
                 kind: ChangeKind::ResponseSchemaChanged {
                     status: status.clone(),
                     change,
+                    fail_closed,
                 },
             });
         }
@@ -1446,13 +1513,17 @@ pub(crate) mod test_support {
     }
 
     pub(crate) fn request(change: ValueChange) -> Severity {
-        severity(&self::change(ChangeKind::RequestSchemaChanged { change }))
+        severity(&self::change(ChangeKind::RequestSchemaChanged {
+            change,
+            fail_closed: None,
+        }))
     }
 
     pub(crate) fn response(change: ValueChange) -> Severity {
         severity(&self::change(ChangeKind::ResponseSchemaChanged {
             status: "200".into(),
             change,
+            fail_closed: None,
         }))
     }
 
@@ -1467,7 +1538,7 @@ pub(crate) mod test_support {
             direction,
             change,
             negated: false,
-            unparsed: false,
+            fail_closed: None,
             uses: vec![SchemaUse {
                 endpoint: endpoint(),
                 location: UseLocation::Response {
@@ -1482,6 +1553,7 @@ pub(crate) mod test_support {
             name: "limit".into(),
             location: "query".into(),
             change,
+            fail_closed: None,
         }))
     }
 }
@@ -2310,6 +2382,7 @@ mod tests {
                 kind: ChangeKind::ResponseSchemaChanged {
                     status: "200".into(),
                     change: added("/properties/age", json!({"type": "integer"})),
+                    fail_closed: None,
                 },
             }]
         );
@@ -2623,7 +2696,7 @@ mod tests {
                 .changes
                 .iter()
                 .map(|change| match &change.kind {
-                    ChangeKind::RequestSchemaChanged { change: value }
+                    ChangeKind::RequestSchemaChanged { change: value, .. }
                     | ChangeKind::ResponseSchemaChanged { change: value, .. } => {
                         format!("{} {:?}", value.pointer, value.kind)
                     }
