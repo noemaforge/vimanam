@@ -99,7 +99,7 @@ The confidence scale is `declared` (the contract language declares paging, as Gr
 
 ## JSON and public use
 
-The v2 envelope has `schema_version`, `generator`, `old`, `new`, `summary`, `changes`, and optional `deltas`. Each side contains raw `file_sha256` and the full `contract` surface. Hashes refer to exact parsed bytes. Deltas retain the OpenAPI hygiene/render profile. The v2 schema round-trips through serde; no CLI feature is required.
+The v2 envelope has `schema_version`, `generator`, `old`, `new`, `summary`, `changes`, optional `deltas`, and optional `warnings` (omitted when empty: each `{code, spec, pointer, message}`; today only `unparsed_definition`, a `definitions` entry that is not a valid schema and was compared as written, #188, whose changes have native kind `unparsed_definition_changed` and are Breaking unless the rule table classifies them). Each side contains raw `file_sha256` and the full `contract` surface. Hashes refer to exact parsed bytes. Deltas retain the OpenAPI hygiene/render profile. The v2 schema round-trips through serde; no CLI feature is required.
 
 ### Omitting the surfaces (`--omit-surfaces`)
 

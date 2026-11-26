@@ -292,6 +292,7 @@ fn replay(rust: &str, cases: &[Value], seen: &mut BTreeSet<&'static str>) -> Vec
                         kind: kind(&input[3]),
                     },
                     negated: input[1].as_bool().expect("negated"),
+                    unparsed: input[4].as_bool().expect("unparsed"),
                     uses: Vec::new(),
                 };
                 json!(severity_name(rate(kind, seen)))

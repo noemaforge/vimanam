@@ -50,6 +50,25 @@ pub struct JsonDiff {
     /// Optional existing OpenAPI report deltas.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub deltas: Option<JsonDeltas>,
+    /// Problems with the inputs that the comparison worked around, such as a
+    /// `definitions` entry that is not a valid schema (#188). Omitted when
+    /// there are none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<JsonWarning>,
+}
+
+/// One problem with an input that the comparison worked around.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct JsonWarning {
+    /// What kind of problem: `unparsed_definition` (a `definitions` entry
+    /// that is not a valid schema, compared as written).
+    pub code: String,
+    /// `old` or `new`.
+    pub spec: String,
+    /// Where in that spec, as a JSON pointer.
+    pub pointer: String,
+    /// A readable description.
+    pub message: String,
 }
 impl JsonDiff {
     /// Whether the adapter classified any fact as breaking.
@@ -183,14 +202,25 @@ pub(crate) fn openapi_from(
     let legacy_json = crate::diff::json::to_json(&empty, deltas, old_sha, new_sha);
     let (changes, old_surface, new_surface) =
         super::openapi::diff_from_surfaces(old, new, legacy, resolver)?;
-    Ok(to_json(
+    let mut document = to_json(
         old_surface,
         new_surface,
         changes,
         old_sha,
         new_sha,
         legacy_json.deltas,
-    ))
+    );
+    document.warnings = legacy
+        .unparsed_definitions
+        .iter()
+        .map(|entry| JsonWarning {
+            code: "unparsed_definition".into(),
+            spec: if entry.old { "old" } else { "new" }.into(),
+            pointer: entry.pointer(),
+            message: entry.to_string(),
+        })
+        .collect();
+    Ok(document)
 }
 
 /// Build a v2 envelope for any adapter-created surfaces and classified facts.
@@ -293,5 +323,6 @@ pub fn to_json(
         summary,
         changes,
         deltas,
+        warnings: Vec::new(),
     }
 }

@@ -3,8 +3,9 @@
 //! entry that does not deserialise dropped from the comparison (#188). The
 //! inputs are the pinned cases in `formal/refdiff/cases/r8-*`, whose model
 //! output is pinned in `formal/refdiff/expected/`.
-use crate::common::vimanam;
-use serde_json::Value;
+use crate::common::{vimanam, write_spec};
+use serde_json::{Value, json};
+use std::time::{Duration, Instant};
 
 const CASES: &str = "formal/refdiff/cases";
 
@@ -133,11 +134,13 @@ fn a_change_inside_an_unparseable_definition_is_reported() {
 
 #[test]
 fn a_definition_unparseable_on_one_side_is_compared_as_written() {
-    // Valid on one side, `nullable: "yes"` on the other.
+    // Valid on one side, `nullable: "yes"` on the other. The `nullable`
+    // change is one the table leaves to review; inside an invalid entry it
+    // fails closed.
     assert_case("r8-bad-def-oneside", |_, _| {
         (
             vec![
-                ("/properties/a/nullable", "review"),
+                ("/properties/a/nullable", "breaking"),
                 ("/properties/a/type", "breaking"),
             ],
             3,
@@ -155,7 +158,7 @@ fn the_diff_report_and_stderr_name_an_unparseable_definition() {
         .unwrap();
     let stdout = String::from_utf8(output.stdout).unwrap();
     let stderr = String::from_utf8(output.stderr).unwrap();
-    let warning = "`definitions/Bad` in the new spec is not a valid schema \
+    let warning = "`/definitions/Bad` in the new spec is not a valid schema \
                    (invalid type: string \"yes\", expected a boolean); \
                    it was compared as written";
     assert!(
@@ -178,4 +181,187 @@ fn rendering_still_leaves_an_unparseable_definition_out() {
     assert!(output.status.success());
     let stdout = String::from_utf8(output.stdout).unwrap();
     assert!(!stdout.contains("## Schema Definitions"), "{stdout}");
+}
+
+#[test]
+fn a_change_the_table_cannot_classify_inside_an_unparseable_definition_fails_closed() {
+    // `properties` turned into an array (only on one side), and an entry
+    // that is a number (5 -> 6): Review for a valid schema, Breaking here.
+    assert_case("r9-bad-def-props-array", |_, _| {
+        (vec![("/properties", "breaking")], 3)
+    });
+    assert_case("r9-bad-def-nonobj", |_, _| (vec![("", "breaking")], 3));
+}
+
+#[test]
+fn the_v2_report_lists_unparseable_definitions_only_when_there_are_any() {
+    let run = |name: &str| -> Value {
+        let output = vimanam()
+            .arg("diff")
+            .arg(format!("{CASES}/{name}.old.json"))
+            .arg(format!("{CASES}/{name}.new.json"))
+            .args(["--format", "json"])
+            .output()
+            .unwrap();
+        serde_json::from_slice(&output.stdout).unwrap()
+    };
+    let doc = run("r8-bad-def-oneside-resp");
+    assert_eq!(doc["warnings"][0]["code"], "unparsed_definition");
+    assert_eq!(doc["warnings"][0]["spec"], "new");
+    assert_eq!(doc["warnings"][0]["pointer"], "/definitions/Bad");
+    assert_eq!(doc["warnings"].as_array().unwrap().len(), 1);
+    let kinds: Vec<&str> = doc["changes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|change| change["native_kind"].as_str().unwrap())
+        // The named-type surface lists valid schemas only, so it also sees
+        // `Bad` leave it (`surface_changed`, `type_removed`).
+        .filter(|kind| *kind != "surface_changed")
+        .collect();
+    assert_eq!(kinds, ["unparsed_definition_changed"; 2]);
+    assert!(run("r8-unroll-resp").get("warnings").is_none());
+}
+
+#[test]
+fn an_unparseable_definition_name_is_encoded_and_fenced() {
+    let dir = tempfile::tempdir().unwrap();
+    let spec = json!({
+        "openapi": "3.0.0", "info": {"title": "t", "version": "1"},
+        "paths": {"/a": {"post": {"responses": {"200": {"description": "ok",
+            "content": {"application/json": {"schema": {"$ref": "#/definitions/a~1b`c"}}}}}}}},
+        "definitions": {"a/b`c\nd": {"required": "x"}, "a/b`c": {"required": "x"}}
+    });
+    let path = write_spec(&dir, "s.json", &spec);
+    let output = vimanam().args(["diff", &path, &path]).output().unwrap();
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(
+        stdout.contains("> **Warning:** ``/definitions/a~1b`c`` in the old spec"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("``/definitions/a~1b`c\\nd`` in the new spec"),
+        "{stdout}"
+    );
+    // Every warning stays on one line.
+    assert_eq!(
+        stdout.lines().filter(|line| line.starts_with("> ")).count(),
+        4,
+        "{stdout}"
+    );
+}
+
+/// `gen_blow` from the #195 review: the old body is `$ref A0`, each `Ai` a
+/// two-level object whose `p0..p{width}` lead to `A(i+1 mod old)`; the new
+/// body is a one-level inline object leading to `B0`, each `Bj` the same
+/// shape leading to `B(j+1 mod new)`. The two expansions branch until the
+/// compared pair recurs, `old * new` levels down.
+fn blow(old: usize, new: usize, width: usize) -> (Value, Value) {
+    let two = |next: usize, prefix: &str| {
+        let props = |inner: Value| -> Value {
+            (0..width)
+                .map(|i| (format!("p{i}"), inner.clone()))
+                .collect()
+        };
+        let reference = json!({"$ref": format!("#/components/schemas/{prefix}{next}")});
+        let inner = json!({"type": "object", "properties": props(reference)});
+        json!({"type": "object", "properties": props(inner)})
+    };
+    let spec = |schemas: Value, body: Value| {
+        json!({"openapi": "3.0.0", "info": {"title": "t", "version": "1"},
+            "paths": {"/x": {"post": {
+                "requestBody": {"content": {"application/json": {"schema": body}}},
+                "responses": {"200": {"description": "ok"}}}}},
+            "components": {"schemas": schemas}})
+    };
+    let olds: serde_json::Map<String, Value> = (0..old)
+        .map(|i| (format!("A{i}"), two((i + 1) % old, "A")))
+        .collect();
+    let news: serde_json::Map<String, Value> = (0..new)
+        .map(|j| (format!("B{j}"), two((j + 1) % new, "B")))
+        .collect();
+    let body: serde_json::Map<String, Value> = (0..width)
+        .map(|i| (format!("p{i}"), json!({"$ref": "#/components/schemas/B0"})))
+        .collect();
+    (
+        spec(
+            Value::Object(olds),
+            json!({"$ref": "#/components/schemas/A0"}),
+        ),
+        spec(
+            Value::Object(news),
+            json!({"type": "object", "properties": body}),
+        ),
+    )
+}
+
+#[test]
+fn facing_reference_cycles_stay_within_the_expansion_budget() {
+    // Without a budget 3/4 cycles (width 2) did not finish in a minute and
+    // 9/10 grows without bound; with it each is a fraction of a second in a
+    // release build. Past the budget the reference is compared as written,
+    // so the cut shows as a `$ref` record (fails closed), never as nothing.
+    for (old, new) in [(3, 4), (9, 10)] {
+        let dir = tempfile::tempdir().unwrap();
+        let (a, b) = blow(old, new, 2);
+        let (a, b) = (
+            write_spec(&dir, "old.json", &a),
+            write_spec(&dir, "new.json", &b),
+        );
+        let start = Instant::now();
+        let output = vimanam()
+            .args([
+                "diff",
+                &a,
+                &b,
+                "--fail-on-breaking",
+                "--format",
+                "json",
+                "--contract",
+                "1",
+            ])
+            .output()
+            .unwrap();
+        let elapsed = start.elapsed();
+        assert!(
+            elapsed < Duration::from_secs(30),
+            "{old}/{new}: {elapsed:?}"
+        );
+        assert_eq!(output.status.code(), Some(3));
+        let doc: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert!(
+            doc["changes"].as_array().unwrap().iter().any(|change| {
+                change["details"]["schema_change"]["pointer"]
+                    .as_str()
+                    .is_some_and(|pointer| pointer.ends_with("/$ref"))
+            }),
+            "{old}/{new}: no visible cut"
+        );
+    }
+    // Under the budget, the same shapes unrolled differently are no change.
+    let dir = tempfile::tempdir().unwrap();
+    let (a, b) = blow(2, 5, 1);
+    let (a, b) = (
+        write_spec(&dir, "old.json", &a),
+        write_spec(&dir, "new.json", &b),
+    );
+    let output = vimanam()
+        .args(["diff", &a, &b, "--fail-on-breaking"])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(0));
+}
+
+#[test]
+fn past_the_expansion_cap_the_reference_is_compared_as_written() {
+    // 5/7 cycles of width 1: a no-op unroll whose pair recurs only past 64
+    // one-sided expansions. Compared as written there, as the model does: a
+    // visible (Review) `$ref` record plus what the literal comparison shows.
+    let (records, code) = case("r9-cap");
+    assert_eq!(code, 3);
+    assert!(
+        records
+            .iter()
+            .any(|(pointer, severity)| pointer.ends_with("/$ref") && severity == "review")
+    );
 }

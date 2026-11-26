@@ -573,6 +573,7 @@ fn compare_aligned(
             direction,
             change: value,
             negated,
+            unparsed,
             uses,
         } = &change.kind
         {
@@ -583,6 +584,7 @@ fn compare_aligned(
                     component,
                     *direction,
                     *negated,
+                    *unparsed,
                     value,
                     uses,
                     diff::severity(change),
@@ -980,6 +982,7 @@ fn component_fact(
     component: &diff::ComponentRef,
     direction: diff::Direction,
     negated: bool,
+    unparsed: bool,
     change: &ValueChange,
     uses: &[diff::SchemaUse],
     severity: diff::Severity,
@@ -999,7 +1002,7 @@ fn component_fact(
     };
     let coordinate = format!("/types/{}", escape(name));
     let mut entries = serde_json::Map::new();
-    for (key, value) in diff::json::component_entries(component, negated) {
+    for (key, value) in diff::json::component_entries(component, negated, unparsed) {
         entries.insert(key.into(), value);
     }
     entries.insert("direction".into(), json!(direction.as_str()));
@@ -1049,7 +1052,14 @@ fn component_fact(
             None,
             false,
         ),
-        native_kind: "component_schema_changed".into(),
+        // #188: a change inside a `definitions` entry that is not a valid
+        // schema has its own rule (Breaking unless the table classifies it).
+        native_kind: if unparsed {
+            "unparsed_definition_changed"
+        } else {
+            "component_schema_changed"
+        }
+        .into(),
         details: Value::Object(entries),
         uses: ids,
     };

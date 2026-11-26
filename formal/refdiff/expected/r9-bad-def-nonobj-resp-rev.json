@@ -1,0 +1,3 @@
+[
+{"change": {"after": 5, "before": 6, "op": "changed"}, "dir": "response", "neg": false, "owner": {"new": "Bad", "old": "Bad"}, "ptr": "", "severity": "breaking", "use": "POST /x response:200"}
+]

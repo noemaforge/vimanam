@@ -1,0 +1,134 @@
+{
+ "openapi": "3.0.0",
+ "info": {
+  "title": "t",
+  "version": "1"
+ },
+ "paths": {
+  "/x": {
+   "post": {
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "properties": {
+         "p0": {
+          "$ref": "#/components/schemas/B0"
+         }
+        }
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "ok"
+     }
+    }
+   }
+  }
+ },
+ "components": {
+  "schemas": {
+   "B0": {
+    "type": "object",
+    "description": "b0",
+    "properties": {
+     "p0": {
+      "type": "object",
+      "properties": {
+       "p0": {
+        "$ref": "#/components/schemas/B1"
+       }
+      }
+     }
+    }
+   },
+   "B1": {
+    "type": "object",
+    "description": "b1",
+    "properties": {
+     "p0": {
+      "type": "object",
+      "properties": {
+       "p0": {
+        "$ref": "#/components/schemas/B2"
+       }
+      }
+     }
+    }
+   },
+   "B2": {
+    "type": "object",
+    "description": "b2",
+    "properties": {
+     "p0": {
+      "type": "object",
+      "properties": {
+       "p0": {
+        "$ref": "#/components/schemas/B3"
+       }
+      }
+     }
+    }
+   },
+   "B3": {
+    "type": "object",
+    "description": "b3",
+    "properties": {
+     "p0": {
+      "type": "object",
+      "properties": {
+       "p0": {
+        "$ref": "#/components/schemas/B4"
+       }
+      }
+     }
+    }
+   },
+   "B4": {
+    "type": "object",
+    "description": "b4",
+    "properties": {
+     "p0": {
+      "type": "object",
+      "properties": {
+       "p0": {
+        "$ref": "#/components/schemas/B5"
+       }
+      }
+     }
+    }
+   },
+   "B5": {
+    "type": "object",
+    "description": "b5",
+    "properties": {
+     "p0": {
+      "type": "object",
+      "properties": {
+       "p0": {
+        "$ref": "#/components/schemas/B6"
+       }
+      }
+     }
+    }
+   },
+   "B6": {
+    "type": "object",
+    "description": "b6",
+    "properties": {
+     "p0": {
+      "type": "object",
+      "properties": {
+       "p0": {
+        "$ref": "#/components/schemas/B0"
+       }
+      }
+     }
+    }
+   }
+  }
+ }
+}

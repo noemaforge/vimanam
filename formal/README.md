@@ -110,6 +110,7 @@ to pointers through `locate` and `under_not`; nothing uses `native_decide`.
 | `operation_id` | Table pin: only gaining an `operationId` is Non-breaking. |
 | `component_follows_direction` | `ComponentSchemaChanged` (#181) with a plain reach uses the table of its direction, so every theorem above holds for component changes too. |
 | `component_negated_review` | `ComponentSchemaChanged` reached through `not` (`negated`) is Review. |
+| `failClosed_never_review`, `failClosed_plain`, `failClosed_keeps_classified` | #188: a `ComponentSchemaChanged` inside a pair with a side that does not deserialise (`unparsed`) is never Review (`failClosed` makes Review Breaking); without the flag nothing changes, and a Breaking or Non-breaking verdict always stands. |
 | `component_matches_inline` | Reporting a component change once gives each occurrence's verdict: for a `$ref` in schema position at `pre` (not under `not`), the change at component pointer `p ≠ []` gets the verdict the inlined change at `pre ++ p` gets. |
 | `component_negated_matches_inline` | A reach through `not` agrees with inlining: the inlined change under `not` is Review, as the `negated` component change is. |
 | `request_noop_breaking`, `request_noop_breaking_witness` | Finding (open), see below. |
@@ -297,12 +298,21 @@ the same specification in prose.
 * **Components** are, in either OpenAPI version, every `components.schemas`
   entry, then every top-level `definitions` entry whose name is not taken
   (`parser::extract_schemas`). A `definitions` entry that
-  `models::Schema` cannot deserialise (`parsesAsSchema`: a typed key such as
-  `required`, `nullable` or `items` holding the wrong JSON type, anywhere in
-  the entry) is a component all the same, kept exactly as written, with
-  none of the deserialisation's normalisation; changes inside it are
-  compared and rated like any other (#188, which dropped it, so they went
-  unreported), and the diff report and stderr name it. A `$ref` names a component when it is
+  `models::Schema` cannot deserialise is a component all the same, kept
+  exactly as written, with none of the deserialisation's normalisation
+  (#188, which dropped it, so changes inside it went unreported).
+  `parsesAsSchema` decides this: the entry is not an object, or one of its
+  typed keys (`title`, `type`, `required`, `nullable`, `items`, ...) holds
+  the wrong JSON type, where the check recurses only through the typed
+  schema keys (`properties` values, `items`, `allOf`/`oneOf`/`anyOf`
+  members, an object `additionalProperties`), as serde does; a malformed
+  value under any other key (`not`, `x-*`, `default`, ...) is an extension
+  and parses. Changes inside such an entry are compared as for any other
+  component and **fail closed** (`Severity.failClosed`): one the rule
+  table leaves to review is Breaking, while Breaking and Non-breaking
+  verdicts stand, so `--fail-on-breaking` trips on any change there; the
+  retarget record of a pair is not inside the entry and stays Review. The
+  diff report, stderr and the v2 JSON `warnings` name the entry. A `$ref` names a component when it is
   `#/components/schemas/NAME` or `#/definitions/NAME`, in either kind of
   document, with the token decoded (`~1` is `/`, `~0` is `~`). The two
   spellings are the same name everywhere below. Any other `$ref`, or one
@@ -369,12 +379,23 @@ comparison), with three rules at a schema position holding a `$ref`:
    expansion recurs deeper on the chain the rest is periodic and nothing more
    is reported, and where it recurs at the same position (an alias loop such
    as `X = {"$ref": X, "type": "array"}`) its value is the fixpoint: the
-   merged siblings without `$ref`. The Rust (`PairResolver::expanded`) keys
-   the cut the same way, on the value pair and its path, and additionally
-   compares a reference as written once 64 one-sided expansions are on the
-   chain (`MAX_RESOLVE_DEPTH`), which bounds the work; before #187 it cut on
-   a component *name* already expanded on that side, comparing a literal
-   `$ref` with the other side's expansion.
+   merged siblings without `$ref`. Two limits apply (`spent`, the Rust's
+   `LocalWalk::spend`): once 64 one-sided expansions are on the chain
+   (`maxResolveDepth`), and once the walk has made `expansionBudget`
+   (4,096) of them in all, a one-sided reference is compared as written
+   (rule 3), which reports its `$ref` added or removed there: a cut is
+   visible, never "no changes". The chain cut bounds each chain; only the
+   budget bounds the walk, since two reference cycles of lengths `a` and
+   `b` facing each other branch until the pair recurs about `a·b` levels
+   down (exponential work without it, #195 review). The budget is spent in
+   walk order, so the walk has one: objects key by key in key order
+   (`byKey`; the Rust sorts shared keys too), arrays by index, depth first.
+   The largest walk measured on real specs makes 2 expansions; Stripe with
+   every response inlined three levels deep, 300. The Rust
+   (`PairResolver::expanded`) keys the cut the same way, on the value pair
+   and its path; before #187 it cut on a component *name* already expanded
+   on that side, comparing a literal `$ref` with the other side's
+   expansion.
 3. **As written.** Anything else (a reference facing a non-object or
    nothing, two undeclared references, a value present on one side only) is
    compared as written. A subtree present on one side only is one
@@ -548,13 +569,30 @@ check) had a check that failed when that tightening alone was reverted
 (`q1e`, `q1b` with `OWNER`, `q1d` respectively); they now guard against the
 rule coming back loose. `n187a` drops the Breaking record beneath the old
 name cut and injects the literal `$ref removed` record the cut produced;
-`n188` drops a change inside an unparseable `definitions` entry. Use reach follows every reference
+`n188` drops a change inside an unparseable `definitions` entry; `n187b`
+and `n187c` drop the visible `$ref` record past the budget and the chain
+cap; `n188b` re-rates a fail-closed record Review. Use reach follows every reference
 in the exported schemas. The model exports them canonicalised, so no
 annotation (an `x-*` or `example` holding a `$ref`, even beside a `$ref`) is
 left to skip; the harness asserts that instead of skipping silently, which
 matters only if the export ever carries raw schemas. The `g*` cases put
 components outside the grammar (#186): dropping or re-rating a record there,
 or a grammar record of a component also inlined there, must fail.
+
+Known limits of one-sided expansion (#187):
+
+* A no-op that needs more than 64 one-sided expansions on one chain, or
+  more than 4,096 in one walk, to line up (a recursive component unrolled
+  differently on each side, deep enough) is compared as written past the
+  limit: a Review `$ref` record plus whatever the literal comparison shows
+  (a `type` added is Breaking), so it can exit 3 (`r9-cap`,
+  `r9-budget-over`). Below the limits it reports nothing (`r9-budget-under`).
+  The model has the same limits, so the harness agrees.
+* Only a change owned by a component pair fails closed for an unparseable
+  entry (#188). When such an entry is expanded one-sidedly against an
+  inline schema its changes belong to the use and keep the table's verdict,
+  and the v2 named-type surface lists valid schemas only, so it reports the
+  entry's type as removed or added (Review) when only one side parses.
 
 Known limits of inlining (each matches the resolver before #182):
 

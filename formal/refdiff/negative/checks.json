@@ -124,6 +124,25 @@
       "OP": "drop-any",
       "PTR": "/properties/a/type",
       "why": "A change inside a `definitions` entry that does not deserialise is still compared (#188): dropping it is caught."
+    },
+    {
+      "case": "n187b",
+      "OP": "drop",
+      "PTR": "/properties/p1",
+      "why": "Past the expansion budget (#187 review) a one-sided reference is compared as written, so the cut is a visible `$ref` record: dropping it (a silent cut) is caught."
+    },
+    {
+      "case": "n187c",
+      "OP": "drop",
+      "PTR": "/properties/p0",
+      "why": "Past 64 one-sided expansions on a chain the reference is compared as written, in the model too: dropping the `$ref` record there is caught."
+    },
+    {
+      "case": "n188b",
+      "OP": "rate",
+      "PTR": "/properties",
+      "SEV": "review",
+      "why": "A change inside an unparseable `definitions` entry that the table leaves to review fails closed as Breaking (#188 review): re-rating it Review is caught."
     }
   ]
 }

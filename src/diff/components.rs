@@ -168,7 +168,12 @@ impl<'r, 'a> Components<'r, 'a> {
                 old: old.clone(),
                 new: new.clone(),
             };
-            for change in &pair_changes[index] {
+            // A side that does not deserialise as a schema (#188) makes the
+            // pair's own changes fail closed; the retarget record (first,
+            // when the names differ) is not inside either entry.
+            let unparsed = self.resolver.old.is_unparsed(old) || self.resolver.new.is_unparsed(new);
+            for (position, change) in pair_changes[index].iter().enumerate() {
+                let unparsed = unparsed && !(old != new && position == 0);
                 let reaching = reach.uses_of(index, &change.pointer);
                 for direction in [Direction::Request, Direction::Response] {
                     // Plain uses keep the directional verdict; uses reaching
@@ -191,6 +196,7 @@ impl<'r, 'a> Components<'r, 'a> {
                                 direction,
                                 change: change.clone(),
                                 negated,
+                                unparsed,
                                 uses,
                             },
                         });

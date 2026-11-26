@@ -94,7 +94,7 @@ import VimanamProofs.Severity
 namespace Vimanam.RefDiff
 
 open Vimanam.Severity (Pointer Kind Val Severity Node Loc locate underNot
-  requestSeverity responseSeverity)
+  requestSeverity responseSeverity failClosed)
 
 /-! ## JSON -/
 
@@ -386,11 +386,21 @@ grammar is replaced by: `DocResolver::component_value`). The same names. -/
 structure Side where
   comps : List (String × J)
   raw : List (String × J)
+  /-- The `definitions` entries that do not deserialise as a schema (#188). -/
+  unparsed : List String := []
 
 def Side.target (s : Side) (name : String) : J := (s.comps.lookup name).getD .null
 
 /-- `resolve::MAX_RESOLVE_DEPTH`. -/
 def maxResolveDepth : Nat := 64
+
+/-- `resolve::EXPANSION_BUDGET`: one-sided expansions one local walk may make
+(#187 review). Cutting on a recurring pair bounds each chain, but not the
+tree of chains: two cycles of lengths `a` and `b` facing each other branch
+until the pair recurs, about `a·b` levels deep, so the walk is exponential
+in that. Past the budget a one-sided reference is compared as written, which
+always reports a `$ref` added or removed there (Review), never nothing. -/
+def expansionBudget : Nat := 4096
 
 /-- `j` as a reference to a component this side declares: the name and the
 siblings (every key but `$ref`). An undeclared or external reference is
@@ -497,6 +507,8 @@ structure Out where
   hops : Array Hop := #[]
   /-- Where a one-sided expansion was cut (the rest repeats periodically). -/
   cuts : Array Pointer := #[]
+  /-- One-sided expansions made so far (`expansionBudget`). -/
+  expansions : Nat := 0
 
 abbrev W := StateM Out
 
@@ -605,6 +617,22 @@ def setCmp (os ns : Side) (p : Pointer) (xs ys : List J) : W Unit := do
   for x in (xs.filter ys.contains).eraseDups do
     rawCmp .opaq (p ++ [setSegment x]) (os.inline [] x) (ns.inline [] x)
 
+/-- An object's entries in key order. -/
+def byKey (kvs : List (String × J)) : List (String × J) :=
+  kvs.mergeSort fun a b => decide (a.1 ≤ b.1)
+
+/-- Whether a one-sided expansion is refused here, and otherwise counts it:
+refused once `maxResolveDepth` expansions are on the chain, or once the walk
+has made `expansionBudget` of them (`PairResolver::local`). A refused
+reference is compared as written (`plain`), which reports its `$ref` added
+or removed. The budget is spent in walk order: objects key by key in key
+order, arrays by index, depth first. -/
+def spent (chain : List (Pointer × J × J)) : W Bool := do
+  let out ← get
+  if chain.length ≥ maxResolveDepth || out.expansions ≥ expansionBudget then return true
+  set { out with expansions := out.expansions + 1 }
+  return false
+
 mutual
 
 /-- Compares `o` and `n` at `p` (a `node` of the schema grammar), resolving
@@ -628,17 +656,21 @@ partial def go (os ns : Side) (chain : List (Pointer × J × J)) (node : Node) (
   match ro, rn with
   | some (x, so), some (y, sn) =>
     let mask := so.map (·.1) ++ (sn.map (·.1)).filter (fun k => !(so.any (·.1 == k)))
-    for k in mask do
+    -- In key order, as everywhere: the expansion budget is spent in walk
+    -- order, so both implementations must walk alike.
+    for k in sortDedup mask do
       goOpt os ns chain (node.child k) (p ++ [k])
         (so.lookup k <|> os.resolvedKey x k) (sn.lookup k <|> ns.resolvedKey y k)
     modify fun out => { out with hops := out.hops.push ⟨p, x, y, sortDedup mask⟩ }
   | some (x, so), none =>
     if n.isObj then
+      if ← spent chain then plain os ns chain node p o n else
       let o' := merge (os.target x) so
       expand os ns chain node p o' n
     else plain os ns chain node p o n
   | none, some (y, sn) =>
     if o.isObj then
+      if ← spent chain then plain os ns chain node p o n else
       let n' := merge (ns.target y) sn
       expand os ns chain node p o n'
     else plain os ns chain node p o n
@@ -680,9 +712,10 @@ partial def plain (os ns : Side) (chain : List (Pointer × J × J)) (node : Node
     (o n : J) : W Unit := do
   match o, n with
   | .obj ok, .obj nk =>
-    for (k, ov) in ok do
+    -- In key order (`byKey`), as the Rust walks: see `spent`.
+    for (k, ov) in byKey ok do
       goOpt os ns chain (node.child k) (p ++ [k]) (some ov) (nk.lookup k)
-    for (k, nv) in nk do
+    for (k, nv) in byKey nk do
       if (ok.lookup k).isNone then
         goOpt os ns chain (node.child k) (p ++ [k]) none (some nv)
   | .arr xs, .arr ys =>
@@ -728,8 +761,8 @@ def walk (os ns : Side) (o n : J) : Out :=
   ((go os ns [] .schema [] o n).run {}).2
 
 #guard
-  let s : Side := ⟨[("A", .obj [("type", .str "string")])], [("A", .obj [("type", .str "string")])]⟩
-  let t : Side := ⟨[("A", .obj [("type", .str "integer")])], [("A", .obj [("type", .str "integer")])]⟩
+  let s : Side := ⟨[("A", .obj [("type", .str "string")])], [("A", .obj [("type", .str "string")])], []⟩
+  let t : Side := ⟨[("A", .obj [("type", .str "integer")])], [("A", .obj [("type", .str "integer")])], []⟩
   let r := .obj [("$ref", .str "#/components/schemas/A"), ("nullable", .bool true)]
   let out := walk s t r r
   -- The sibling is compared at the use (unchanged); the target via a hop.
@@ -742,7 +775,7 @@ def walk (os ns : Side) (o n : J) : Out :=
 #guard
   let b : J := .obj [("type", .str "object"), ("properties", .obj [
     ("data", .obj [("$ref", .str "#/components/schemas/B")]), ("x", .obj [("type", .str "string")])])]
-  let s : Side := ⟨[("B", b)], [("B", b)]⟩
+  let s : Side := ⟨[("B", b)], [("B", b)], []⟩
   let unrolled (inner : J) : J := .obj [("type", .str "object"), ("properties", .obj [
     ("data", .obj [("type", .str "object"), ("properties", .obj [
       ("data", inner), ("x", .obj [("type", .str "string")])])]),
@@ -806,10 +839,10 @@ def side (doc : J) : Side :=
     | _ => []
   let comps := (entries ((doc.field? "components").bind (·.field? "schemas"))).map
     fun (k, v) => (k, schemaNorm v)
-  let defs := ((entries (doc.field? "definitions")).filter fun (k, _) => (comps.lookup k).isNone).map
-    fun (k, v) => (k, if parsesAsSchema v then schemaNorm v else v)
-  let all := comps ++ defs
-  ⟨all.map fun (k, v) => (k, canon v), all⟩
+  let defs := (entries (doc.field? "definitions")).filter fun (k, _) => (comps.lookup k).isNone
+  let all := comps ++ defs.map fun (k, v) => (k, if parsesAsSchema v then schemaNorm v else v)
+  ⟨all.map fun (k, v) => (k, canon v), all,
+    (defs.filter fun (_, v) => !parsesAsSchema v).map (·.1)⟩
 
 /-- Endpoint matching: exact `(METHOD, path)`. Move pairing (operationId,
 `v<digits>` segments) only renames the use in Markdown and v2 output; the v1
@@ -950,6 +983,9 @@ structure Rec where
   ptr : Pointer
   ch : Ch
   neg : Bool
+  /-- The owner pair has a side that is a `definitions` entry that does not
+  deserialise (#188); never set on a retarget fact. -/
+  unparsed : Bool := false
   deriving Inhabited
 
 instance : BEq Rec where
@@ -957,11 +993,13 @@ instance : BEq Rec where
     && a.ch == b.ch && a.neg == b.neg
 
 /-- The verdict: Review under `not` and for retargets, otherwise the
-direction's table on the owner-relative pointer. -/
+direction's table on the owner-relative pointer; inside a pair with an
+unparseable side (#188), `failClosed` makes a Review Breaking. -/
 def Rec.severity (r : Rec) : Severity :=
   match r.ch with
   | .retargeted _ _ => .review
   | c =>
+    failClosed r.unparsed <|
     if r.neg then .review else
     match r.dir with
     | .request => requestSeverity r.ptr c.kind
@@ -1016,8 +1054,10 @@ def groupedUse (os ns : Side) (u : Use) : List Rec :=
   let fromPairs := states.flatMap fun s =>
     let (facts, _) := pairContent os ns s.old s.new
     let own := Owner.pair s.old s.new
+    let unparsed := os.unparsed.contains s.old || ns.unparsed.contains s.new
     let vis := (facts.filter (visible s.mask ·.1)).map fun (p, c) =>
-      ({ use := u.id, dir := u.dir, owner := own, ptr := p, ch := c, neg := s.neg } : Rec)
+      ({ use := u.id, dir := u.dir, owner := own, ptr := p, ch := c, neg := s.neg,
+         unparsed } : Rec)
     if s.old == s.new then vis
     else { use := u.id, dir := u.dir, owner := own, ptr := [], ch := .retargeted s.old s.new,
            neg := s.neg } :: vis

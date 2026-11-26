@@ -24,7 +24,8 @@ file only.
   (`diff_values`) never reports `Changed a a`; theorems that need this take
   `Kind.Wf`.
 * A `ComponentSchemaChanged` (#181) keeps its direction, `negated` flag and
-  change; which component and which uses it reports are dropped.
+  change; which component and which uses it reports are dropped. Its
+  `unparsed` flag (#188) is `failClosed` applied to that verdict.
 * `ParameterAdded`, `EndpointRemoved` and the other structural changes keep
   only the fields `severity` reads (names, locations and statuses are
   dropped; an `operationId` is reduced to present or absent).
@@ -295,5 +296,28 @@ def severity : Change → Severity
   | .componentSchemaChanged _ true _ _ => .review
   | .componentSchemaChanged .request false p k => requestSeverity p k
   | .componentSchemaChanged .response false p k => responseSeverity p k
+
+/-- #188: a change inside a component pair one of whose sides is a
+`definitions` entry that does not deserialise as a schema (kept as written)
+fails closed. The spec is invalid there, so a change the table cannot
+classify (Review) is Breaking; Breaking and Non-breaking verdicts stand.
+The retarget record of a pair is never inside the entry and is not passed
+through this (`unparsed` is false for it). -/
+def failClosed (unparsed : Bool) (s : Severity) : Severity :=
+  if unparsed && s == .review then .breaking else s
+
+/-- `diff::severity` on a `ComponentSchemaChanged` whose `unparsed` flag is
+set: never Review. -/
+theorem failClosed_never_review (s : Severity) : failClosed true s ≠ .review := by
+  cases s <;> decide
+
+/-- Without the flag nothing changes. -/
+theorem failClosed_plain (s : Severity) : failClosed false s = s := by
+  cases s <;> rfl
+
+/-- It only ever raises Review: a classified verdict stands. -/
+theorem failClosed_keeps_classified (u : Bool) (s : Severity) (h : s ≠ .review) :
+    failClosed u s = s := by
+  cases u <;> cases s <;> simp_all [failClosed]
 
 end Vimanam.Severity

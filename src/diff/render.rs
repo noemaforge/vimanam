@@ -486,7 +486,7 @@ mod tests {
         write_diff(&mut buffer, &diff, None).unwrap();
         assert_eq!(
             String::from_utf8(buffer).unwrap(),
-            "# API Diff: API 1 → 2\n\n> **Warning:** `definitions/Bad` in the new spec is not \
+            "# API Diff: API 1 → 2\n\n> **Warning:** `/definitions/Bad` in the new spec is not \
              a valid schema (invalid type); it was compared as written.\n\n\
              **Summary:** No changes.\n"
         );

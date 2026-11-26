@@ -385,6 +385,7 @@ fn json_records(change: &Change) -> Vec<JsonChange> {
             component,
             change: value,
             negated,
+            unparsed,
             uses,
             ..
         } => uses
@@ -392,7 +393,13 @@ fn json_records(change: &Change) -> Vec<JsonChange> {
             .map(|use_| {
                 record(
                     &use_.endpoint,
-                    component_kind_and_details(component, *negated, value, &use_.location),
+                    component_kind_and_details(
+                        component,
+                        *negated,
+                        *unparsed,
+                        value,
+                        &use_.location,
+                    ),
                     level,
                 )
             })
@@ -446,6 +453,7 @@ fn details(entries: Vec<(&'static str, Value)>) -> JsonDetails {
 pub(crate) fn component_kind_and_details(
     component: &ComponentRef,
     negated: bool,
+    unparsed: bool,
     change: &ValueChange,
     location: &UseLocation,
 ) -> (JsonChangeKind, JsonDetails) {
@@ -461,17 +469,20 @@ pub(crate) fn component_kind_and_details(
             vec![("status", json!(status))],
         ),
     };
-    entries.extend(component_entries(component, negated));
+    entries.extend(component_entries(component, negated, unparsed));
     entries.push(("schema_change", json!(json_schema_change(change))));
     (kind, details(entries))
 }
 
 /// `component`, plus `old_component` when the reference was retargeted and
-/// `under_not: true` when the uses reach the component through `not` (only
-/// then, so other records keep their IDs).
+/// `under_not: true` when the uses reach the component through `not`, and
+/// `unparsed_definition: true` when a side is a `definitions` entry that is
+/// not a valid schema (#188) (each only then, so other records keep their
+/// IDs).
 pub(crate) fn component_entries(
     component: &ComponentRef,
     negated: bool,
+    unparsed: bool,
 ) -> Vec<(&'static str, Value)> {
     let mut entries = vec![("component", Value::String(component.new.clone()))];
     if component.renamed() {
@@ -479,6 +490,9 @@ pub(crate) fn component_entries(
     }
     if negated {
         entries.push(("under_not", Value::Bool(true)));
+    }
+    if unparsed {
+        entries.push(("unparsed_definition", Value::Bool(true)));
     }
     entries
 }
@@ -598,9 +612,10 @@ pub(crate) fn json_kind_and_details(kind: &ChangeKind) -> (JsonChangeKind, JsonD
             component,
             change,
             negated,
+            unparsed,
             uses,
             ..
-        } => component_kind_and_details(component, *negated, change, &uses[0].location),
+        } => component_kind_and_details(component, *negated, *unparsed, change, &uses[0].location),
     }
 }
 

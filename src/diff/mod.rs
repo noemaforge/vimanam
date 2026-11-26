@@ -231,6 +231,12 @@ pub enum ChangeKind {
         /// reverses every compatibility direction, so such a record is
         /// Review; uses that reach it plainly are a separate record.
         negated: bool,
+        /// Whether either side of the pair is a `definitions` entry that does
+        /// not deserialise as a schema, compared as written (#188); never
+        /// set on the `/$ref` retarget record. The spec is invalid there, so
+        /// a change the rule table leaves to review is Breaking instead:
+        /// `--fail-on-breaking` fails closed.
+        unparsed: bool,
         /// Every parameter, request body or response of this direction that
         /// reaches the component, directly or through other components, in
         /// report order.
@@ -383,14 +389,54 @@ pub struct UnparsedDefinition {
     pub error: String,
 }
 
+impl UnparsedDefinition {
+    /// The entry's JSON pointer in its spec (`/definitions/<name>`, the name
+    /// encoded).
+    pub fn pointer(&self) -> String {
+        value::pointer_of(&["definitions".to_string(), self.name.clone()])
+    }
+}
+
+/// `text` as a Markdown code span on one line: control characters escaped
+/// (`\n`, `\u{..}`) and fenced with more backticks than any run inside it.
+fn code_span(text: &str) -> String {
+    let text: String = text
+        .chars()
+        .map(|c| {
+            if c.is_control() {
+                c.escape_default().collect()
+            } else {
+                c.to_string()
+            }
+        })
+        .collect();
+    let mut longest = 0;
+    let mut run = 0;
+    for c in text.chars() {
+        run = if c == '`' { run + 1 } else { 0 };
+        longest = longest.max(run);
+    }
+    let fence = "`".repeat(longest + 1);
+    let pad = if text.starts_with('`') || text.ends_with('`') {
+        " "
+    } else {
+        ""
+    };
+    format!("{fence}{pad}{text}{pad}{fence}")
+}
+
 impl std::fmt::Display for UnparsedDefinition {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let error: String = self
+            .error
+            .chars()
+            .map(|c| if c.is_control() { ' ' } else { c })
+            .collect();
         write!(
             f,
-            "`definitions/{}` in the {} spec is not a valid schema ({}); it was compared as written",
-            self.name,
+            "{} in the {} spec is not a valid schema ({error}); it was compared as written",
+            code_span(&self.pointer()),
             if self.old { "old" } else { "new" },
-            self.error
         )
     }
 }
@@ -619,13 +665,31 @@ pub fn severity(change: &Change) -> Severity {
         ChangeKind::OperationIdChanged { .. } => Severity::Breaking,
         ChangeKind::DeprecatedChanged { .. } => Severity::NonBreaking,
         ChangeKind::ResponseSchemaChanged { change, .. } => response_schema_severity(change),
-        ChangeKind::ComponentSchemaChanged { negated: true, .. } => Severity::Review,
         ChangeKind::ComponentSchemaChanged {
-            direction, change, ..
-        } => match direction {
-            Direction::Request => request_schema_severity(change),
-            Direction::Response => response_schema_severity(change),
-        },
+            direction,
+            change,
+            negated,
+            unparsed,
+            ..
+        } => fail_closed(
+            *unparsed,
+            match (negated, direction) {
+                (true, _) => Severity::Review,
+                (false, Direction::Request) => request_schema_severity(change),
+                (false, Direction::Response) => response_schema_severity(change),
+            },
+        ),
+    }
+}
+
+/// #188: inside a component pair with a side that does not deserialise as a
+/// schema, a change the table leaves to review is Breaking; classified
+/// verdicts stand (Severity.lean's `failClosed`).
+fn fail_closed(unparsed: bool, severity: Severity) -> Severity {
+    if unparsed && severity == Severity::Review {
+        Severity::Breaking
+    } else {
+        severity
     }
 }
 
@@ -1403,6 +1467,7 @@ pub(crate) mod test_support {
             direction,
             change,
             negated: false,
+            unparsed: false,
             uses: vec![SchemaUse {
                 endpoint: endpoint(),
                 location: UseLocation::Response {

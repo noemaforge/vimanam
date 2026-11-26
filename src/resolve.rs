@@ -40,6 +40,17 @@ use crate::utils::decode_json_pointer_token;
 /// nesting cap: the diff must see a change however deep it sits.
 pub(crate) const MAX_RESOLVE_DEPTH: usize = 64;
 
+/// One-sided expansions one [`PairResolver::localize`] walk may make (#187
+/// review). Cutting where an expanded pair recurs bounds each chain, but not
+/// the tree of chains: two reference cycles of lengths `a` and `b` facing
+/// each other branch until the pair recurs, about `a·b` levels down, so the
+/// walk is exponential in that. Past the budget a one-sided reference is
+/// compared as written, which reports its `$ref` added or removed there
+/// (Review): a cut is visible, never silent. The largest walk on the real
+/// specs measured needs far fewer (see `formal/README.md`); RefDiff.lean's
+/// `expansionBudget` is the same number.
+pub(crate) const EXPANSION_BUDGET: usize = 4096;
+
 /// The component name a schema `$ref` points at, for the two forms the parser
 /// collects into `ApiDocumentation::schemas`: `#/components/schemas/Name` and
 /// `#/definitions/Name`. `None` for any other reference shape, which never
@@ -508,6 +519,21 @@ fn overlay_keys(map: &Map<String, Value>) -> impl Iterator<Item = &String> {
     })
 }
 
+impl LocalWalk<'_> {
+    /// Whether a one-sided expansion may be made here, counting it if so:
+    /// refused once [`MAX_RESOLVE_DEPTH`] expansions are on the chain or the
+    /// walk has made [`EXPANSION_BUDGET`] of them. The walk visits objects key
+    /// by key in key order, arrays by index, depth first, so where the budget
+    /// runs out does not depend on how a spec orders its keys.
+    fn spend(&mut self) -> bool {
+        if self.chain.len() >= MAX_RESOLVE_DEPTH || self.expansions >= EXPANSION_BUDGET {
+            return false;
+        }
+        self.expansions += 1;
+        true
+    }
+}
+
 /// One entry of [`LocalWalk::chain`].
 struct Expansion {
     path: Vec<String>,
@@ -521,6 +547,8 @@ struct LocalWalk<'w> {
     /// each with the path it was produced at (#187). The walk is a function
     /// of the pair it compares, so meeting one again means the rest repeats.
     chain: Vec<Expansion>,
+    /// One-sided expansions made so far ([`EXPANSION_BUDGET`]).
+    expansions: usize,
     /// JSON depth below the walked schema, and the top-level key the walk is
     /// under (see [`RefEdge::at`]).
     depth: usize,
@@ -564,6 +592,15 @@ impl DocResolver<'_> {
             seen.push(next.clone());
             current = self.component(&next)?;
         }
+    }
+
+    /// Whether component `name` is a `definitions` entry that does not
+    /// deserialise as a schema (#188).
+    pub(crate) fn is_unparsed(&self, name: &str) -> bool {
+        !self.schemas.contains_key(name)
+            && self
+                .unparsed
+                .is_some_and(|unparsed| unparsed.contains_key(name))
     }
 
     /// Whether this document declares component `name`.
@@ -694,6 +731,7 @@ impl PairResolver<'_> {
     ) -> (Value, Value) {
         let mut walk = LocalWalk {
             chain: Vec::new(),
+            expansions: 0,
             depth: 0,
             top: None,
             negated: false,
@@ -871,18 +909,16 @@ impl PairResolver<'_> {
                         });
                         self.local_maps(&old_effective, &new_effective, role, walk)
                     }
-                    (Some(_), None) if walk.chain.len() < MAX_RESOLVE_DEPTH => {
-                        match self.old.merge_target(before) {
-                            Some(expanded) => self.expanded(expanded, new.clone(), role, walk),
-                            None => self.local_maps(before, after, role, walk),
-                        }
-                    }
-                    (None, Some(_)) if walk.chain.len() < MAX_RESOLVE_DEPTH => {
-                        match self.new.merge_target(after) {
-                            Some(expanded) => self.expanded(old.clone(), expanded, role, walk),
-                            None => self.local_maps(before, after, role, walk),
-                        }
-                    }
+                    // Refused past the cap or the budget (`spend`): compared
+                    // as written below.
+                    (Some(_), None) if walk.spend() => match self.old.merge_target(before) {
+                        Some(expanded) => self.expanded(expanded, new.clone(), role, walk),
+                        None => self.local_maps(before, after, role, walk),
+                    },
+                    (None, Some(_)) if walk.spend() => match self.new.merge_target(after) {
+                        Some(expanded) => self.expanded(old.clone(), expanded, role, walk),
+                        None => self.local_maps(before, after, role, walk),
+                    },
                     _ => self.local_maps(before, after, role, walk),
                 }
             }
@@ -959,25 +995,40 @@ impl PairResolver<'_> {
         role: Role,
         walk: &mut LocalWalk,
     ) -> (Value, Value) {
-        let mut left = Map::new();
-        let mut shared: HashMap<&str, Value> = HashMap::new();
+        // Shared keys are walked in key order, whatever order either side
+        // writes them in: the expansion budget is spent in walk order, and
+        // the reference model walks the same way. The results keep each
+        // side's own key order.
+        let mut keys: Vec<&String> = before
+            .keys()
+            .filter(|key| after.contains_key(*key))
+            .collect();
+        keys.sort_unstable();
+        let mut walked: HashMap<&str, (Value, Value)> = HashMap::with_capacity(keys.len());
         let outer_top = walk.top.clone();
+        for key in keys {
+            let (old_child, new_child) = (&before[key.as_str()], &after[key.as_str()]);
+            if walk.depth == 0 {
+                walk.top = Some(key.clone());
+            }
+            // The same grammar `under_not` walks: a `not` keyword of a schema
+            // object (never a property named `not`).
+            let outer_negated = walk.negated;
+            walk.negated |= role == Role::Schema && key == "not";
+            walk.depth += 1;
+            walk.path.push(key.clone());
+            let pair = self.local(old_child, new_child, role.child(key), walk);
+            walk.path.pop();
+            walk.depth -= 1;
+            walk.negated = outer_negated;
+            walked.insert(key.as_str(), pair);
+        }
+        walk.top = outer_top;
+        let mut shared: HashMap<&str, Value> = HashMap::with_capacity(walked.len());
+        let mut left = Map::new();
         for (key, old_child) in before {
-            match after.get(key) {
-                Some(new_child) => {
-                    if walk.depth == 0 {
-                        walk.top = Some(key.clone());
-                    }
-                    // The same grammar `under_not` walks: a `not` keyword of
-                    // a schema object (never a property named `not`).
-                    let outer_negated = walk.negated;
-                    walk.negated |= role == Role::Schema && key == "not";
-                    walk.depth += 1;
-                    walk.path.push(key.clone());
-                    let (a, b) = self.local(old_child, new_child, role.child(key), walk);
-                    walk.path.pop();
-                    walk.depth -= 1;
-                    walk.negated = outer_negated;
+            match walked.remove(key.as_str()) {
+                Some((a, b)) => {
                     left.insert(key.clone(), a);
                     shared.insert(key.as_str(), b);
                 }
@@ -986,7 +1037,6 @@ impl PairResolver<'_> {
                 }
             }
         }
-        walk.top = outer_top;
         let right = after
             .iter()
             .map(|(key, new_child)| {
