@@ -265,11 +265,13 @@ fn c0_inline_per_use(spec: &str, extra: &[&str]) -> (u64, bool) {
 }
 
 /// A bounded `--costs` measurement covers exactly the per-schema budget of
-/// rows, more than any unbounded one, so growing the graph past the budget
-/// never makes a schema look cheaper: at 9 × 3, C0's expansion fits (about
-/// 4,700 rows); from 10 × 3 it is bounded, and the figure keeps growing.
+/// rows, at least as many as any unbounded one, so on uniform n × 3 graphs
+/// growing past the budget never makes C0 look cheaper: at 9 × 3 its
+/// expansion fits (about 4,700 rows); from 10 × 3 it is bounded, and the
+/// figure keeps growing. (Rows vary in length, so across different schemas
+/// an unbounded figure can still be the larger one.)
 #[test]
-fn bounded_costs_figures_never_rank_below_unbounded_ones() {
+fn bounded_costs_figures_do_not_drop_as_uniform_graphs_grow() {
     let dir = tempfile::tempdir().unwrap();
     let mut last = 0;
     for (n, expect_bounded) in [(9, false), (10, true), (12, true)] {

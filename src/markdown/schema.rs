@@ -110,7 +110,8 @@ pub(crate) const INLINE_ROW_BUDGET: usize = 2_000_000;
 /// schema separately, so its total work is this budget times the schema count;
 /// [`INLINE_ROW_BUDGET`] per schema would take minutes on a Stripe-sized dense
 /// graph. A longer expansion is measured by exactly its first this-many rows,
-/// so a bounded figure always covers more rows than any unbounded one. Real
+/// so a bounded figure covers at least as many rows as any unbounded one
+/// (with longer rows, an unbounded figure can still be larger). Real
 /// specs stay far below it (the largest single expansion in the local corpus
 /// is under 3 thousand rows), so their reports are unchanged.
 #[cfg(feature = "cli")]
