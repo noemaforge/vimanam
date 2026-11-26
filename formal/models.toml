@@ -26,8 +26,8 @@
 
 [[model]]
 lean = "formal/VimanamProofs/Severity.lean"
-read_against = "88be623a50d7"
-read_digest = "v1:sha256:25444a551b631721a7f0c61454c4cbef808f7ce8ab7cba81cad47bb5f6df7d20"
+read_against = "b6a5e07cf104"
+read_digest = "v1:sha256:9585a0d6daf14b371e7c187680d8cfe6082aec02fe6e57a9b522b6c83e462297"
 rust = [
   "src/diff/mod.rs#Severity",
   "src/diff/mod.rs#ChangeKind",
@@ -68,8 +68,8 @@ rust = [
 # drift, re-run the harness.
 [[model]]
 lean = "formal/VimanamProofs/RefDiff.lean"
-read_against = "3b836bbb6acf"
-read_digest = "v1:sha256:0431e7a38bad4d9db5b0f6c9fddf8a09ae70c319c700847b68e15c709cb49ba3"
+read_against = "b6a5e07cf104"
+read_digest = "v1:sha256:fae7c48fda573d7530c6c989929db04ee782673a9506f56fba0446948a48c99b"
 rust = [
   "src/resolve.rs#reference_name",
   "src/resolve.rs#DocResolver",
