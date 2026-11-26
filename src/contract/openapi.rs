@@ -1586,9 +1586,9 @@ fn append_deprecation_facts(
             status.clone(),
         );
         let at_place = seen.by_place.get(&place).map_or(&[][..], Vec::as_slice);
-        #[cfg(test)]
-        DEPRECATION_COMPARISONS.with(|count| count.set(count.get() + at_place.len()));
         let reported = at_place.iter().any(|&index| {
+            #[cfg(test)]
+            DEPRECATION_COMPARISONS.with(|count| count.set(count.get() + 1));
             let existing = &changes[index];
             media_type.is_none()
                 || (existing.subject == change.subject
@@ -2118,9 +2118,11 @@ mod tests {
 
     /// A deprecation fact is deduplicated against the facts at its place
     /// only (#196): scanning every change reported so far per fact was
-    /// quadratic. 100 properties deprecated in a body and a response, each
-    /// under 3 media types: 600 facts, each compared with at most the 2
-    /// others at its place, where a scan makes about 180,000 comparisons.
+    /// quadratic. 100 properties deprecated in two query parameters, a body
+    /// and a response, the last two under 3 media types: 700 facts, the
+    /// second parameter's 100 suppressed as duplicates of the first's, each
+    /// new fact compared with at most the 2 others at its place, where a
+    /// scan makes about 250,000 comparisons.
     #[test]
     fn deprecation_facts_are_deduplicated_by_place() {
         let properties = |deprecated: bool| -> Value {
@@ -2145,6 +2147,10 @@ mod tests {
                 "openapi": "3.0.0",
                 "info": {"title": "t", "version": "1"},
                 "paths": {"/x": {"post": {
+                    "parameters": [
+                        {"name": "a", "in": "query", "schema": body},
+                        {"name": "b", "in": "query", "schema": body}
+                    ],
                     "requestBody": {"content": content},
                     "responses": {"200": {"description": "ok", "content": content}}
                 }}},
@@ -2167,7 +2173,22 @@ mod tests {
             .iter()
             .filter(|change| change.native_kind == "schema_deprecation")
             .count();
-        assert_eq!(facts, 600);
+        // Query parameter `b`'s 100 facts share `a`'s places and are
+        // suppressed; the rest are the body's and response's 600.
+        assert_eq!(facts, 700);
+        let query_subjects: std::collections::BTreeSet<&str> = changes
+            .iter()
+            .filter(|change| {
+                change.native_kind == "schema_deprecation"
+                    && matches!(
+                        &change.native,
+                        super::NativeLocation::Openapi { parameter_in: Some(location), .. }
+                            if location == "query"
+                    )
+            })
+            .map(|change| change.subject.as_str())
+            .collect();
+        assert_eq!(query_subjects.len(), 1, "only `a` reports");
         let compared = super::DEPRECATION_COMPARISONS.with(std::cell::Cell::get);
         assert!(
             compared > 0 && compared <= 2 * facts,

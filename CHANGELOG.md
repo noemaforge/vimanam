@@ -128,9 +128,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   grows with the number of uses: their records are all reported. Uses that
   each compare a different pair still cost one budget per pair, and the
   memo keeps one extra copy of each compared pair's records for the whole
-  diff: on adversarial specs whose walks are cut, 381 MB instead of 287 MB
-  with five distinct pairs, and 494 MB instead of 420 MB (Markdown) or
-  1,096 MB instead of 1,003 MB (v1 JSON) with one shared pair. Real specs
+  diff. On the adversarial spec with five endpoints each comparing a
+  different cut pair, peak memory is 381 MB instead of 288 MB (Markdown),
+  839 MB instead of 763 MB (v1 JSON) and 1,094 MB instead of 1,027 MB (v2
+  JSON); with the five sharing one pair it is unchanged. Real specs
   measured (Stripe, OpenAI, an Endor Swagger 2 to OpenAPI 3 pair) use the
   same memory as before.
 - Git-ref `diff` reads committed blobs through one long-lived
