@@ -84,6 +84,7 @@ Conversion flags cannot be combined with subcommands (`diff`, `completions`, `ma
 | `--new-proto-path <DIR>` | `-I` | Import root for `NEW` only (repeatable; file-pair `.proto` diffs; replaces `-I` for that side) |
 | `--format <markdown\|json>` | `markdown` | Output Markdown diff report or JSON contract envelope |
 | `--contract <1\|2>` | `2` | JSON contract version (`1` is OpenAPI-only) |
+| `--omit-surfaces` | `false` | v2 JSON only: omit the full `old.contract`/`new.contract` surfaces, keeping hashes, `summary`, `changes` and `deltas` |
 | `--breaking <all\|wire\|source>` | `all` | Protobuf-only scope for `--fail-on-breaking` |
 | `--exact-paths` | `false` | OpenAPI-only: disable moved-operation pairing |
 | `--context` | `false` | GraphQL Markdown-only: append focused docs for affected new-schema root fields |

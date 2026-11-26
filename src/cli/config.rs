@@ -320,6 +320,12 @@ pub struct DiffArgs {
     #[arg(long, value_parser = clap::value_parser!(u8).range(1..=2), default_value_t = 2)]
     pub contract: u8,
 
+    /// `--format json` with contract v2 only: omit the full `old.contract` and
+    /// `new.contract` surfaces, keeping the input hashes, summary, changes
+    /// (with every ID) and deltas. Exit codes are unchanged
+    #[arg(long)]
+    pub omit_surfaces: bool,
+
     /// OpenAPI only: match operations by exact METHOD and path, reporting a
     /// moved operation (`/v1/x` → `/v2/x`, or a unique operationId at a new
     /// path) as removed plus added. `--format json --contract 1` always
