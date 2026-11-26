@@ -109,7 +109,9 @@ selectors/Skill manifest protection apply. Tests in `tests/protobuf.rs` and
 `tests/protobuf_cli.rs` cover pure-Rust source compilation, descriptor parity
 (CI installs a pinned checksum-verified `protoc` solely for the `protoc`
 descriptor parity test), and Git-ref resolution. See `docs/protobuf.md` and
-fixture provenance for limitations and native rules.
+fixture provenance for limitations and native rules. The rule table and
+`--breaking` gate are modelled in Lean (`formal/VimanamProofs/Protobuf.lean`,
+see "Formal model (Lean)").
 
 ## GraphQL adapter
 
@@ -130,15 +132,26 @@ is GraphQL-only. Tests: `tests/graphql.rs`, `tests/graphql_cli.rs`; see
 
 ## Formal model (Lean)
 
-`formal/` is a Lean 4 model of the `diff` severity rule table (`severity`,
-the request/response schema tables, `became`/`at_default` (keyword defaults,
-#184), `locate`, `under_not`, and the
-`diff_values` enum reporting) with direction theorems; see
-`formal/README.md`. No Mathlib, pinned toolchain, `lake build --wfail`, axiom
-audit (`scripts/formal/check-axiom-audit.sh`). `lake exe oracle` writes
-`formal/oracle/*.json`, which `src/diff/formal_oracle.rs` replays through the
-real Rust in `cargo test`: a rule-table change that disagrees with the model
-fails there. Changing a modelled item in `src/diff/` makes
-`scripts/formal/check-model-drift.py` warn until the model is re-read and
-bumped (`--bump Severity`); change the Lean model and regenerate the vectors
-together with a deliberate rule change.
+`formal/` holds three Lean 4 models; see `formal/README.md`.
+Severity/Direction models the `diff` rule table (`severity`, the
+request/response schema tables, `became`/`at_default` (keyword defaults,
+#184), `locate`, `under_not`, the
+`diff_values` enum reporting) with direction theorems; RefDiff is an executable,
+theorem-free reference model of `$ref`-aware schema diffs (#181) checked by
+`scripts/formal/refdiff-harness.py`; Protobuf models
+`src/contract/protobuf.rs` (`rule`, `native_kind`, `breaking_gate`) plus a
+one-message/one-enum fragment diff with wire/source hazard theorems. No
+Mathlib, pinned toolchain, `lake build --wfail`, axiom audit
+(`scripts/formal/check-axiom-audit.sh`). `lake exe oracle` writes
+`formal/oracle/*.json`; `src/diff/formal_oracle.rs` and
+`src/contract/protobuf/formal_oracle.rs` replay them through the real Rust in
+`cargo test` (`variants!` gates force new `ChangeKind`s into the model), so a
+rule change that disagrees with the model fails there. Changing a modelled item
+makes `scripts/formal/check-model-drift.py` warn until the model is re-read and
+bumped (`--bump Severity`, `--bump Protobuf`); change the Lean model and
+regenerate the vectors together with a deliberate rule change. Known gaps are
+pinned: fixing #190 (enum label moved onto a used number passes the wire gate)
+fails `cargo test` until the `known_gap: 190` oracle pin and the
+`enum_*_moved_wire_gap` finding theorems are removed; fixing #192
+(`presence`/`syntax` wire evidence) likewise needs the pinned
+`attribute_wire_evidence` rows and regenerated vectors.

@@ -313,6 +313,8 @@ fn replay(rust: &str, cases: &[Value], seen: &mut BTreeSet<&'static str>) -> Vec
 #[test]
 fn oracle() {
     let replayed = ["Severity.json"];
+    // Replayed by `contract::protobuf::formal_oracle`.
+    let elsewhere = ["Protobuf.json"];
     let dir = oracle_dir();
     if !dir.is_dir() {
         // A packaged crate may leave formal/ out; the repository always has it,
@@ -342,8 +344,10 @@ fn oracle() {
         .filter(|name| name.ends_with(".json"))
         .collect();
     present.sort();
+    let mut expected: Vec<&str> = replayed.iter().chain(&elsewhere).copied().collect();
+    expected.sort();
     assert_eq!(
-        present, replayed,
+        present, expected,
         "every formal/oracle/*.json file needs a replay here"
     );
 

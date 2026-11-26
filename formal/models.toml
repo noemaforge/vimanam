@@ -5,8 +5,9 @@
 # bumped. See formal/README.md, "Keeping the models in step with the Rust".
 #
 # One [[model]] per .lean file under formal/VimanamProofs/ other than
-# Audit.lean, Direction.lean (the theorems over Severity.lean) and
-# History.lean, which read no Rust of their own:
+# Audit.lean, Direction.lean (the theorems over Severity.lean),
+# ProtobufCompat.lean (the theorems over Protobuf.lean) and History.lean,
+# which read no Rust of their own:
 #
 #   lean          the model file, from the repository root.
 #   read_against  set by --bump: a commit with the bumped refs, so a drift
@@ -117,4 +118,41 @@ rust = [
   "src/diff/components.rs",
   "src/diff/json.rs#component_kind_and_details",
   "src/diff/json.rs#component_entries",
+]
+
+# The protobuf rules: the adapter's classification, the native rule names,
+# the composite facts of `protobuf::diff`, and the `--breaking` gate. The
+# neutral comparison (`compare`, `diff_values`) is read as far as the
+# fragment's attributes need it; the entity and attribute builders of
+# `adapt` decide which attributes a fragment change touches.
+[[model]]
+lean = "formal/VimanamProofs/Protobuf.lean"
+read_against = "0212b2e7245a"
+read_digest = "v1:sha256:d2e956d1b8136990bea0e718aa6a51dd84186c7c5ae68c07a822f5d3a64c7be8"
+rust = [
+  "src/contract/protobuf.rs#ProtobufAdapter",
+  "src/contract/protobuf.rs#rule",
+  "src/contract/protobuf.rs#native_kind",
+  "src/contract/protobuf.rs#BreakingScope",
+  "src/contract/protobuf.rs#breaking_gate",
+  "src/contract/protobuf.rs#diff",
+  "src/contract/protobuf.rs#adapt",
+  "src/contract/protobuf.rs#node",
+  "src/contract/protobuf.rs#numbered",
+  "src/contract/protobuf.rs#default_value",
+  "src/contract/protobuf.rs#type_name",
+  "src/contract/protobuf.rs#options",
+  "src/contract/protobuf.rs#fact",
+  "src/contract/mod.rs#Adapter",
+  "src/contract/mod.rs#ChangeKind",
+  "src/contract/mod.rs#Severity",
+  "src/contract/mod.rs#compare",
+  "src/contract/mod.rs#structural_values",
+  "src/contract/mod.rs#push",
+  "src/contract/mod.rs#added",
+  "src/contract/mod.rs#removed",
+  "src/diff/value.rs#diff_values",
+  "src/diff/value.rs#diff_nodes",
+  "src/cli/config.rs#BreakingArg",
+  "src/cli/mod.rs#run_diff",
 ]

@@ -720,6 +720,9 @@ pub fn adapt(doc: &Document) -> Contract {
         entities,
     }
 }
+#[cfg(test)]
+mod formal_oracle;
+
 /// Protobuf-native classification. Conservative type changes are wire-breaking;
 /// field renames retain number identity and break source/JSON compatibility only.
 pub struct ProtobufAdapter;
@@ -797,7 +800,7 @@ impl Adapter for ProtobufAdapter {
         (s, imp.into_iter().map(str::to_owned).collect())
     }
 }
-fn rule(c: &Change) -> &str {
+fn rule(c: &Change) -> &'static str {
     match (c.kind, c.details["pointer"].as_str().unwrap_or("")) {
         (ChangeKind::FieldRemoved, _) => "FIELD_NO_DELETE",
         (ChangeKind::EnumValueRemoved, _) => "ENUM_VALUE_NO_DELETE",
@@ -818,6 +821,53 @@ fn rule(c: &Change) -> &str {
         _ => "PROTOBUF_SURFACE_CHANGED",
     }
 }
+/// The native kind `diff` gives a fact from the neutral comparison:
+/// `FILE_OPTIONS_CHANGED` under `/file_options/`, else [`rule`]; a removed
+/// type (`removed`, the old entity) by its `kind` attribute.
+fn native_kind(c: &Change, removed: Option<&Entity>) -> &'static str {
+    let native = if c.details["pointer"]
+        .as_str()
+        .is_some_and(|p| p.starts_with("/file_options/"))
+    {
+        "FILE_OPTIONS_CHANGED"
+    } else {
+        rule(c)
+    };
+    match removed {
+        Some(e) if c.kind == ChangeKind::TypeRemoved => match e.attributes["kind"].as_str() {
+            Some("message") => "MESSAGE_NO_DELETE",
+            Some("enum") => "ENUM_NO_DELETE",
+            Some("oneof") => "ONEOF_NO_DELETE",
+            _ => "TYPE_NO_DELETE",
+        },
+        _ => native,
+    }
+}
+
+/// `--breaking`: which compatibility dimensions fail `--fail-on-breaking`.
+#[cfg(any(feature = "cli", test))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum BreakingScope {
+    /// Binary wire compatibility.
+    Wire,
+    /// Source and JSON compatibility.
+    Source,
+    /// Any Breaking fact.
+    All,
+}
+
+/// Whether one fact fails `--fail-on-breaking` under `scope`: it is
+/// Breaking and has an impact in the scope (`source` includes `wire_json`).
+#[cfg(any(feature = "cli", test))]
+pub(crate) fn breaking_gate(c: &Change, scope: BreakingScope) -> bool {
+    c.severity == Severity::Breaking
+        && match scope {
+            BreakingScope::All => true,
+            BreakingScope::Wire => c.impacts.iter().any(|i| i == "wire"),
+            BreakingScope::Source => c.impacts.iter().any(|i| i == "source" || i == "wire_json"),
+        }
+}
+
 fn fact(
     e: &Entity,
     kind: ChangeKind,
@@ -884,26 +934,12 @@ pub fn diff(old: &Document, new: &Document) -> Result<Vec<Change>> {
         true
     });
     for c in &mut changes {
-        c.native_kind = if c.details["pointer"]
-            .as_str()
-            .is_some_and(|p| p.starts_with("/file_options/"))
-        {
-            "FILE_OPTIONS_CHANGED"
+        let removed = if c.kind == ChangeKind::TypeRemoved {
+            old.entities.iter().find(|e| e.id == c.subject)
         } else {
-            rule(c)
-        }
-        .into();
-        if c.kind == ChangeKind::TypeRemoved
-            && let Some(e) = old.entities.iter().find(|e| e.id == c.subject)
-        {
-            c.native_kind = match e.attributes["kind"].as_str() {
-                Some("message") => "MESSAGE_NO_DELETE",
-                Some("enum") => "ENUM_NO_DELETE",
-                Some("oneof") => "ONEOF_NO_DELETE",
-                _ => "TYPE_NO_DELETE",
-            }
-            .into();
-        }
+            None
+        };
+        c.native_kind = native_kind(c, removed).into();
     }
     let old_file_names: std::collections::BTreeSet<_> =
         old_doc.pool.files().map(|f| f.name().to_owned()).collect();

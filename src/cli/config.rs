@@ -347,6 +347,18 @@ pub enum BreakingArg {
     All,
 }
 
+impl BreakingArg {
+    /// The protobuf failure gate's scope.
+    pub(crate) fn scope(self) -> crate::contract::protobuf::BreakingScope {
+        use crate::contract::protobuf::BreakingScope;
+        match self {
+            BreakingArg::Wire => BreakingScope::Wire,
+            BreakingArg::Source => BreakingScope::Source,
+            BreakingArg::All => BreakingScope::All,
+        }
+    }
+}
+
 /// Output format of the `diff` subcommand.
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum, Debug)]
 pub enum DiffFormatArg {
