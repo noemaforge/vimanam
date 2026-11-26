@@ -165,6 +165,14 @@ pub enum JsonChangeKind {
     RequestSchemaChanged,
     /// A response schema has a field-level change.
     ResponseSchemaChanged,
+    /// A request body accepts a media type it did not.
+    RequestMediaTypeAdded,
+    /// A request body no longer accepts a media type.
+    RequestMediaTypeRemoved,
+    /// A response offers a media type it did not.
+    ResponseMediaTypeAdded,
+    /// A response no longer offers a media type.
+    ResponseMediaTypeRemoved,
 }
 
 /// Impact classification used by the JSON contract.
@@ -463,10 +471,13 @@ pub(crate) fn component_kind_and_details(
             JsonChangeKind::ParameterSchemaChanged,
             vec![("name", json!(name)), ("location", json!(location))],
         ),
-        UseLocation::RequestBody { .. } => (JsonChangeKind::RequestSchemaChanged, Vec::new()),
-        UseLocation::Response { status } => (
+        UseLocation::RequestBody { media_type, .. } => (
+            JsonChangeKind::RequestSchemaChanged,
+            with_media_type(Vec::new(), media_type),
+        ),
+        UseLocation::Response { status, media_type } => (
             JsonChangeKind::ResponseSchemaChanged,
-            vec![("status", json!(status))],
+            with_media_type(vec![("status", json!(status))], media_type),
         ),
     };
     entries.extend(component_entries(component, negated, fail_closed));
@@ -492,6 +503,19 @@ pub(crate) fn component_entries(
     }
     if let Some(reason) = fail_closed {
         entries.push(("fail_closed", Value::String(reason.as_str().into())));
+    }
+    entries
+}
+
+/// `entries` plus `media_type` when the body or response was compared media
+/// type by media type (#154); unchanged otherwise, so records of a body or
+/// response compared by its one schema keep their IDs.
+fn with_media_type(
+    mut entries: Vec<(&'static str, Value)>,
+    media_type: &Option<String>,
+) -> Vec<(&'static str, Value)> {
+    if let Some(media_type) = media_type {
+        entries.push(("media_type", Value::String(media_type.clone())));
     }
     entries
 }
@@ -613,28 +637,51 @@ pub(crate) fn json_kind_and_details(kind: &ChangeKind) -> (JsonChangeKind, JsonD
             details(vec![("now", json!(now))]),
         ),
         ChangeKind::RequestSchemaChanged {
+            media_type,
             change,
             fail_closed,
-        } => (
-            JsonChangeKind::RequestSchemaChanged,
-            details(with_fail_closed(
-                vec![("schema_change", json!(json_schema_change(change)))],
-                *fail_closed,
-            )),
-        ),
+        } => {
+            let mut entries = with_media_type(Vec::new(), media_type);
+            entries.push(("schema_change", json!(json_schema_change(change))));
+            (
+                JsonChangeKind::RequestSchemaChanged,
+                details(with_fail_closed(entries, *fail_closed)),
+            )
+        }
         ChangeKind::ResponseSchemaChanged {
             status,
+            media_type,
             change,
             fail_closed,
-        } => (
-            JsonChangeKind::ResponseSchemaChanged,
-            details(with_fail_closed(
-                vec![
-                    ("status", json!(status)),
-                    ("schema_change", json!(json_schema_change(change))),
-                ],
-                *fail_closed,
-            )),
+        } => {
+            let mut entries = with_media_type(vec![("status", json!(status))], media_type);
+            entries.push(("schema_change", json!(json_schema_change(change))));
+            (
+                JsonChangeKind::ResponseSchemaChanged,
+                details(with_fail_closed(entries, *fail_closed)),
+            )
+        }
+        ChangeKind::RequestMediaTypeAdded { media_type } => (
+            JsonChangeKind::RequestMediaTypeAdded,
+            details(vec![("media_type", json!(media_type))]),
+        ),
+        ChangeKind::RequestMediaTypeRemoved { media_type } => (
+            JsonChangeKind::RequestMediaTypeRemoved,
+            details(vec![("media_type", json!(media_type))]),
+        ),
+        ChangeKind::ResponseMediaTypeAdded { status, media_type } => (
+            JsonChangeKind::ResponseMediaTypeAdded,
+            details(vec![
+                ("status", json!(status)),
+                ("media_type", json!(media_type)),
+            ]),
+        ),
+        ChangeKind::ResponseMediaTypeRemoved { status, media_type } => (
+            JsonChangeKind::ResponseMediaTypeRemoved,
+            details(vec![
+                ("status", json!(status)),
+                ("media_type", json!(media_type)),
+            ]),
         ),
         ChangeKind::ComponentSchemaChanged {
             component,
@@ -987,6 +1034,7 @@ mod tests {
     #[test]
     fn request_schema_changed_maps_schema_change() {
         let (kind, details) = contract(&record(ChangeKind::RequestSchemaChanged {
+            media_type: None,
             change: value_change(
                 "/properties/weight/format",
                 ValueChangeKind::Changed {
@@ -1015,6 +1063,7 @@ mod tests {
     #[test]
     fn response_schema_changed_maps_status_and_schema_change() {
         let (kind, details) = contract(&record(ChangeKind::ResponseSchemaChanged {
+            media_type: None,
             status: "200".into(),
             change: value_change(
                 "/properties/pricing",
@@ -1264,6 +1313,7 @@ mod tests {
     #[test]
     fn different_details_give_different_ids() {
         let a = record(ChangeKind::ResponseSchemaChanged {
+            media_type: None,
             status: "200".into(),
             change: value_change(
                 "/properties/price/type",
@@ -1275,6 +1325,7 @@ mod tests {
             fail_closed: None,
         });
         let b = record(ChangeKind::ResponseSchemaChanged {
+            media_type: None,
             status: "200".into(),
             change: value_change(
                 "/properties/price/type",

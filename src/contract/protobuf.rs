@@ -1527,6 +1527,7 @@ pub fn documentation(doc: &Document) -> crate::ApiDocumentation {
                     example: None,
                     examples: None,
                     extensions: HashMap::new(),
+                    media_type: None,
                 }],
                 responses,
                 deprecated: rpc

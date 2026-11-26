@@ -11,8 +11,10 @@ normalises this and the Rust's `diff --format json --contract 1` output to the
 same records and lists disagreements. See formal/README.md, "Reference
 semantics of `$ref` diffs".
 
-Not a model: input and output only. `Lean.Json` sorts object keys, which
-the model only observes as "first media type".
+Not a model: input and output only. Documents are read in spec order
+(`Lean.Json` would sort object keys), as `serde_json` reads them with
+`preserve_order`, so the model sees media types (#154) and every other
+object in the order the spec writes them.
 -/
 import Lean.Data.Json
 import VimanamProofs.RefDiff
@@ -21,13 +23,75 @@ open Lean
 open Vimanam.RefDiff
 open Vimanam.Severity (Severity Pointer)
 
-partial def ofJson : Json → J
-  | .null => .null
-  | .bool b => .bool b
-  | .num n => .num n.toString
-  | .str s => .str s
-  | .arr xs => .arr (xs.toList.map ofJson)
-  | .obj kvs => .obj (kvs.foldl (fun acc k v => acc ++ [(k, ofJson v)]) [])
+namespace Ordered
+
+open Std.Internal.Parsec Std.Internal.Parsec.String
+
+/-! `Lean.Json.Parser`'s grammar, building `J` with object keys in document
+order. Strings and numbers use `Lean.Json.Parser`'s own parsers, and a number
+is the text `Lean.Json` renders for it, as before. A duplicate key is an
+error, as there. -/
+
+mutual
+  partial def arrayCore (acc : Array J) : Parser (Array J) := do
+    let hd ← anyCore
+    let acc := acc.push hd
+    let c ← any
+    if c == ']' then ws; return acc
+    else if c == ',' then ws; arrayCore acc
+    else fail "unexpected character in array"
+
+  partial def objectCore (acc : Array (String × J)) : Parser (Array (String × J)) := do
+    let c ← peek!
+    if c != '"' then fail "expected \""
+    skip
+    let k ← Lean.Json.Parser.str
+    ws
+    if acc.any (·.1 == k) then fail s!"duplicate object key {k.quote}"
+    let c ← peek!
+    if c != ':' then fail "expected :"
+    skip; ws
+    let v ← anyCore
+    let acc := acc.push (k, v)
+    let c ← any
+    if c == '}' then ws; return acc
+    else if c == ',' then ws; objectCore acc
+    else fail "unexpected character in object"
+
+  partial def anyCore : Parser J := do
+    let c ← peek!
+    if c == '[' then
+      skip; ws
+      if (← peek!) == ']' then skip; ws; return .arr []
+      return .arr (← arrayCore #[]).toList
+    else if c == '{' then
+      skip; ws
+      if (← peek!) == '}' then skip; ws; return .obj []
+      return .obj (← objectCore #[]).toList
+    else if c == '"' then
+      skip
+      let s ← Lean.Json.Parser.str
+      ws
+      return .str s
+    else if c == 'f' then skipString "false"; ws; return .bool false
+    else if c == 't' then skipString "true"; ws; return .bool true
+    else if c == 'n' then skipString "null"; ws; return .null
+    else if c == '-' || ('0' <= c && c <= '9') then
+      let n ← Lean.Json.Parser.num
+      ws
+      return .num n.toString
+    else fail "unexpected input"
+end
+
+def document : Parser J := do
+  ws
+  let j ← anyCore
+  eof
+  return j
+
+def parse (s : String) : Except String J := Parser.run document s
+
+end Ordered
 
 def sevName : Severity → String
   | .breaking => "breaking"
@@ -69,14 +133,18 @@ def evaluate (oldDoc newDoc : J) : J :=
       ("old", u.old), ("new", u.new)])),
     ("components", .obj [("old", .obj os.comps), ("new", .obj ns.comps)]),
     ("grouped", .arr ((us.flatMap (groupedUse os ns)).map recJson)),
+    ("media", .arr ((mediaChanges oldDoc newDoc).map fun r =>
+      .obj [("use", .str r.use), ("dir", .str r.dir.name), ("media_type", .str r.mediaType),
+        ("op", .str (if r.added then "added" else "removed")),
+        ("severity", .str (sevName r.severity))])),
     ("per_path_truncated", .arr (perPath.filterMap fun (u, r) => if r.isNone then some (.str u.id) else none)),
     ("per_path", .arr (perPath.flatMap fun (u, r) => ((r.map (·.1)).getD []).map fun (p, c) => pathJson u p c)),
   ("per_path_cuts", .arr (perPath.flatMap fun (u, r) => ((r.map (·.2)).getD []).map fun p =>
     .obj [("use", .str u.id), ("ptr", .str (ptrText p))]))]
 
 def load (path : String) : IO J := do
-  match Json.parse (← IO.FS.readFile path) with
-  | .ok j => return ofJson j
+  match Ordered.parse (← IO.FS.readFile path) with
+  | .ok j => return j
   | .error e => throw (IO.userError s!"{path}: {e}")
 
 def runOne (old new : String) : IO String := do

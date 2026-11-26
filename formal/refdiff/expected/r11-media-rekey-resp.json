@@ -1,0 +1,4 @@
+[
+{"dir": "response", "media_type": "application/json", "op": "removed", "severity": "breaking", "use": "GET /a response:200"},
+{"dir": "response", "media_type": "application/xml", "op": "added", "severity": "non_breaking", "use": "GET /a response:200"}
+]

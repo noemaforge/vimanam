@@ -2757,7 +2757,11 @@
 {"input":["operation_id_changed",true,false],"output":"breaking"},
 {"input":["operation_id_changed",true,true],"output":"breaking"},
 {"input":["deprecated_changed",false],"output":"non_breaking"},
-{"input":["deprecated_changed",true],"output":"non_breaking"}
+{"input":["deprecated_changed",true],"output":"non_breaking"},
+{"input":["request_media_type_added"],"output":"non_breaking"},
+{"input":["request_media_type_removed"],"output":"breaking"},
+{"input":["response_media_type_added"],"output":"non_breaking"},
+{"input":["response_media_type_removed"],"output":"breaking"}
 ]},
 {"lean": "Severity.severity", "rust": "diff::severity(ComponentSchemaChanged)", "cases": [
 {"input":["request",false,["$ref"],["changed","other","other"],false],"output":"review"},

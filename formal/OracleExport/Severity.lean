@@ -100,7 +100,9 @@ def structural : List Change :=
    .parameterLocationChanged, .responseAdded, .responseRemoved,
    .operationIdChanged false false, .operationIdChanged false true,
    .operationIdChanged true false, .operationIdChanged true true,
-   .deprecatedChanged false, .deprecatedChanged true]
+   .deprecatedChanged false, .deprecatedChanged true,
+   .requestMediaTypeAdded, .requestMediaTypeRemoved,
+   .responseMediaTypeAdded, .responseMediaTypeRemoved]
 
 def changeJson : Change → Json
   | .endpointAdded => toJson #["endpoint_added"]
@@ -114,6 +116,10 @@ def changeJson : Change → Json
   | .responseRemoved => toJson #["response_removed"]
   | .operationIdChanged o n => toJson #[toJson "operation_id_changed", toJson o, toJson n]
   | .deprecatedChanged n => toJson #[toJson "deprecated_changed", toJson n]
+  | .requestMediaTypeAdded => toJson #["request_media_type_added"]
+  | .requestMediaTypeRemoved => toJson #["request_media_type_removed"]
+  | .responseMediaTypeAdded => toJson #["response_media_type_added"]
+  | .responseMediaTypeRemoved => toJson #["response_media_type_removed"]
   | _ => toJson #["schema"]
 
 def directionName : Direction → String

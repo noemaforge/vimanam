@@ -30,12 +30,44 @@
 //! change under one is not listed for that use. A reference retargeted to a
 //! differently named component is always a Review `/$ref` change.
 //!
-//! Only a response's first media type is compared (the same one the renderer
-//! documents, see `response_schema`), and only the first request-body media
-//! type. `allOf`/`oneOf`/`anyOf` lists are compared index-wise. With [`diff`]
+//! `allOf`/`oneOf`/`anyOf` lists are compared index-wise. With [`diff`]
 //! a path-template rename (`/pets/{id}` → `/pets/{petId}`) appears as a
 //! removal plus an addition; [`diff_with`] and [`EndpointMatching::Moves`]
 //! pair it when the operationId is unique across both specs.
+//!
+//! # Media types
+//!
+//! A request body and a response may declare several media types
+//! (`content` keys, #154). The two sides of one body, or of one response
+//! status present in both specs, are compared **media type by media type**,
+//! matched by `media_key`: the type, subtype and parameter names
+//! case-insensitively and without whitespace around `;` (RFC 9110 §8.3.1),
+//! parameter values and wildcards exactly (`application/json` and
+//! `application/json; charset=utf-8` are two media types, `*/*` matches only
+//! `*/*`, and a respelling such as `Application/JSON` is no change). Each
+//! media type both sides declare is compared as its own schema use, with
+//! `media_type` (as the old side writes it) set on its changes and uses, and
+//! a media type one side lacks is a
+//! [`ChangeKind::RequestMediaTypeRemoved`]/`Added` or
+//! [`ChangeKind::ResponseMediaTypeRemoved`]/`Added` change. Removing one is
+//! Breaking (a client that sends it, or negotiates it with `Accept`, fails);
+//! adding one is Non-breaking.
+//!
+//! The one schema of each side is compared instead, as before #154 (the
+//! first body, or a response's first media type with a schema, see
+//! `response_schema`), with `media_type: None`, when:
+//!
+//! * each side has exactly one media type, and it is the same one (so a spec
+//!   whose bodies and responses keep their one media type reports exactly
+//!   what it reported before);
+//! * a side has none (a response that gained or lost its whole body is one
+//!   root change);
+//! * a side names no media type: Swagger 2, whose body parameter and
+//!   response `schema` are not keyed by media type (`consumes`/`produces`
+//!   are not compared), so a 2.0 → 3.x migration still compares schemas.
+//!
+//! Media types are visited in spec order (`IndexMap`): old order for matched
+//! and removed ones, then new order for added ones.
 //!
 //! # Moved operations
 //!
@@ -78,7 +110,7 @@ use indexmap::IndexSet;
 use serde_json::Value;
 
 use crate::markdown::{estimate_tokens, generate_markdown, response_schema};
-use crate::models::{ApiDocumentation, DocConfig, Endpoint, Parameter};
+use crate::models::{ApiDocumentation, DocConfig, Endpoint, Parameter, Schema};
 use crate::report;
 pub use crate::report::EndpointRef;
 use crate::resolve::{PairResolver, schema_json};
@@ -206,6 +238,10 @@ pub enum ChangeKind {
     },
     /// A field-level change in the resolved request body schema.
     RequestSchemaChanged {
+        /// The media type whose schema changed, when the body is compared
+        /// media type by media type (see the module docs, "Media types");
+        /// `None` when its one schema per side is compared.
+        media_type: Option<String>,
         /// The field-level change in the resolved, canonicalized schema.
         change: ValueChange,
         /// Why the change fails closed, if it does ([`FailClosed`]).
@@ -215,10 +251,38 @@ pub enum ChangeKind {
     ResponseSchemaChanged {
         /// Response status code exactly as declared, including `default`.
         status: String,
+        /// The media type whose schema changed, when the response is
+        /// compared media type by media type (see the module docs, "Media
+        /// types"); `None` when its one schema per side is compared.
+        media_type: Option<String>,
         /// The field-level change in the resolved, canonicalized schema.
         change: ValueChange,
         /// Why the change fails closed, if it does ([`FailClosed`]).
         fail_closed: Option<FailClosed>,
+    },
+    /// A request body accepts a media type it did not (#154).
+    RequestMediaTypeAdded {
+        /// The `requestBody.content` key, exactly as declared.
+        media_type: String,
+    },
+    /// A request body no longer accepts a media type (#154).
+    RequestMediaTypeRemoved {
+        /// The `requestBody.content` key, exactly as declared.
+        media_type: String,
+    },
+    /// A response offers a media type it did not (#154).
+    ResponseMediaTypeAdded {
+        /// Response status code exactly as declared, including `default`.
+        status: String,
+        /// The response `content` key, exactly as declared.
+        media_type: String,
+    },
+    /// A response no longer offers a media type (#154).
+    ResponseMediaTypeRemoved {
+        /// Response status code exactly as declared, including `default`.
+        status: String,
+        /// The response `content` key, exactly as declared.
+        media_type: String,
     },
     /// A field-level change inside a shared component (a `$ref` target),
     /// reported once per usage direction instead of once per operation or
@@ -353,15 +417,22 @@ pub enum UseLocation {
         /// Parameter location such as `path`, `query` or `header`.
         location: String,
     },
-    /// The (first) request body, under its synthetic body-parameter name.
+    /// The request body, under its synthetic body-parameter name.
     RequestBody {
         /// The body parameter's name.
         name: String,
+        /// The media type, when the body is compared media type by media
+        /// type (#154); `None` when its one schema per side is compared.
+        media_type: Option<String>,
     },
-    /// The first media type schema of one response.
+    /// The schema of one response.
     Response {
         /// Response status code exactly as declared, including `default`.
         status: String,
+        /// The media type, when the response is compared media type by
+        /// media type (#154); `None` when its one schema per side is
+        /// compared.
+        media_type: Option<String>,
     },
 }
 
@@ -586,6 +657,10 @@ impl SpecDiff {
 /// | Parameter location changed | Breaking |
 /// | Response code removed | Breaking |
 /// | Response code added | Non-breaking |
+/// | Request media type removed (clients sending it fail) | Breaking |
+/// | Request media type added | Non-breaking |
+/// | Response media type removed (clients negotiating it fail) | Breaking |
+/// | Response media type added | Non-breaking |
 /// | `operationId` changed (Some→Some, Some→None) | Breaking |
 /// | `operationId` added (None→Some) | Non-breaking |
 /// | `deprecated` flag changed either way | Non-breaking |
@@ -713,9 +788,18 @@ pub fn severity(change: &Change) -> Severity {
         | ChangeKind::RequestSchemaChanged {
             change,
             fail_closed,
+            ..
         } => self::fail_closed(fail_closed.is_some(), request_schema_severity(change)),
         ChangeKind::ResponseAdded { .. } => Severity::NonBreaking,
         ChangeKind::ResponseRemoved { .. } => Severity::Breaking,
+        // A server that stops accepting a media type breaks the clients
+        // that send it; one that stops offering a media type breaks the
+        // clients that negotiate it with `Accept` (#154).
+        ChangeKind::RequestMediaTypeAdded { .. } | ChangeKind::ResponseMediaTypeAdded { .. } => {
+            Severity::NonBreaking
+        }
+        ChangeKind::RequestMediaTypeRemoved { .. }
+        | ChangeKind::ResponseMediaTypeRemoved { .. } => Severity::Breaking,
         ChangeKind::OperationIdChanged {
             old: None,
             new: Some(_),
@@ -1312,8 +1396,172 @@ fn value_changes(old: &Value, new: &Value) -> Vec<ValueChange> {
     out
 }
 
+/// The key a media type is matched by (RefDiff.lean's `mediaKey`): RFC 9110
+/// §8.3.1 makes the type, the subtype and parameter names case-insensitive
+/// and allows optional whitespace around `;`, so the `type/subtype` is
+/// trimmed and ASCII lower-cased, and each `;`-separated parameter is trimmed
+/// with its name (before the first `=`) lower-cased. Parameter values
+/// (`charset=UTF-8`), wildcards (`*/*`, `application/*`) and which
+/// parameters there are stay as written, so changing one is a removal plus
+/// an addition. A `;` inside a quoted value is not special.
+pub(crate) fn media_key(media_type: &str) -> String {
+    fn trim(s: &str) -> &str {
+        s.trim_matches([' ', '\t'])
+    }
+    let mut parts = media_type.split(';');
+    let mut out = trim(parts.next().unwrap_or("")).to_ascii_lowercase();
+    for part in parts {
+        out.push(';');
+        match trim(part).split_once('=') {
+            Some((name, value)) => {
+                out.push_str(&name.to_ascii_lowercase());
+                out.push('=');
+                out.push_str(value);
+            }
+            None => out.push_str(&trim(part).to_ascii_lowercase()),
+        }
+    }
+    out
+}
+
+/// Whether two entries name the same media type (both none, or the same
+/// [`media_key`]).
+fn same_media(a: Option<&str>, b: Option<&str>) -> bool {
+    match (a, b) {
+        (None, None) => true,
+        (Some(a), Some(b)) => a == b || media_key(a) == media_key(b),
+        _ => false,
+    }
+}
+
+/// `entries` with the first entry per media type ([`same_media`]) only.
+fn dedup_media<'k, T>(
+    entries: impl IntoIterator<Item = (Option<&'k str>, T)>,
+) -> Vec<(Option<&'k str>, T)> {
+    let mut out: Vec<(Option<&'k str>, T)> = Vec::new();
+    for (key, value) in entries {
+        if !out.iter().any(|(seen, _)| same_media(*seen, key)) {
+            out.push((key, value));
+        }
+    }
+    out
+}
+
+/// The body parameters of an endpoint with their media types (the parser's
+/// synthetic OpenAPI 3 body parameters carry one each; a declared `in: body`
+/// parameter has none), one per media type, the first winning.
+fn body_entries(endpoint: &Endpoint) -> Vec<(Option<&str>, &Parameter)> {
+    dedup_media(
+        endpoint
+            .parameters
+            .iter()
+            .filter(|p| is_body(p))
+            .map(|parameter| (parameter.media_type.as_deref(), parameter)),
+    )
+}
+
+/// A response's media types with their schemas: its own `schema` (Swagger
+/// 2, no media type), else every `content` entry in spec order, one per
+/// media type, the first winning.
+fn response_entries(response: &crate::models::Response) -> Vec<(Option<&str>, Option<&Schema>)> {
+    if let Some(schema) = &response.schema {
+        return vec![(None, Some(schema))];
+    }
+    dedup_media(
+        response
+            .content
+            .iter()
+            .flatten()
+            .map(|(key, media)| (Some(key.as_str()), media.schema.as_ref())),
+    )
+}
+
+/// Whether the two sides of a body or response are compared media type by
+/// media type (see the module docs, "Media types"; RefDiff.lean's
+/// `perMedia`): not when a side names no media type, has none, or both have
+/// exactly the same single one.
+fn per_media<T>(old: &[(Option<&str>, T)], new: &[(Option<&str>, T)]) -> bool {
+    let unkeyed = old.iter().chain(new).any(|(key, _)| key.is_none());
+    let same_single = old.len() == 1 && new.len() == 1 && same_media(old[0].0, new[0].0);
+    !unkeyed && !old.is_empty() && !new.is_empty() && !same_single
+}
+
+/// One step of a per-media comparison, in report order: a media type both
+/// sides declare (old order, named as the old side writes it), one only the
+/// old side declares (in its place), then those only the new side declares
+/// (new order). Media types match by [`media_key`].
+enum MediaStep<'s, 'k, T> {
+    Both(&'k str, &'s T, &'s T),
+    Removed(&'k str),
+    Added(&'k str),
+}
+
+fn media_steps<'s, 'k, T>(
+    old: &'s [(Option<&'k str>, T)],
+    new: &'s [(Option<&'k str>, T)],
+) -> Vec<MediaStep<'s, 'k, T>> {
+    let mut steps = Vec::new();
+    for (key, old_value) in old {
+        let Some(key) = key else { continue };
+        match new.iter().find(|(other, _)| same_media(*other, Some(key))) {
+            Some((_, new_value)) => steps.push(MediaStep::Both(key, old_value, new_value)),
+            None => steps.push(MediaStep::Removed(key)),
+        }
+    }
+    for (key, _) in new {
+        let Some(key) = key else { continue };
+        if !old.iter().any(|(other, _)| same_media(*other, Some(key))) {
+            steps.push(MediaStep::Added(key));
+        }
+    }
+    steps
+}
+
+/// The media types both sides declare, in old order with both values, or
+/// `None` when the two sides are not compared per media type.
+fn shared_media<'k, T: Copy>(
+    old: &[(Option<&'k str>, T)],
+    new: &[(Option<&'k str>, T)],
+) -> Option<Vec<(&'k str, T, T)>> {
+    if !per_media(old, new) {
+        return None;
+    }
+    Some(
+        media_steps(old, new)
+            .into_iter()
+            .filter_map(|step| match step {
+                MediaStep::Both(key, a, b) => Some((key, *a, *b)),
+                _ => None,
+            })
+            .collect(),
+    )
+}
+
+/// The body parameters a per-media comparison pairs, by media type in old
+/// order, or `None` when the two bodies are compared by their first ones
+/// (see the module docs, "Media types").
+pub(crate) fn media_body_pairs<'a>(
+    old: &'a Endpoint,
+    new: &'a Endpoint,
+) -> Option<Vec<(&'a str, &'a Parameter, &'a Parameter)>> {
+    shared_media(&body_entries(old), &body_entries(new))
+}
+
+/// One media type's schemas on both sides (`None` when it has none).
+pub(crate) type MediaSchemas<'a> = (&'a str, Option<&'a Schema>, Option<&'a Schema>);
+
+/// The response schemas a per-media comparison pairs, by media type in old
+/// order, or `None` when the response is compared by its first schemas.
+pub(crate) fn media_response_pairs<'a>(
+    old: &'a crate::models::Response,
+    new: &'a crate::models::Response,
+) -> Option<Vec<MediaSchemas<'a>>> {
+    shared_media(&response_entries(old), &response_entries(new))
+}
+
 /// Compares the request bodies: the parser represents a body as a synthetic
-/// `in: body` parameter (one per media type; the first is compared).
+/// `in: body` parameter, one per media type, compared media type by media
+/// type or by their first ones (see the module docs, "Media types").
 fn diff_request_body(
     endpoint: &EndpointRef,
     old_endpoint: &Endpoint,
@@ -1355,28 +1603,72 @@ fn diff_request_body(
                 });
             }
 
-            let use_ = SchemaUse {
-                endpoint: endpoint.clone(),
-                location: UseLocation::RequestBody {
-                    name: new_body.name.clone(),
-                },
-            };
-            for change in schema_changes(
-                use_,
-                old_body.schema.as_ref(),
-                new_body.schema.as_ref(),
-                components,
-            ) {
-                let (change, fail_closed) = change;
-                changes.push(Change {
-                    endpoint: endpoint.clone(),
-                    kind: ChangeKind::RequestSchemaChanged {
-                        change,
-                        fail_closed,
-                    },
-                });
+            let old_entries = body_entries(old_endpoint);
+            let new_entries = body_entries(new_endpoint);
+            if !per_media(&old_entries, &new_entries) {
+                compare_body(endpoint, old_body, new_body, None, components, changes);
+                return;
+            }
+            for step in media_steps(&old_entries, &new_entries) {
+                match step {
+                    MediaStep::Both(key, old_param, new_param) => compare_body(
+                        endpoint,
+                        old_param,
+                        new_param,
+                        Some(key),
+                        components,
+                        changes,
+                    ),
+                    MediaStep::Removed(key) => changes.push(Change {
+                        endpoint: endpoint.clone(),
+                        kind: ChangeKind::RequestMediaTypeRemoved {
+                            media_type: key.to_string(),
+                        },
+                    }),
+                    MediaStep::Added(key) => changes.push(Change {
+                        endpoint: endpoint.clone(),
+                        kind: ChangeKind::RequestMediaTypeAdded {
+                            media_type: key.to_string(),
+                        },
+                    }),
+                }
             }
         }
+    }
+}
+
+/// The schema changes between two body parameters, as one use (with its
+/// media type when compared per media type).
+fn compare_body(
+    endpoint: &EndpointRef,
+    old_body: &Parameter,
+    new_body: &Parameter,
+    media_type: Option<&str>,
+    components: &mut Components,
+    changes: &mut Vec<Change>,
+) {
+    let media_type = media_type.map(str::to_string);
+    let use_ = SchemaUse {
+        endpoint: endpoint.clone(),
+        location: UseLocation::RequestBody {
+            name: new_body.name.clone(),
+            media_type: media_type.clone(),
+        },
+    };
+    for (change, fail_closed) in schema_changes(
+        use_,
+        old_body.schema.as_ref(),
+        new_body.schema.as_ref(),
+        components,
+    ) {
+        changes.push(Change {
+            endpoint: endpoint.clone(),
+            kind: ChangeKind::RequestSchemaChanged {
+                media_type: media_type.clone(),
+                change,
+                fail_closed,
+            },
+        });
     }
 }
 
@@ -1400,23 +1692,46 @@ fn diff_responses(
             continue;
         };
 
-        let old_schema = response_schema(old_response);
-        let new_schema = response_schema(new_response);
-        let use_ = SchemaUse {
-            endpoint: endpoint.clone(),
-            location: UseLocation::Response {
-                status: status.clone(),
-            },
-        };
-        for (change, fail_closed) in schema_changes(use_, old_schema, new_schema, components) {
-            changes.push(Change {
-                endpoint: endpoint.clone(),
-                kind: ChangeKind::ResponseSchemaChanged {
-                    status: status.clone(),
-                    change,
-                    fail_closed,
-                },
-            });
+        let old_entries = response_entries(old_response);
+        let new_entries = response_entries(new_response);
+        if !per_media(&old_entries, &new_entries) {
+            compare_response(
+                endpoint,
+                status,
+                None,
+                response_schema(old_response),
+                response_schema(new_response),
+                components,
+                changes,
+            );
+            continue;
+        }
+        for step in media_steps(&old_entries, &new_entries) {
+            match step {
+                MediaStep::Both(key, old_schema, new_schema) => compare_response(
+                    endpoint,
+                    status,
+                    Some(key),
+                    *old_schema,
+                    *new_schema,
+                    components,
+                    changes,
+                ),
+                MediaStep::Removed(key) => changes.push(Change {
+                    endpoint: endpoint.clone(),
+                    kind: ChangeKind::ResponseMediaTypeRemoved {
+                        status: status.clone(),
+                        media_type: key.to_string(),
+                    },
+                }),
+                MediaStep::Added(key) => changes.push(Change {
+                    endpoint: endpoint.clone(),
+                    kind: ChangeKind::ResponseMediaTypeAdded {
+                        status: status.clone(),
+                        media_type: key.to_string(),
+                    },
+                }),
+            }
         }
     }
 
@@ -1429,6 +1744,38 @@ fn diff_responses(
                 },
             });
         }
+    }
+}
+
+/// The schema changes of one response status, as one use (with its media
+/// type when compared per media type).
+fn compare_response(
+    endpoint: &EndpointRef,
+    status: &str,
+    media_type: Option<&str>,
+    old_schema: Option<&Schema>,
+    new_schema: Option<&Schema>,
+    components: &mut Components,
+    changes: &mut Vec<Change>,
+) {
+    let media_type = media_type.map(str::to_string);
+    let use_ = SchemaUse {
+        endpoint: endpoint.clone(),
+        location: UseLocation::Response {
+            status: status.to_string(),
+            media_type: media_type.clone(),
+        },
+    };
+    for (change, fail_closed) in schema_changes(use_, old_schema, new_schema, components) {
+        changes.push(Change {
+            endpoint: endpoint.clone(),
+            kind: ChangeKind::ResponseSchemaChanged {
+                status: status.to_string(),
+                media_type: media_type.clone(),
+                change,
+                fail_closed,
+            },
+        });
     }
 }
 
@@ -1514,6 +1861,7 @@ pub(crate) mod test_support {
 
     pub(crate) fn request(change: ValueChange) -> Severity {
         severity(&self::change(ChangeKind::RequestSchemaChanged {
+            media_type: None,
             change,
             fail_closed: None,
         }))
@@ -1521,6 +1869,7 @@ pub(crate) mod test_support {
 
     pub(crate) fn response(change: ValueChange) -> Severity {
         severity(&self::change(ChangeKind::ResponseSchemaChanged {
+            media_type: None,
             status: "200".into(),
             change,
             fail_closed: None,
@@ -1542,6 +1891,7 @@ pub(crate) mod test_support {
             uses: vec![SchemaUse {
                 endpoint: endpoint(),
                 location: UseLocation::Response {
+                    media_type: None,
                     status: "200".into(),
                 },
             }],
@@ -1560,6 +1910,24 @@ pub(crate) mod test_support {
 
 #[cfg(test)]
 mod tests {
+    use super::media_key;
+
+    #[test]
+    fn media_key_folds_only_what_rfc_9110_makes_case_insensitive() {
+        assert_eq!(media_key("Application/JSON"), "application/json");
+        assert_eq!(
+            media_key("TEXT/Plain ; Charset=UTF-8;q=1"),
+            "text/plain;charset=UTF-8;q=1"
+        );
+        assert_eq!(media_key("*/*"), "*/*");
+        assert_eq!(media_key("a/b;"), "a/b;");
+        assert_ne!(
+            media_key("a/b;charset=utf-8"),
+            media_key("a/b;charset=UTF-8")
+        );
+        assert_ne!(media_key("application/*"), media_key("application/json"));
+    }
+
     use super::*;
     use crate::diff::test_support::{
         added, change, changed, component, parameter, removed, request, response,
@@ -2380,6 +2748,7 @@ mod tests {
                     path: "/p".into()
                 },
                 kind: ChangeKind::ResponseSchemaChanged {
+                    media_type: None,
                     status: "200".into(),
                     change: added("/properties/age", json!({"type": "integer"})),
                     fail_closed: None,

@@ -1,0 +1,4 @@
+[
+{"dir": "request", "media_type": "application/json", "op": "added", "severity": "non_breaking", "use": "POST /a body"},
+{"dir": "request", "media_type": "application/xml", "op": "removed", "severity": "breaking", "use": "POST /a body"}
+]

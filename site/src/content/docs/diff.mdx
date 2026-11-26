@@ -96,6 +96,31 @@ A schema that moves between a `$ref` and an inline copy is compared field by fie
 
 A `definitions` entry that is not a valid schema (for example `"required": "id"` instead of `["id"]`) is still compared, as written, so a change inside it is reported. It fails closed: a change there that the rule tables would leave to review is breaking (also where the entry is expanded against an inline schema), so `--fail-on-breaking` trips on any change inside an invalid entry. The report starts with a `> **Warning:**` line naming the entry, the same warning goes to stderr, and `--format json` lists it under `warnings`. Markdown rendering leaves such an entry out, as before.
 
+## Every media type is compared
+
+A request body or response with several media types (`content` keys) is compared media type by media type. Media types match the way RFC 9110 compares them: the type, the subtype and parameter names case-insensitively, and ignoring whitespace around `;`. So `Application/JSON` is the same media type as `application/json`, a respelling reports nothing, and rows name a matched media type as the old spec writes it. A media type one side lacks is its own row:
+
+```markdown
+| Request media type removed | `POST /widgets` | `application/xml` |
+| Response schema changed | `GET /widgets` | 200 `application/xml` `/properties/id/type` changed `string` → `integer` |
+```
+
+| Change | Severity |
+|---|---|
+| Request media type removed (clients that send it fail) | `breaking` |
+| Request media type added | `non-breaking` |
+| Response media type removed (clients that ask for it with `Accept` fail) | `breaking` |
+| Response media type added | `non-breaking` |
+
+A shared component reached through two media types of one response is still one row, with both media types listed under `## Affected operations`. When each side has exactly one media type and it is the same one, or a response gains or loses its whole body, the body or response is compared as before, so specs whose bodies and responses keep a single media type report exactly what they did. Swagger 2 bodies and responses name no media type (`consumes` and `produces` are not compared), so a Swagger 2 → OpenAPI 3 migration compares the first schemas.
+
+Some matching is deliberately conservative, so it can over-report but never hides a change:
+
+- **Parameter values are compared as written.** `application/json` → `application/json; charset=utf-8`, or `charset=utf-8` → `charset=UTF-8`, is a removed media type (`breaking`) plus an added one.
+- **Wildcards match only themselves.** `*/*` or `application/*` is not matched against the concrete types it covers, so `*/*` → `application/json` is a removal plus an addition.
+- **Two spellings of one media type in one `content` map** are one media type: the first is compared, the rest are ignored.
+- **Adding a response media type is `non-breaking`** on the assumption that a server keeps answering an `Accept` header it answered before with the same type. A client that sends `Accept: */*` (or no `Accept`) to a server that then prefers the new type may receive it; Vimanam does not model the server's content negotiation.
+
 ## Include hygiene and token deltas with `--report`
 
 Pass `--report` to append a `Deltas` section comparing both versions:

@@ -2585,6 +2585,7 @@ pub fn documentation(doc: &Document) -> crate::ApiDocumentation {
                     example: None,
                     examples: None,
                     extensions: std::collections::HashMap::new(),
+                    media_type: None,
                 })
                 .collect();
             endpoints.push(Endpoint {

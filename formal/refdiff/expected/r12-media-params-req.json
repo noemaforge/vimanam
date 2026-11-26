@@ -1,0 +1,5 @@
+[
+{"change": {"after": "integer", "before": "string", "op": "changed"}, "dir": "request", "neg": false, "owner": null, "ptr": "/properties/id/type", "severity": "breaking", "use": "POST /a body media:text/plain;charset=utf-8"},
+{"dir": "request", "media_type": "a/b; q=1", "op": "removed", "severity": "breaking", "use": "POST /a body"},
+{"dir": "request", "media_type": "a/b; q=2", "op": "added", "severity": "non_breaking", "use": "POST /a body"}
+]

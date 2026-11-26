@@ -240,6 +240,11 @@ pub struct Parameter {
     /// Unrecognized source fields preserved as JSON values.
     #[serde(flatten, serialize_with = "sorted_extensions")]
     pub extensions: HashMap<String, serde_json::Value>,
+    /// The `requestBody.content` key a synthetic OpenAPI 3 body parameter
+    /// was made from (one per media type); `None` for every declared
+    /// parameter, including a Swagger 2 `in: body` one. Never serialized.
+    #[serde(skip)]
+    pub media_type: Option<String>,
 }
 
 // `Default` is for constructing schemas in code (tests build partial schemas

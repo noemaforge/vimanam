@@ -709,3 +709,347 @@ fn diff_skips_resolving_provably_unchanged_cross_linked_schemas() {
         assert!(path.is_null() || path == "/leaf", "{change}");
     }
 }
+
+// --- media types (#154) ---
+
+/// A one-operation spec: `POST /a` with `request` as its request-body
+/// `content` and `response` as its 200 `content` (each omitted when `null`),
+/// plus a `W` component of the given `id` type.
+fn media_spec(
+    request: serde_json::Value,
+    response: serde_json::Value,
+    id: &str,
+) -> serde_json::Value {
+    let mut op = json!({"operationId": "a", "responses": {"200": {"description": "ok"}}});
+    if !request.is_null() {
+        op["requestBody"] = json!({"content": request});
+    }
+    if !response.is_null() {
+        op["responses"]["200"]["content"] = response;
+    }
+    json!({
+        "openapi": "3.0.3",
+        "info": {"title": "t", "version": "1"},
+        "paths": {"/a": {"post": op}},
+        "components": {"schemas": {"W": {"type": "object", "properties": {"id": {"type": id}}}}}
+    })
+}
+
+fn media(schema: serde_json::Value) -> serde_json::Value {
+    json!({"schema": schema})
+}
+
+fn w() -> serde_json::Value {
+    json!({"$ref": "#/components/schemas/W"})
+}
+
+fn obj(id: &str) -> serde_json::Value {
+    json!({"type": "object", "properties": {"id": {"type": id}}})
+}
+
+/// Runs `diff --fail-on-breaking` (plus `extra`) on two specs and returns
+/// `(stdout, exit code)`.
+fn media_diff(old: &serde_json::Value, new: &serde_json::Value, extra: &[&str]) -> (String, i32) {
+    let dir = tempfile::tempdir().unwrap();
+    let old = write_spec(&dir, "old.json", old);
+    let new = write_spec(&dir, "new.json", new);
+    let mut args = vec![old.as_str(), new.as_str(), "--fail-on-breaking"];
+    args.extend_from_slice(extra);
+    diff_run(&args)
+}
+
+#[test]
+fn diff_reports_a_removed_request_media_type_as_breaking() {
+    // Before #154 only the first media type was compared, so dropping the
+    // second one passed `--fail-on-breaking`.
+    let old = media_spec(
+        json!({"application/json": media(w()), "application/xml": media(w())}),
+        json!(null),
+        "string",
+    );
+    let new = media_spec(
+        json!({"application/json": media(w())}),
+        json!(null),
+        "string",
+    );
+    let (stdout, code) = media_diff(&old, &new, &[]);
+    assert_eq!(code, 3, "{stdout}");
+    assert!(
+        stdout.contains("| Request media type removed | `POST /a` | `application/xml` |"),
+        "{stdout}"
+    );
+    let (stdout, code) = media_diff(&new, &old, &[]);
+    assert_eq!(code, 0, "{stdout}");
+    assert!(
+        stdout.contains("## Non-breaking changes (1)")
+            && stdout.contains("| Request media type added | `POST /a` | `application/xml` |"),
+        "{stdout}"
+    );
+}
+
+#[test]
+fn diff_compares_the_schema_of_every_response_media_type() {
+    let old = media_spec(
+        json!(null),
+        json!({"application/json": media(obj("string")), "application/xml": media(obj("string"))}),
+        "string",
+    );
+    let new = media_spec(
+        json!(null),
+        json!({"application/json": media(obj("string")), "application/xml": media(obj("integer"))}),
+        "string",
+    );
+    let (stdout, code) = media_diff(&old, &new, &[]);
+    assert_eq!(code, 3, "{stdout}");
+    assert!(
+        stdout.contains(
+            "| Response schema changed | `POST /a` | 200 `application/xml` `/properties/id/type` changed `string` → `integer` |"
+        ),
+        "{stdout}"
+    );
+    // A response media type dropped breaks the clients that negotiate it.
+    let fewer = media_spec(
+        json!(null),
+        json!({"application/json": media(obj("string"))}),
+        "string",
+    );
+    let (stdout, code) = media_diff(&old, &fewer, &[]);
+    assert_eq!(code, 3, "{stdout}");
+    assert!(
+        stdout.contains("| Response media type removed | `POST /a` | 200 `application/xml` |"),
+        "{stdout}"
+    );
+}
+
+#[test]
+fn diff_lists_each_media_type_use_of_a_shared_component() {
+    let content = json!({"application/json": media(w()), "application/xml": media(w())});
+    let old = media_spec(json!(null), content.clone(), "string");
+    let new = media_spec(json!(null), content, "integer");
+    let (stdout, code) = media_diff(&old, &new, &[]);
+    assert_eq!(code, 3, "{stdout}");
+    // One record for the direction, both media types listed as uses.
+    assert!(
+        stdout.contains(
+            "| Component schema changed | component `W` | response `/properties/id/type` changed `string` → `integer` (1 operation) |"
+        ),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains(
+            "- `POST /a` response 200 `application/json`\n- `POST /a` response 200 `application/xml`\n"
+        ),
+        "{stdout}"
+    );
+    // v1 JSON: one record per media-type use, with distinct IDs.
+    let (stdout, _) = media_diff(
+        &media_spec(
+            json!(null),
+            json!({"application/json": media(w()), "application/xml": media(w())}),
+            "string",
+        ),
+        &media_spec(
+            json!(null),
+            json!({"application/json": media(w()), "application/xml": media(w())}),
+            "integer",
+        ),
+        &["--format", "json", "--contract", "1"],
+    );
+    let doc: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    let records = doc["changes"].as_array().unwrap();
+    assert_eq!(records.len(), 2, "{stdout}");
+    assert_eq!(records[0]["details"]["media_type"], "application/json");
+    assert_eq!(records[1]["details"]["media_type"], "application/xml");
+    assert_eq!(records[0]["details"]["component"], "W");
+    assert_ne!(records[0]["id"], records[1]["id"]);
+}
+
+#[test]
+fn diff_matches_media_types_by_exact_key() {
+    let old = media_spec(
+        json!({"application/json": media(obj("string"))}),
+        json!(null),
+        "string",
+    );
+    let new = media_spec(
+        json!({"application/json; charset=utf-8": media(obj("string"))}),
+        json!(null),
+        "string",
+    );
+    let (stdout, code) = media_diff(&old, &new, &[]);
+    assert_eq!(code, 3, "{stdout}");
+    assert!(
+        stdout.contains("| Request media type removed | `POST /a` | `application/json` |")
+            && stdout.contains(
+                "| Request media type added | `POST /a` | `application/json; charset=utf-8` |"
+            ),
+        "{stdout}"
+    );
+    // The same media types in another order are the same media types.
+    let a = media_spec(
+        json!(null),
+        json!({"application/json": media(obj("string")), "*/*": media(obj("string"))}),
+        "string",
+    );
+    let b = media_spec(
+        json!(null),
+        json!({"*/*": media(obj("string")), "application/json": media(obj("string"))}),
+        "string",
+    );
+    let (stdout, code) = media_diff(&a, &b, &[]);
+    assert_eq!(code, 0, "{stdout}");
+    assert!(stdout.contains("**Summary:** No changes."), "{stdout}");
+}
+
+#[test]
+fn diff_keeps_single_media_type_records_without_a_media_type() {
+    // One media type on each side, the same one: compared as before #154,
+    // so the v1 record has no `media_type` and keeps its ID.
+    let old = media_spec(
+        json!({"application/json": media(obj("string"))}),
+        json!(null),
+        "string",
+    );
+    let new = media_spec(
+        json!({"application/json": media(obj("integer"))}),
+        json!(null),
+        "string",
+    );
+    let (stdout, _) = media_diff(&old, &new, &["--format", "json", "--contract", "1"]);
+    let doc: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    let record = &doc["changes"][0];
+    assert_eq!(record["kind"], "request_schema_changed");
+    assert!(record["details"].get("media_type").is_none(), "{record}");
+    // A second media type makes the body compared per media type: the
+    // first one's records name it from then on.
+    let two = media_spec(
+        json!({"application/json": media(obj("integer")), "application/xml": media(obj("string"))}),
+        json!(null),
+        "string",
+    );
+    let (stdout, code) = media_diff(&old, &two, &["--format", "json", "--contract", "1"]);
+    assert_eq!(code, 3, "{stdout}");
+    let doc: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    let kinds: Vec<(&str, &str)> = doc["changes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| {
+            (
+                c["kind"].as_str().unwrap(),
+                c["details"]["media_type"].as_str().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        kinds,
+        [
+            ("request_schema_changed", "application/json"),
+            ("request_media_type_added", "application/xml"),
+        ],
+        "{stdout}"
+    );
+}
+
+#[test]
+fn diff_compares_swagger2_bodies_with_the_first_openapi3_media_type() {
+    // Swagger 2 names no media type per body or response (`consumes` and
+    // `produces` are not compared), so a 2.0 -> 3.x migration compares
+    // schemas as before #154, without media-type records.
+    let old = json!({
+        "swagger": "2.0",
+        "info": {"title": "t", "version": "1"},
+        "paths": {"/a": {"post": {
+            "parameters": [{"name": "body", "in": "body", "schema": obj("string")}],
+            "responses": {"200": {"description": "ok", "schema": obj("string")}}
+        }}}
+    });
+    let new = media_spec(
+        json!({"application/json": media(obj("integer")), "application/xml": media(obj("string"))}),
+        json!({"application/json": media(obj("string")), "application/xml": media(obj("string"))}),
+        "string",
+    );
+    let (stdout, code) = media_diff(&old, &new, &[]);
+    assert_eq!(code, 3, "{stdout}");
+    assert!(!stdout.contains("media type"), "{stdout}");
+    assert!(
+        stdout.contains("| Request schema changed | `POST /a` | `/properties/id/type` changed"),
+        "{stdout}"
+    );
+}
+
+#[test]
+fn diff_treats_a_respelled_media_type_as_the_same_one() {
+    // RFC 9110 §8.3.1: type, subtype and parameter names are
+    // case-insensitive, so `Application/JSON` is a respelling, not a removal
+    // plus an addition (#154 review).
+    for (old, new) in [
+        (
+            json!({"application/json": media(obj("string"))}),
+            json!(null),
+        ),
+        (
+            json!(null),
+            json!({"application/json": media(obj("string"))}),
+        ),
+    ] {
+        let respelled = |v: &serde_json::Value| {
+            if v.is_null() {
+                v.clone()
+            } else {
+                json!({"Application/JSON": media(obj("string"))})
+            }
+        };
+        let a = media_spec(old.clone(), new.clone(), "string");
+        let b = media_spec(respelled(&old), respelled(&new), "string");
+        for (x, y) in [(&a, &b), (&b, &a)] {
+            let (stdout, code) = media_diff(x, y, &[]);
+            assert_eq!(code, 0, "{stdout}");
+            assert!(stdout.contains("**Summary:** No changes."), "{stdout}");
+        }
+    }
+    // Among several media types, a respelled one is matched and named as the
+    // old side writes it; whitespace around `;` and parameter-name case are
+    // spelling too, a parameter value is not.
+    let old = media_spec(
+        json!(null),
+        json!({
+            "Application/JSON": media(obj("string")),
+            "text/plain;charset=utf-8": media(obj("string")),
+            "a/b; q=1": media(obj("string"))
+        }),
+        "string",
+    );
+    let new = media_spec(
+        json!(null),
+        json!({
+            "application/json": media(obj("integer")),
+            "TEXT/Plain ; Charset=utf-8": media(obj("string")),
+            "a/b; q=2": media(obj("string"))
+        }),
+        "string",
+    );
+    let (stdout, code) = media_diff(&old, &new, &["--format", "json", "--contract", "1"]);
+    assert_eq!(code, 3, "{stdout}");
+    let doc: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    let records: Vec<(&str, &str)> = doc["changes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| {
+            (
+                c["kind"].as_str().unwrap(),
+                c["details"]["media_type"].as_str().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        records,
+        [
+            ("response_schema_changed", "Application/JSON"),
+            ("response_media_type_removed", "a/b; q=1"),
+            ("response_media_type_added", "a/b; q=2"),
+        ],
+        "{stdout}"
+    );
+}
