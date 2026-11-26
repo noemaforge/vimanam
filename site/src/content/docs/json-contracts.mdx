@@ -46,6 +46,34 @@ import { Aside } from '@astrojs/starlight/components';
 
 `deltas` is included only when you pass `--report`; otherwise the key is omitted. All map keys — including flattened OpenAPI `extensions` — serialize deterministically.
 
+## Omitting the full surfaces (`--omit-surfaces`)
+
+`old.contract` and `new.contract` hold every entity of both specs, so on a large spec they are nearly all of the document. CI gates, PR bots and coding agents that read only `summary` and `changes` can pass `--omit-surfaces`:
+
+```bash
+vimanam diff old.json new.json --format json --omit-surfaces --fail-on-breaking
+```
+
+```json
+{
+  "schema_version": 2,
+  "generator": { "name": "vimanam", "version": "2.2.0" },
+  "surfaces_omitted": true,
+  "old": { "file_sha256": "<64 lowercase hex>" },
+  "new": { "file_sha256": "<64 lowercase hex>" },
+  "summary": { "operations_added": 0, "operations_removed": 0, "operations_changed": 1, "breaking": 1, "non_breaking": 2, "review": 1 },
+  "changes": [ … ]
+}
+```
+
+- Each side keeps only `file_sha256`; `surfaces_omitted: true` marks the shape and never appears in the default output, which stays byte-identical.
+- `summary`, `changes` (every `vc2_` and `ve2_` ID), `deltas` and the `--fail-on-breaking` / `--breaking` exit codes are identical to the run without the flag, for OpenAPI, Protobuf and GraphQL, from files or Git refs.
+- Without the surfaces, a `ve2_` ID can no longer be looked up for its entity's name, parent or attributes. Each change's `native` location and `native_kind` already say where the change is; to join IDs against full entity records, run again without the flag (IDs are stable across runs).
+
+<Aside type="caution" title="v2 JSON only">
+  `--omit-surfaces` requires `--format json` with contract v2. With Markdown output or `--contract 1`, neither of which has surfaces, it exits with status `1` before creating any output file.
+</Aside>
+
 ## Stable entity and change identities
 
 - **Entity IDs (`ve2_`)**: `"ve2_" + SHA-256` of canonical JSON `{v: 2, format, kind, coordinate}` with keys sorted recursively. Descriptions, comments, generator versions, and declaration order never alter an entity ID.

@@ -101,12 +101,38 @@ The confidence scale is `declared` (the contract language declares paging, as Gr
 
 The v2 envelope has `schema_version`, `generator`, `old`, `new`, `summary`, `changes`, and optional `deltas`. Each side contains raw `file_sha256` and the full `contract` surface. Hashes refer to exact parsed bytes. Deltas retain the OpenAPI hygiene/render profile. The v2 schema round-trips through serde; no CLI feature is required.
 
+### Omitting the surfaces (`--omit-surfaces`)
+
+The two `contract` surfaces are most of a v2 document: on large specs, megabytes of unchanged entities around a few kilobytes of `changes`. `diff --format json --omit-surfaces` writes the same document without them:
+
+```json
+{
+  "schema_version": 2,
+  "generator": { "name": "vimanam", "version": "…" },
+  "surfaces_omitted": true,
+  "old": { "file_sha256": "…" },
+  "new": { "file_sha256": "…" },
+  "summary": { … },
+  "changes": [ … ],
+  "deltas": { … }
+}
+```
+
+- Each side keeps only `file_sha256`. `surfaces_omitted` is always `true` and appears only in this shape, so the default document is byte-identical with or without this feature and a consumer can tell an intentionally surface-free document from a truncated one.
+- `schema_version`, `generator`, `summary`, `changes` (every `vc2_` ID, `ve2_` subject and `uses` ID, native location, details) and `deltas` are exactly those of the default run. The summary is still counted over the full surfaces, and `--fail-on-breaking` / `--breaking` exit codes are unchanged.
+- The surfaces are still built (the comparison and the `operations_changed` count walk them) but are dropped before serialisation, which is where the time and size go.
+- What is no longer resolvable from the document: a `ve2_` ID's entity record — its kind, name, parent chain, attributes and references. Each change's `native` location (OpenAPI method/path/status/pointer, GraphQL schema coordinate, protobuf full name and number) and `native_kind` say where it is without a lookup, and entity IDs are content-derived from `{format, kind, coordinate}`, so a consumer that needs the records can rerun without the flag and join on the same IDs.
+- Rejected with exit status 1 before any input is read or output created with Markdown (`--format markdown`, the default) or `--contract 1`: neither carries surfaces.
+
+In the library, `JsonDiff::without_surfaces` turns a document into `JsonDiffWithoutSurfaces` (with `SideDigest` sides), which serialises to this shape and round-trips through serde.
+
 ```rust
 let old = vimanam::parse_openapi("old.json")?;
 let new = vimanam::parse_openapi("new.json")?;
 let surface = vimanam::contract::openapi::adapt(&new);
 let changes = vimanam::contract::openapi::diff(&old, &new)?;
 let json = vimanam::contract::json::openapi(&old, &new, None, "old-hash", "new-hash")?;
+let changes_only = json.without_surfaces(); // the --omit-surfaces shape
 ```
 
 `openapi::parse` and `parse_bytes` return surfaces directly. Generic consumers implement `Adapter` and use `compare` on their own contracts. Neutral model kinds support renames, nullability, enum values, defaults, pagination and wire identity without forcing new parsers to use the HTTP-shaped v1 `Change` model.

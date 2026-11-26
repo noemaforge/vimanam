@@ -63,7 +63,9 @@ Unknown spec fields are preserved via `#[serde(flatten)] extensions` maps on mos
 format-native coordinates and adapter-owned verdicts. `contract::openapi` adapts
 and compares OpenAPI beside unchanged `parse_openapi` / `diff::diff` APIs.
 `diff --format json` defaults to `--contract 2`; `--contract 1` selects the
-unchanged v1 serializer/IDs/verdict. V2 adds independent named-type/service facts
+unchanged v1 serializer/IDs/verdict. `--omit-surfaces` (v2 JSON only; rejected
+with Markdown or `--contract 1` before output) serialises `JsonDiff::without_surfaces`:
+no `old/new.contract`, a `surfaces_omitted: true` marker, all else identical. V2 adds independent named-type/service facts
 and conservative review-only pagination inference (normalised names, one nested
 level, generic names need a token control or end flag; a side the 2.0.0 rule
 matches emits exactly 2.0.0's evidence/confidence/rule, so 2.0.0 IDs hold when

@@ -56,6 +56,67 @@ impl JsonDiff {
     pub fn has_breaking(&self) -> bool {
         self.summary.breaking > 0
     }
+
+    /// Drop both contract surfaces (`diff --omit-surfaces`), keeping the
+    /// hashes, summary, changes and deltas unchanged. The surfaces are freed
+    /// here, before anything is serialised.
+    pub fn without_surfaces(self) -> JsonDiffWithoutSurfaces {
+        JsonDiffWithoutSurfaces {
+            schema_version: self.schema_version,
+            generator: self.generator,
+            surfaces_omitted: true,
+            old: SideDigest {
+                file_sha256: self.old.file_sha256,
+            },
+            new: SideDigest {
+                file_sha256: self.new.file_sha256,
+            },
+            summary: self.summary,
+            changes: self.changes,
+            deltas: self.deltas,
+        }
+    }
+}
+
+/// One side of a comparison whose surface was omitted: its input hash only.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct SideDigest {
+    /// Raw input SHA-256.
+    pub file_sha256: String,
+}
+
+/// Contract v2 without the `old.contract` / `new.contract` surfaces
+/// (`diff --format json --omit-surfaces`). Every other field, and every
+/// `vc2_` / `ve2_` ID in `changes`, is identical to the [`JsonDiff`] of the
+/// same comparison; the summary was counted over the full surfaces.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct JsonDiffWithoutSurfaces {
+    /// Always 2.
+    pub schema_version: u8,
+    /// Generator identity.
+    pub generator: JsonGenerator,
+    /// Always `true`: marks the surfaces as omitted on purpose, so a
+    /// consumer can tell this shape from a truncated full document. The full
+    /// shape never has this field.
+    pub surfaces_omitted: bool,
+    /// Old input hash.
+    pub old: SideDigest,
+    /// New input hash.
+    pub new: SideDigest,
+    /// Neutral counts.
+    pub summary: Summary,
+    /// Adapter-classified facts.
+    pub changes: Vec<Change>,
+    /// Optional existing OpenAPI report deltas.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub deltas: Option<JsonDeltas>,
+}
+
+impl JsonDiffWithoutSurfaces {
+    /// Whether the adapter classified any fact as breaking.
+    pub fn has_breaking(&self) -> bool {
+        self.summary.breaking > 0
+    }
 }
 /// Build an OpenAPI neutral v2 comparison; input hashes come from exact parsed bytes.
 ///

@@ -63,6 +63,7 @@ fn run_diff<W: Write>(
     output: &mut W,
     notice: &mut dyn FnMut(&str),
 ) -> Result<bool> {
+    check_omit_surfaces(args)?;
     // Each input is read once and parsed from the exact bytes that get hashed,
     // so `file_sha256` can never refer to different contents than the diff.
     let (old_input, new_input) = diff_inputs::read(args)?;
@@ -121,7 +122,7 @@ fn run_diff<W: Write>(
             Box::new(output)
         };
         match args.format {
-            DiffFormatArg::Json => write_json_diff(&mut writer, &document)?,
+            DiffFormatArg::Json => write_neutral_diff(&mut writer, document, args.omit_surfaces)?,
             DiffFormatArg::Markdown => crate::contract::protobuf::write_diff(
                 &mut writer,
                 &document.changes,
@@ -165,6 +166,12 @@ fn run_diff<W: Write>(
     } else {
         None
     };
+    // Decided before the document is written (and, under --omit-surfaces,
+    // consumed); the complete document is written and flushed before the
+    // exit code is returned, so exit 3 never truncates the report.
+    let breaking = neutral
+        .as_ref()
+        .map_or_else(|| spec_diff.has_breaking(), |d| d.has_breaking());
     match (&args.output, args.format) {
         (Some(output_path), DiffFormatArg::Markdown) => {
             let mut writer = BufWriter::new(create_output_file(output_path)?);
@@ -174,11 +181,11 @@ fn run_diff<W: Write>(
             info!("Diff written to: {:?}", output_path);
         }
         (Some(output_path), DiffFormatArg::Json) => {
-            let document = diff::json::to_json(&spec_diff, deltas.as_ref(), &old_sha, &new_sha);
             let mut writer = BufWriter::new(create_output_file(output_path)?);
-            if let Some(neutral) = &neutral {
-                write_json_diff(&mut writer, neutral)?;
+            if let Some(neutral) = neutral {
+                write_neutral_diff(&mut writer, neutral, args.omit_surfaces)?;
             } else {
+                let document = diff::json::to_json(&spec_diff, deltas.as_ref(), &old_sha, &new_sha);
                 write_json_diff(&mut writer, &document)?;
             }
             info!("Diff written to: {:?}", output_path);
@@ -189,21 +196,45 @@ fn run_diff<W: Write>(
             output.flush().context("Failed to write diff")?;
         }
         (None, DiffFormatArg::Json) => {
-            let document = diff::json::to_json(&spec_diff, deltas.as_ref(), &old_sha, &new_sha);
-            if let Some(neutral) = &neutral {
-                write_json_diff(output, neutral)?;
+            if let Some(neutral) = neutral {
+                write_neutral_diff(output, neutral, args.omit_surfaces)?;
             } else {
+                let document = diff::json::to_json(&spec_diff, deltas.as_ref(), &old_sha, &new_sha);
                 write_json_diff(output, &document)?;
             }
         }
     }
+    Ok(args.fail_on_breaking && breaking)
+}
 
-    // The complete document is written and flushed before the exit code is
-    // decided, so exit 3 never truncates the report.
-    Ok(args.fail_on_breaking
-        && neutral
-            .as_ref()
-            .map_or_else(|| spec_diff.has_breaking(), |d| d.has_breaking()))
+/// `--omit-surfaces` only has meaning for v2 JSON, the one output that
+/// carries contract surfaces: reject it elsewhere before reading any input or
+/// creating any output (exit 1).
+fn check_omit_surfaces(args: &DiffArgs) -> Result<()> {
+    if args.omit_surfaces {
+        anyhow::ensure!(
+            args.format == DiffFormatArg::Json,
+            "--omit-surfaces requires --format json; Markdown output has no contract surfaces"
+        );
+        anyhow::ensure!(
+            args.contract == 2,
+            "--omit-surfaces requires --contract 2; v1 JSON has no contract surfaces"
+        );
+    }
+    Ok(())
+}
+
+/// Writes a v2 document, without its surfaces under `--omit-surfaces`.
+fn write_neutral_diff<W: Write>(
+    writer: &mut W,
+    document: crate::contract::json::JsonDiff,
+    omit_surfaces: bool,
+) -> Result<()> {
+    if omit_surfaces {
+        write_json_diff(writer, &document.without_surfaces())
+    } else {
+        write_json_diff(writer, &document)
+    }
 }
 
 /// GraphQL SDL/introspection diff through the neutral v2 model. Every
@@ -253,8 +284,9 @@ fn run_graphql_diff<W: Write>(
     } else {
         Box::new(output)
     };
+    let breaking = document.has_breaking();
     match args.format {
-        DiffFormatArg::Json => write_json_diff(&mut writer, &document)?,
+        DiffFormatArg::Json => write_neutral_diff(&mut writer, document, args.omit_surfaces)?,
         DiffFormatArg::Markdown => {
             graphql::write_diff(&mut writer, &document.changes, args.report, &old, &new)?;
             if args.context {
@@ -270,7 +302,7 @@ fn run_graphql_diff<W: Write>(
             }
         }
     }
-    Ok(args.fail_on_breaking && document.has_breaking())
+    Ok(args.fail_on_breaking && breaking)
 }
 
 /// The raw file extension of `path`, used to pick the parser. Empty when the
