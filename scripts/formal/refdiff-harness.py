@@ -163,8 +163,8 @@ class Gen:
            ("items", True), ("format", ["x"]), ("enum", "p"), ("properties", [])]
     SCALARS = [5, [1], "s", True]
 
-    # Media types (#154): exact keys, so parameters and wildcards are media
-    # types of their own.
+    # Media types (#154): parameter values and wildcards match exactly, so
+    # these are media types of their own (`respell` makes the same one).
     MEDIA = ["application/xml", "text/plain", "application/json; charset=utf-8",
              "*/*", "application/vnd.api+json", "multipart/form-data"]
 
@@ -226,15 +226,41 @@ class Gen:
                 r.shuffle(items)
                 nc.clear()
                 nc.update(items)
-            elif x < 0.7:
+            elif x < 0.6:
+                # A respelling (#154 review): the same media type.
+                k = r.choice(keys)
+                items = [((self.respell(k) if key == k else key), v) for key, v in nc.items()]
+                nc.clear()
+                nc.update(items)
+            elif x < 0.75:
                 k = r.choice(keys)
                 nc[k] = {"schema": {"type": r.choice(["string", "boolean", "array"])}}
-        # A single media type re-keyed on one side: no longer the same one.
+        # A single media type re-keyed on one side (no longer the same one)
+        # or respelled (still the same one).
         for oc, nc in zip(olds, news):
-            if len(oc) == 1 and len(nc) == 1 and r.random() < 0.1:
+            if len(oc) == 1 and len(nc) == 1 and r.random() < 0.15:
                 (k, v), = nc.items()
                 nc.clear()
-                nc["application/xml" if k != "application/xml" else "text/plain"] = v
+                if r.random() < 0.4:
+                    nc[self.respell(k)] = v
+                else:
+                    nc["application/xml" if k != "application/xml" else "text/plain"] = v
+
+    def respell(self, key: str) -> str:
+        """`key` spelled differently, from `rmt`: type/subtype or parameter
+        names in another case, or whitespace around `;` (RFC 9110: the same
+        media type)."""
+        r = self.rmt
+        head, *params = key.split(";")
+        head = r.choice([head.upper(), head.title(), head.swapcase()])
+        if not params:
+            return head
+        sep = " ;" if r.random() < 0.5 else ";"
+        out = []
+        for p in params:
+            name, eq, value = p.strip().partition("=")
+            out.append(" " + name.upper() + eq + value)
+        return head + "".join(sep + p for p in out)
 
     def malformed(self, old: dict, new: dict) -> None:
         """Makes one component, from `rbad`, a `definitions` entry the Rust

@@ -977,3 +977,79 @@ fn diff_compares_swagger2_bodies_with_the_first_openapi3_media_type() {
         "{stdout}"
     );
 }
+
+#[test]
+fn diff_treats_a_respelled_media_type_as_the_same_one() {
+    // RFC 9110 §8.3.1: type, subtype and parameter names are
+    // case-insensitive, so `Application/JSON` is a respelling, not a removal
+    // plus an addition (#154 review).
+    for (old, new) in [
+        (
+            json!({"application/json": media(obj("string"))}),
+            json!(null),
+        ),
+        (
+            json!(null),
+            json!({"application/json": media(obj("string"))}),
+        ),
+    ] {
+        let respelled = |v: &serde_json::Value| {
+            if v.is_null() {
+                v.clone()
+            } else {
+                json!({"Application/JSON": media(obj("string"))})
+            }
+        };
+        let a = media_spec(old.clone(), new.clone(), "string");
+        let b = media_spec(respelled(&old), respelled(&new), "string");
+        for (x, y) in [(&a, &b), (&b, &a)] {
+            let (stdout, code) = media_diff(x, y, &[]);
+            assert_eq!(code, 0, "{stdout}");
+            assert!(stdout.contains("**Summary:** No changes."), "{stdout}");
+        }
+    }
+    // Among several media types, a respelled one is matched and named as the
+    // old side writes it; whitespace around `;` and parameter-name case are
+    // spelling too, a parameter value is not.
+    let old = media_spec(
+        json!(null),
+        json!({
+            "Application/JSON": media(obj("string")),
+            "text/plain;charset=utf-8": media(obj("string")),
+            "a/b; q=1": media(obj("string"))
+        }),
+        "string",
+    );
+    let new = media_spec(
+        json!(null),
+        json!({
+            "application/json": media(obj("integer")),
+            "TEXT/Plain ; Charset=utf-8": media(obj("string")),
+            "a/b; q=2": media(obj("string"))
+        }),
+        "string",
+    );
+    let (stdout, code) = media_diff(&old, &new, &["--format", "json", "--contract", "1"]);
+    assert_eq!(code, 3, "{stdout}");
+    let doc: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    let records: Vec<(&str, &str)> = doc["changes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| {
+            (
+                c["kind"].as_str().unwrap(),
+                c["details"]["media_type"].as_str().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        records,
+        [
+            ("response_schema_changed", "Application/JSON"),
+            ("response_media_type_removed", "a/b; q=1"),
+            ("response_media_type_added", "a/b; q=2"),
+        ],
+        "{stdout}"
+    );
+}

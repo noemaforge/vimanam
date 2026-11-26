@@ -40,11 +40,14 @@
 //! A request body and a response may declare several media types
 //! (`content` keys, #154). The two sides of one body, or of one response
 //! status present in both specs, are compared **media type by media type**,
-//! matched by exact key (no case folding, no parameter stripping, no
-//! wildcard matching: `application/json` and `application/json;
-//! charset=utf-8` are two media types): each media type both sides declare
-//! is compared as its own schema use, with `media_type` set on its changes
-//! and uses, and a media type one side lacks is a
+//! matched by [`media_key`]: the type, subtype and parameter names
+//! case-insensitively and without whitespace around `;` (RFC 9110 §8.3.1),
+//! parameter values and wildcards exactly (`application/json` and
+//! `application/json; charset=utf-8` are two media types, `*/*` matches only
+//! `*/*`, and a respelling such as `Application/JSON` is no change). Each
+//! media type both sides declare is compared as its own schema use, with
+//! `media_type` (as the old side writes it) set on its changes and uses, and
+//! a media type one side lacks is a
 //! [`ChangeKind::RequestMediaTypeRemoved`]/`Added` or
 //! [`ChangeKind::ResponseMediaTypeRemoved`]/`Added` change. Removing one is
 //! Breaking (a client that sends it, or negotiates it with `Accept`, fails);
@@ -54,7 +57,7 @@
 //! first body, or a response's first media type with a schema, see
 //! `response_schema`), with `media_type: None`, when:
 //!
-//! * each side has exactly one media type, and it is the same key (so a spec
+//! * each side has exactly one media type, and it is the same one (so a spec
 //!   whose bodies and responses keep their one media type reports exactly
 //!   what it reported before);
 //! * a side has none (a response that gained or lost its whole body is one
@@ -1393,32 +1396,84 @@ fn value_changes(old: &Value, new: &Value) -> Vec<ValueChange> {
     out
 }
 
-/// The body parameters of an endpoint with their media types (the parser's
-/// synthetic OpenAPI 3 body parameters carry one each; a declared `in: body`
-/// parameter has none), one per media type, the first winning.
-fn body_entries(endpoint: &Endpoint) -> Vec<(Option<&str>, &Parameter)> {
-    let mut out: Vec<(Option<&str>, &Parameter)> = Vec::new();
-    for parameter in endpoint.parameters.iter().filter(|p| is_body(p)) {
-        let key = parameter.media_type.as_deref();
-        if !out.iter().any(|(seen, _)| *seen == key) {
-            out.push((key, parameter));
+/// The key a media type is matched by (RefDiff.lean's `mediaKey`): RFC 9110
+/// §8.3.1 makes the type, the subtype and parameter names case-insensitive
+/// and allows optional whitespace around `;`, so the `type/subtype` is
+/// trimmed and ASCII lower-cased, and each `;`-separated parameter is trimmed
+/// with its name (before the first `=`) lower-cased. Parameter values
+/// (`charset=UTF-8`), wildcards (`*/*`, `application/*`) and which
+/// parameters there are stay as written, so changing one is a removal plus
+/// an addition. A `;` inside a quoted value is not special.
+pub(crate) fn media_key(media_type: &str) -> String {
+    fn trim(s: &str) -> &str {
+        s.trim_matches([' ', '\t'])
+    }
+    let mut parts = media_type.split(';');
+    let mut out = trim(parts.next().unwrap_or("")).to_ascii_lowercase();
+    for part in parts {
+        out.push(';');
+        match trim(part).split_once('=') {
+            Some((name, value)) => {
+                out.push_str(&name.to_ascii_lowercase());
+                out.push('=');
+                out.push_str(value);
+            }
+            None => out.push_str(&trim(part).to_ascii_lowercase()),
         }
     }
     out
 }
 
+/// Whether two entries name the same media type (both none, or the same
+/// [`media_key`]).
+fn same_media(a: Option<&str>, b: Option<&str>) -> bool {
+    match (a, b) {
+        (None, None) => true,
+        (Some(a), Some(b)) => a == b || media_key(a) == media_key(b),
+        _ => false,
+    }
+}
+
+/// `entries` with the first entry per media type ([`same_media`]) only.
+fn dedup_media<'k, T>(
+    entries: impl IntoIterator<Item = (Option<&'k str>, T)>,
+) -> Vec<(Option<&'k str>, T)> {
+    let mut out: Vec<(Option<&'k str>, T)> = Vec::new();
+    for (key, value) in entries {
+        if !out.iter().any(|(seen, _)| same_media(*seen, key)) {
+            out.push((key, value));
+        }
+    }
+    out
+}
+
+/// The body parameters of an endpoint with their media types (the parser's
+/// synthetic OpenAPI 3 body parameters carry one each; a declared `in: body`
+/// parameter has none), one per media type, the first winning.
+fn body_entries(endpoint: &Endpoint) -> Vec<(Option<&str>, &Parameter)> {
+    dedup_media(
+        endpoint
+            .parameters
+            .iter()
+            .filter(|p| is_body(p))
+            .map(|parameter| (parameter.media_type.as_deref(), parameter)),
+    )
+}
+
 /// A response's media types with their schemas: its own `schema` (Swagger
-/// 2, no media type), else every `content` entry in spec order.
+/// 2, no media type), else every `content` entry in spec order, one per
+/// media type, the first winning.
 fn response_entries(response: &crate::models::Response) -> Vec<(Option<&str>, Option<&Schema>)> {
     if let Some(schema) = &response.schema {
         return vec![(None, Some(schema))];
     }
-    response
-        .content
-        .iter()
-        .flatten()
-        .map(|(key, media)| (Some(key.as_str()), media.schema.as_ref()))
-        .collect()
+    dedup_media(
+        response
+            .content
+            .iter()
+            .flatten()
+            .map(|(key, media)| (Some(key.as_str()), media.schema.as_ref())),
+    )
 }
 
 /// Whether the two sides of a body or response are compared media type by
@@ -1427,13 +1482,14 @@ fn response_entries(response: &crate::models::Response) -> Vec<(Option<&str>, Op
 /// exactly the same single one.
 fn per_media<T>(old: &[(Option<&str>, T)], new: &[(Option<&str>, T)]) -> bool {
     let unkeyed = old.iter().chain(new).any(|(key, _)| key.is_none());
-    let same_single = old.len() == 1 && new.len() == 1 && old[0].0 == new[0].0;
+    let same_single = old.len() == 1 && new.len() == 1 && same_media(old[0].0, new[0].0);
     !unkeyed && !old.is_empty() && !new.is_empty() && !same_single
 }
 
 /// One step of a per-media comparison, in report order: a media type both
-/// sides declare (old order), one only the old side declares (in its
-/// place), then those only the new side declares (new order).
+/// sides declare (old order, named as the old side writes it), one only the
+/// old side declares (in its place), then those only the new side declares
+/// (new order). Media types match by [`media_key`].
 enum MediaStep<'s, 'k, T> {
     Both(&'k str, &'s T, &'s T),
     Removed(&'k str),
@@ -1447,14 +1503,14 @@ fn media_steps<'s, 'k, T>(
     let mut steps = Vec::new();
     for (key, old_value) in old {
         let Some(key) = key else { continue };
-        match new.iter().find(|(other, _)| *other == Some(*key)) {
+        match new.iter().find(|(other, _)| same_media(*other, Some(key))) {
             Some((_, new_value)) => steps.push(MediaStep::Both(key, old_value, new_value)),
             None => steps.push(MediaStep::Removed(key)),
         }
     }
     for (key, _) in new {
         let Some(key) = key else { continue };
-        if !old.iter().any(|(other, _)| *other == Some(*key)) {
+        if !old.iter().any(|(other, _)| same_media(*other, Some(key))) {
             steps.push(MediaStep::Added(key));
         }
     }
@@ -1854,6 +1910,24 @@ pub(crate) mod test_support {
 
 #[cfg(test)]
 mod tests {
+    use super::media_key;
+
+    #[test]
+    fn media_key_folds_only_what_rfc_9110_makes_case_insensitive() {
+        assert_eq!(media_key("Application/JSON"), "application/json");
+        assert_eq!(
+            media_key("TEXT/Plain ; Charset=UTF-8;q=1"),
+            "text/plain;charset=UTF-8;q=1"
+        );
+        assert_eq!(media_key("*/*"), "*/*");
+        assert_eq!(media_key("a/b;"), "a/b;");
+        assert_ne!(
+            media_key("a/b;charset=utf-8"),
+            media_key("a/b;charset=UTF-8")
+        );
+        assert_ne!(media_key("application/*"), media_key("application/json"));
+    }
+
     use super::*;
     use crate::diff::test_support::{
         added, change, changed, component, parameter, removed, request, response,

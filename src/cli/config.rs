@@ -237,8 +237,8 @@ pub enum Commands {
     /// components is compared once, and a change inside a shared component is
     /// reported once per usage direction (request or response), listing every
     /// operation that reaches it. A body or response with several media
-    /// types is compared media type by media type, matched by exact key; a
-    /// removed media type is breaking.
+    /// types is compared media type by media type, matched case-insensitively
+    /// (RFC 9110); a removed media type is breaking.
     ///
     /// Example: `vimanam diff v1/openapi.json v2/openapi.json --fail-on-breaking`
     Diff(Box<DiffArgs>),

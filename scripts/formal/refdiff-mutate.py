@@ -18,7 +18,9 @@ Runs `$REFDIFF_REAL_BIN` with the given arguments, then, by env `OP`:
   media-drop-use  removes the schema records of media type `PTR` (as if
           only the first media type were compared);
   media-strip  removes `media_type` from every schema record (as if the
-          body or response were compared by its first schema).
+          body or response were compared by its first schema);
+  media-upper  upper-cases `media_type` in every schema record (as if a
+          matched media type were named as the new side writes it).
 """
 import copy
 import json
@@ -56,6 +58,8 @@ def main() -> int:
             continue
         if op == "media-strip" and s is not None:
             c["details"].pop("media_type", None)
+        if op == "media-upper" and s is not None and mt is not None:
+            c["details"]["media_type"] = mt.upper()
         at_ref = s is not None and c["severity"] == "review" and s["pointer"].endswith("/$ref") and ptr in s["pointer"]
         if op == "drop" and at_ref:
             continue

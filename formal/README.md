@@ -188,7 +188,7 @@ still rated Breaking (#167).
   type is Non-breaking on the assumption that a server keeps answering an
   `Accept` it answered before with the same type; a client that sends
   `Accept: */*` (or none) to a server that then prefers the new type is not
-  modelled. Which media types match (exact keys, the single-media and
+  modelled. Which media types match (`mediaKey`, the single-media and
   Swagger 2 fallbacks) is RefDiff's `perMedia`, checked against the Rust by
   the harness rather than proved.
 * Shared components (#181): how `diff::components` and
@@ -349,8 +349,10 @@ the same specification in prose.
     media type), else one per `content` key; each in spec order, the first
     per key winning. When both sides name their media types, neither side
     is empty, and they are not the same single key, every key both sides
-    declare (matched exactly: no case folding, no parameter stripping, no
-    wildcards) is a use of its own (`METHOD path body media:TYPE`,
+    declare (matched by `mediaKey`: type, subtype and parameter names
+    ASCII case-insensitively and without `OWS` around `;`, RFC 9110 §8.3.1;
+    parameter values and wildcards exactly) is a use of its own, named as
+    the old side writes it (`METHOD path body media:TYPE`,
     `... response:STATUS media:TYPE`), and every key one side lacks is a
     `MediaRec` rated by `Severity.lean`'s media-type rows (removed:
     Breaking; added: Non-breaking). Otherwise the body or response is one
@@ -667,8 +669,10 @@ own walk: `r11-media-budget`, `r11-media-bad-def-*`). The harness compares
 the model's `media` records with the Rust's `*_media_type_added`/`_removed`
 v1 records (owner `media` in the report), and the generator's `rmt` stream
 (30% of OpenAPI 3 seeds) gives bodies and responses extra media types,
-drops, adds, re-keys (`application/json; charset=utf-8`), reorders and
-mutates them. `refdiff/cases/r11-*` pin the semantics, including the
+drops, adds, re-keys (`application/json; charset=utf-8`), respells
+(another case, whitespace around `;`: the same media type), reorders and
+mutates them. `refdiff/cases/r11-*` and `r12-*` (respellings, parameters,
+two spellings on one side) pin the semantics, including the
 fallbacks (`r11-media-empty-resp`, `r11-media-oas2-to-3-req`, the latter
 also pinning spec order: a sorted reading would pick another response
 schema).

@@ -98,7 +98,7 @@ A `definitions` entry that is not a valid schema (for example `"required": "id"`
 
 ## Every media type is compared
 
-A request body or response with several media types (`content` keys) is compared media type by media type, matched by exact key: `application/json` and `application/json; charset=utf-8` are different media types, and `*/*` matches only `*/*`. A media type one side lacks is its own row:
+A request body or response with several media types (`content` keys) is compared media type by media type. Media types match the way RFC 9110 compares them: the type, the subtype and parameter names case-insensitively, and ignoring whitespace around `;`. So `Application/JSON` is the same media type as `application/json`, a respelling reports nothing, and rows name a matched media type as the old spec writes it. A media type one side lacks is its own row:
 
 ```markdown
 | Request media type removed | `POST /widgets` | `application/xml` |
@@ -113,6 +113,13 @@ A request body or response with several media types (`content` keys) is compared
 | Response media type added | `non-breaking` |
 
 A shared component reached through two media types of one response is still one row, with both media types listed under `## Affected operations`. When each side has exactly one media type and it is the same one, or a response gains or loses its whole body, the body or response is compared as before, so specs whose bodies and responses keep a single media type report exactly what they did. Swagger 2 bodies and responses name no media type (`consumes` and `produces` are not compared), so a Swagger 2 → OpenAPI 3 migration compares the first schemas.
+
+Some matching is deliberately conservative, so it can over-report but never hides a change:
+
+- **Parameter values are compared as written.** `application/json` → `application/json; charset=utf-8`, or `charset=utf-8` → `charset=UTF-8`, is a removed media type (`breaking`) plus an added one.
+- **Wildcards match only themselves.** `*/*` or `application/*` is not matched against the concrete types it covers, so `*/*` → `application/json` is a removal plus an addition.
+- **Two spellings of one media type in one `content` map** are one media type: the first is compared, the rest are ignored.
+- **Adding a response media type is `non-breaking`** on the assumption that a server keeps answering an `Accept` header it answered before with the same type. A client that sends `Accept: */*` (or no `Accept`) to a server that then prefers the new type may receive it; Vimanam does not model the server's content negotiation.
 
 ## Include hygiene and token deltas with `--report`
 

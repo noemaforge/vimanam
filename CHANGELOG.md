@@ -99,16 +99,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `diff` compares every media type of a request body or response (#154).
   Before, only the first one was compared, so a removed second media type,
   or a breaking change in its schema, passed `--fail-on-breaking`. Media
-  types now match by exact `content` key (no case folding, parameter
-  stripping or wildcard matching, so `application/json` to
-  `application/json; charset=utf-8` is a removal plus an addition): each
+  types match as RFC 9110 compares them: type, subtype and parameter names
+  case-insensitively and without whitespace around `;` (so
+  `Application/JSON` is a respelling and reports nothing), parameter values
+  and wildcards exactly (so `application/json` to
+  `application/json; charset=utf-8`, or `*/*` to `application/json`, is a
+  removal plus an addition), and a matched media type is named as the old
+  spec writes it: each
   media type both sides declare is compared as its own schema use, and one
   side lacking a media type is a new change kind. Removing a request media
   type (clients sending it fail) or a response media type (clients
   negotiating it with `Accept` fail) is Breaking; adding one is
   Non-breaking.
   - **Unchanged output.** When each side has exactly one media type and it
-    is the same key, a side has none (a response gains or loses its whole
+    is the same one (respellings included), a side has none (a response gains or loses its whole
     body), or a side is Swagger 2 (no media type per body or response;
     `consumes`/`produces` are still not compared), the body or response is
     compared by its first schema as before. On every consecutive Stripe
@@ -132,7 +136,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **v2 JSON (`vc2_` IDs).** Surfaces are unchanged. A request media type
     is `argument_removed`/`argument_added` on its body argument, a response
     media type `result_removed`/`result_added` on the status's result, with
-    `media_type` in details (native kinds as in v1); a schema fact of one
+    `media_type` in details (native kinds as in v1; a single request media
+    type re-keyed puts both facts on the same `requestBody` argument); a schema fact of one
     media type adds `media_type`. Component facts keep their IDs (two media
     types of one response are one use). Inline `deprecated` changes in a
     later media type are now reported (they were omitted).

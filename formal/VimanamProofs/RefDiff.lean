@@ -71,7 +71,7 @@ owner (or its owner was so reached); verdicts there are Review, as
 * JSON objects keep the order they were given; the CLI front end
   (`OracleExport/RefDiffMain.lean`) reads documents in spec order, as
   `serde_json` with `preserve_order` does. Media types (#154) are matched by
-  exact key, so which uses exist does not depend on order; order fixes only
+  `mediaKey`, so which uses exist does not depend on order; order fixes only
   the order of uses and records, and, when a side names no media type (a
   Swagger 2 side), which of the other side's media types is "the first that
   has a schema".
@@ -938,9 +938,45 @@ def responseSchema (r : J) : J :=
 media type). -/
 abbrev Media := Option String × J
 
-/-- The first entry per media type, in order (`diff::media_entries`). -/
+/-- Optional whitespace (RFC 9110 `OWS`): a space or a tab. -/
+def ows (c : Char) : Bool := c == ' ' || c == '\t'
+
+/-- `s` without leading and trailing `OWS`. -/
+def owsTrim (s : String) : String :=
+  String.ofList ((s.toList.dropWhile ows).reverse.dropWhile ows).reverse
+
+/-- ASCII lower case (`str::to_ascii_lowercase`; `Char.toLower` maps only
+`A`-`Z`). -/
+def asciiLower (s : String) : String := s.map Char.toLower
+
+/-- One `;`-separated parameter of a media-type key, as matched: trimmed of
+`OWS`, its name (before the first `=`) in ASCII lower case, its value as
+written. -/
+def mediaParam (seg : String) : String :=
+  match (owsTrim seg).splitOn "=" with
+  | n :: v :: rest => asciiLower n ++ "=" ++ "=".intercalate (v :: rest)
+  | [n] => asciiLower n
+  | [] => ""
+
+/-- The key a media type is matched by (`diff::media_key`, #154 review):
+RFC 9110 §8.3.1 makes the type, the subtype and parameter names
+case-insensitive, and allows `OWS` around `;`. So the `type/subtype` is
+trimmed and lower-cased, and each parameter is `mediaParam`; parameter
+values (`charset=UTF-8`), wildcards (`*/*`, `application/*`) and the set and
+order of parameters stay as written, so changing one is a removal plus an
+addition (conservative). A `;` inside a quoted value is not special. -/
+def mediaKey (s : String) : String :=
+  match s.splitOn ";" with
+  | t :: ps => ";".intercalate (asciiLower (owsTrim t) :: ps.map mediaParam)
+  | [] => ""
+
+/-- The matching key of an entry (`none` for no media type). -/
+def Media.key (m : Media) : Option String := m.1.map mediaKey
+
+/-- The first entry per matching key, in order (`diff::body_entries`,
+`diff::response_entries`). -/
 def dedupMedia (xs : List Media) : List Media :=
-  xs.foldl (fun acc x => if acc.any (·.1 == x.1) then acc else acc ++ [x]) []
+  xs.foldl (fun acc x => if acc.any (·.key == x.key) then acc else acc ++ [x]) []
 
 /-- The endpoint's request bodies (#154): every declared `in: body`
 parameter (no media type), then the parser's synthetic body parameter per
@@ -962,30 +998,34 @@ def responseMedia (r : J) : List Media :=
   | some s => [(none, s)]
   | none =>
     match r.field? "content" with
-    | some (.obj ms) => ms.map fun (k, m) => (some k, (schemaField? m).getD .null)
+    | some (.obj ms) => dedupMedia (ms.map fun (k, m) => (some k, (schemaField? m).getD .null))
     | _ => []
 
 /-- Whether a body's or response's two sides are compared media type by
-media type, matched by exact key (#154; `diff::per_media`). They are not,
+media type, matched by `mediaKey` (#154; `diff::per_media`). They are not,
 and the one schema of each side is compared as before #154 (the first body,
 or `responseSchema`), when a side names no media type (Swagger 2, so a
 2-to-3 migration still compares its schemas), when a side has no media type
 at all (a response that gained or lost its whole body: one root change), or
-when each side has exactly one and it is the same one. So a spec whose
+when each side has exactly one and it is the same one (by `mediaKey`: a
+respelling such as `application/json` to `Application/JSON` is the same
+media type, and reports nothing). So a spec whose
 bodies and responses keep their single media type reports exactly what it
 reported before. -/
 def perMedia (o n : List Media) : Bool :=
   !((o ++ n).any (·.1.isNone)) && !o.isEmpty && !n.isEmpty &&
-    !(o.length == 1 && n.length == 1 && o.map (·.1) == n.map (·.1))
+    !(o.length == 1 && n.length == 1 && o.map Media.key == n.map Media.key)
 
-/-- The media types of `o` that `n` also has, in `o`'s order, with both
-schemas. -/
+/-- The media types of `o` that `n` also has (by `mediaKey`), in `o`'s
+order, with both schemas, named as the old side writes them. -/
 def mediaPairs (o n : List Media) : List (String × J × J) :=
-  o.filterMap fun (k, a) => k.bind fun k => (n.find? (·.1 == some k)).map fun (_, b) => (k, a, b)
+  o.filterMap fun x@(k, a) => k.bind fun k =>
+    (n.find? (·.key == x.key)).map fun (_, b) => (k, a, b)
 
-/-- The media types of `a` that `b` lacks, in `a`'s order. -/
+/-- The media types of `a` that `b` lacks (by `mediaKey`), in `a`'s order,
+as `a` writes them. -/
 def mediaOnly (a b : List Media) : List String :=
-  a.filterMap fun (k, _) => k.bind fun k => if b.any (·.1 == some k) then none else some k
+  a.filterMap fun x@(k, _) => k.bind fun k => if b.any (·.key == x.key) then none else some k
 
 /-- A media type one side of a matched body or response lacks (#154). -/
 structure MediaRec where
@@ -1345,7 +1385,7 @@ private def oas3 (comps : List (String × J)) (resp : J) : J :=
     (oas3 [("E", obj1 "enum" (.arr [.str "a"]))] r)
   g.length == 1 && g[0]!.neg && g[0]!.severity == .review
 
--- #154: media types match by exact key, in spec order; a one-sided media
+-- #154: media types match by `mediaKey`, in spec order; a one-sided media
 -- type is a record of its own, never a schema change of another one.
 #guard
   let m (k : String) (t : String) : Media := (some k, obj1 "type" (.str t))
@@ -1370,6 +1410,22 @@ private def oas3 (comps : List (String × J)) (resp : J) : J :=
     && perMedia [m (some "application/json")] [m (some "application/xml")]
     && perMedia [m (some "application/json")] [m (some "application/json"), m (some "a/b")]
     && perMedia [m (some "application/json")] [m (some "application/json; charset=utf-8")]
+    && !perMedia [m (some "application/json")] [m (some "Application/JSON")]
+    && !perMedia [m (some "text/plain;charset=utf-8")] [m (some "TEXT/Plain ; Charset=utf-8")]
+    && perMedia [m (some "text/plain;charset=utf-8")] [m (some "text/plain;charset=UTF-8")]
+    && perMedia [m (some "*/*")] [m (some "application/json")]
+
+-- Matching is case-insensitive where RFC 9110 says so; a matched media type
+-- is named as the old side writes it.
+#guard
+  mediaKey "Application/JSON ; Charset=UTF-8;q=1" == "application/json;charset=UTF-8;q=1"
+    && mediaKey "*/*" == "*/*" && mediaKey "a/b;" == "a/b;"
+    && (let m (k t : String) : Media := (some k, obj1 "type" (.str t))
+        let o := [m "Application/JSON" "string", m "application/xml" "string"]
+        let n := [m "application/xml" "string", m "application/json" "integer"]
+        let (us, ms) := mediaUses "GET /a response:200" .response o n (.null, .null)
+        us.map (·.id) == ["GET /a response:200 media:Application/JSON",
+          "GET /a response:200 media:application/xml"] && ms.isEmpty)
 
 -- Two media types of one response reaching the same component: one grouped
 -- record per media-type use, both in the response direction.

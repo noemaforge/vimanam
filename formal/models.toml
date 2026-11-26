@@ -66,7 +66,11 @@ rust = [
 # pairing and schemas, bodies, responses, `models::Schema` deserialisation)
 # and the edge diff and its v1 JSON records, which
 # scripts/formal/refdiff-harness.py compares with the grouped view: when they
-# drift, re-run the harness.
+# drift, re-run the harness. Media types (#154): `parser.rs#extract_endpoints`
+# (where the synthetic body parameters get `media_type`) and the matching
+# helpers are listed; `shared_media`, `media_body_pairs` and
+# `media_response_pairs` are not, because they feed only the v2 deprecation
+# facts in `contract::openapi`, which the model does not describe.
 [[model]]
 lean = "formal/VimanamProofs/RefDiff.lean"
 read_against = "59b93881268f"
@@ -101,6 +105,9 @@ rust = [
   "src/diff/mod.rs#schema_changes",
   "src/diff/mod.rs#diff_request_body",
   "src/diff/mod.rs#diff_responses",
+  "src/diff/mod.rs#media_key",
+  "src/diff/mod.rs#same_media",
+  "src/diff/mod.rs#dedup_media",
   "src/diff/mod.rs#body_entries",
   "src/diff/mod.rs#response_entries",
   "src/diff/mod.rs#per_media",

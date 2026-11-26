@@ -194,6 +194,11 @@
       "OP": "media-drop",
       "PTR": "charset",
       "why": "#154: media types match by exact key; application/json -> application/json; charset=utf-8 is a removal plus an addition."
+    },
+    {
+      "case": "n154e",
+      "OP": "media-upper",
+      "why": "#154 review: a media type respelled between the specs (Application/JSON -> application/json) is matched case-insensitively and named as the old side writes it."
     }
   ]
 }

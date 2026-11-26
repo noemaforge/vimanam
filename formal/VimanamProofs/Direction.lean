@@ -418,7 +418,7 @@ theorem operation_id (o n : Bool) :
 /-! ## Media types (#154)
 
 A request body or response with several media types (`content` keys) is
-compared per media type, matched by exact key. A media type present on one
+compared per media type, matched by key (RefDiff's `mediaKey`). A media type present on one
 side only is a structural row of its own. Request media types are what the
 server accepts: like an `enum` member of a request schema, dropping one
 breaks the clients that send it and adding one breaks nobody. Response media
