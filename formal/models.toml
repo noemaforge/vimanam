@@ -73,8 +73,8 @@ rust = [
 # facts in `contract::openapi`, which the model does not describe.
 [[model]]
 lean = "formal/VimanamProofs/RefDiff.lean"
-read_against = "59b93881268f"
-read_digest = "v1:sha256:3293431b92e84379800a91054008f18de0e7f3cdb9985de8ffd21a8c87460976"
+read_against = "f09a4f97868f"
+read_digest = "v1:sha256:949574a7c98486ed62bbe2bb7a99b9502156f428e5cfb468cb20b41cde06d895"
 rust = [
   "src/resolve.rs#reference_name",
   "src/resolve.rs#DocResolver",
