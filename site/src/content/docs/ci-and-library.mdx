@@ -70,12 +70,13 @@ Because `--fail-on-breaking` exits with status `3` only on breaking changes, non
 
 ## Embed Vimanam as a Rust library
 
-Disable default features in `Cargo.toml` to import the core parsers, Markdown/Skill renderers, Git-ref resolver, and neutral contract v2 differ without `clap`, shell completion generators, or `env_logger`:
+Add Vimanam with default features off to import the core parsers, Markdown/Skill renderers, Git-ref resolver, and neutral contract v2 differ without `clap`, shell completion generators, or `env_logger`:
 
-```toml
-[dependencies]
-vimanam = { version = "2.2", default-features = false }
+```bash
+cargo add vimanam --no-default-features
 ```
+
+Cargo records the current release with a caret requirement, which accepts later minor releases. A minor release can change the library API: 2.3.0 added fields to several public types. If your code builds Vimanam's types as struct literals or matches their fields without `..`, pin the minor version you use with a tilde requirement (`version = "~MAJOR.MINOR"` in the `vimanam` entry of `Cargo.toml`), and check the changelog's library API notes before upgrading.
 
 Core library modules never write to stdout or stderr; diagnostics return as structured values so callers control output and logging.
 
