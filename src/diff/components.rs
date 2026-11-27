@@ -6,7 +6,8 @@
 //! every use that reaches it (directly or through other changed or
 //! retargeted components) listed beside them.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
+use std::rc::Rc;
 
 use indexmap::IndexSet;
 use serde_json::Value;
@@ -26,6 +27,13 @@ pub(super) struct Components<'r, 'a> {
     uses: Vec<SchemaUse>,
     /// The pairs each entry of `uses` references directly.
     use_edges: Vec<Vec<RefEdge>>,
+    /// The local comparison of each schema pair already compared, by the
+    /// pair's exact JSON text (#196). A comparison is a function of the two
+    /// values alone (the documents are fixed), and many uses compare the same
+    /// pair: a request and its response bodies, each media type of one body
+    /// (#154), and every endpoint that shares a body, so each pair is walked
+    /// once however many uses repeat it.
+    compared: HashMap<(String, String), Rc<Compared>>,
 }
 
 impl<'r, 'a> Components<'r, 'a> {
@@ -34,6 +42,7 @@ impl<'r, 'a> Components<'r, 'a> {
             resolver,
             uses: Vec::new(),
             use_edges: Vec::new(),
+            compared: HashMap::new(),
         }
     }
 
@@ -65,12 +74,21 @@ impl<'r, 'a> Components<'r, 'a> {
         old: &Value,
         new: &Value,
     ) -> Vec<(ValueChange, Option<FailClosed>)> {
-        let (changes, edges) = self.local_changes(old, new);
+        let key = (old.to_string(), new.to_string());
+        let compared = match self.compared.get(&key) {
+            Some(compared) => Rc::clone(compared),
+            None => {
+                let compared = Rc::new(self.local_changes(old, new));
+                self.compared.insert(key, Rc::clone(&compared));
+                compared
+            }
+        };
+        let (changes, edges) = &*compared;
         if !edges.is_empty() {
             self.uses.push(use_);
-            self.use_edges.push(edges);
+            self.use_edges.push(edges.clone());
         }
-        changes
+        changes.clone()
     }
 
     /// The local changes between two schemas, each with why it fails closed
@@ -233,6 +251,9 @@ impl<'r, 'a> Components<'r, 'a> {
 /// One local change and why it fails closed, if it does.
 type Local = (ValueChange, Option<FailClosed>);
 
+/// One schema pair's local changes and relevant edges.
+type Compared = (Vec<Local>, Vec<RefEdge>);
+
 /// One edge as the reachability search sees it (see [`RefEdge`]).
 struct Target {
     to: usize,
@@ -249,7 +270,7 @@ fn top_key(pointer: &str) -> Option<String> {
     pointer
         .split('/')
         .nth(1)
-        .map(crate::utils::decode_json_pointer_token)
+        .map(|token| crate::utils::decode_json_pointer_token(token).into_owned())
 }
 
 /// Which uses reach which pairs.

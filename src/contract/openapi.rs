@@ -6,6 +6,7 @@ use crate::resolve::{DocResolver, PairResolver, RefEdge, contains_ref, schema_js
 use crate::{ApiDocumentation, Endpoint, Schema};
 use serde_json::json;
 use std::collections::{HashMap, HashSet};
+use std::rc::Rc;
 
 /// Conservative compatibility policy for context-free surface comparisons.
 pub struct OpenApiAdapter;
@@ -900,6 +901,8 @@ fn compare_aligned(
     // differently named component is no type's own change, so the edges each
     // use reaches are collected for `component_deprecation_facts`.
     let mut use_edges: Vec<(RefEdge, String)> = Vec::new();
+    let mut deprecations = DeprecationMemo::new();
+    let mut seen = DeprecationsSeen::new(&changes);
     for before in &old.endpoints {
         let Some(&after) = new_by_key.get(&(before.method.as_str(), before.path.as_str())) else {
             continue;
@@ -922,7 +925,9 @@ fn compare_aligned(
                     let subject = body_argument_id(before, &left_param.name);
                     use_deprecations(
                         &mut changes,
+                        &mut seen,
                         &mut use_edges,
+                        &mut deprecations,
                         resolver,
                         before,
                         &subject,
@@ -966,11 +971,11 @@ fn compare_aligned(
             {
                 continue;
             }
-            let mut edges = Vec::new();
-            let (left, right) = resolver.localize(
+            let compared = deprecation_values(
+                &mut deprecations,
+                resolver,
                 &left_json.unwrap_or_else(|| extensions_value(&parameter.extensions)),
                 &right_json.unwrap_or_else(|| extensions_value(&next.extensions)),
-                &mut edges,
             );
             let subject = entity_id(
                 Format::Openapi,
@@ -981,13 +986,14 @@ fn compare_aligned(
                     escape(&parameter.name)
                 ),
             );
-            use_edges.extend(edges.into_iter().map(|edge| (edge, subject.clone())));
+            let (values, edges) = &*compared;
+            use_edges.extend(edges.iter().map(|edge| (edge.clone(), subject.clone())));
             append_deprecation_facts(
                 &mut changes,
+                &mut seen,
                 &subject,
                 before,
-                &left,
-                &right,
+                values,
                 Some(parameter.parameter_in.clone()),
                 None,
                 None,
@@ -1012,7 +1018,9 @@ fn compare_aligned(
                     };
                     use_deprecations(
                         &mut changes,
+                        &mut seen,
                         &mut use_edges,
+                        &mut deprecations,
                         resolver,
                         before,
                         &subject,
@@ -1036,20 +1044,20 @@ fn compare_aligned(
             {
                 continue;
             }
-            let mut edges = Vec::new();
-            let (left, right) = resolver.localize(&left, &right, &mut edges);
+            let compared = deprecation_values(&mut deprecations, resolver, &left, &right);
             let subject = entity_id(
                 Format::Openapi,
                 EntityKind::Result,
                 &format!("{root}/results/{}", escape(status)),
             );
-            use_edges.extend(edges.into_iter().map(|edge| (edge, subject.clone())));
+            let (values, edges) = &*compared;
+            use_edges.extend(edges.iter().map(|edge| (edge.clone(), subject.clone())));
             append_deprecation_facts(
                 &mut changes,
+                &mut seen,
                 &subject,
                 before,
-                &left,
-                &right,
+                values,
                 None,
                 Some(status.clone()),
                 None,
@@ -1375,7 +1383,9 @@ fn has_operation_schema_root(subject: &str, old: &Contract, new: &Contract) -> b
 #[allow(clippy::too_many_arguments)]
 fn use_deprecations(
     changes: &mut Vec<Change>,
+    seen: &mut DeprecationsSeen,
     use_edges: &mut Vec<(RefEdge, String)>,
+    deprecations: &mut DeprecationMemo,
     resolver: &PairResolver,
     endpoint: &Endpoint,
     subject: &str,
@@ -1389,49 +1399,148 @@ fn use_deprecations(
     {
         return;
     }
-    let mut edges = Vec::new();
-    let (left, right) = resolver.localize(
+    let compared = deprecation_values(
+        deprecations,
+        resolver,
         &left.unwrap_or(fallback.0),
         &right.unwrap_or(fallback.1),
-        &mut edges,
     );
-    use_edges.extend(edges.into_iter().map(|edge| (edge, subject.to_string())));
+    let (values, edges) = &*compared;
+    use_edges.extend(edges.iter().map(|edge| (edge.clone(), subject.to_string())));
     append_deprecation_facts(
         changes,
+        seen,
         subject,
         endpoint,
-        &left,
-        &right,
+        values,
         parameter_in,
         status,
         media_type,
     );
 }
 
-/// The `deprecated` changes between two localized use schemas as facts on
-/// `subject`, skipping one already reported at the same place. With a
-/// media type (#154) it is in the details, and a fact is already reported
-/// when one on the same subject at the same place names no media type or
-/// the same one.
+/// The `deprecated` changes between two use schemas, localized, and the
+/// edges localizing them recorded, per pair of schemas already compared, by
+/// the pair's exact JSON text (#196): every use that compares the same pair
+/// (a request and its response bodies, each media type, each endpoint
+/// sharing a body) shares one walk.
+type DeprecationMemo = HashMap<(String, String), Rc<(Vec<ValueChange>, Vec<RefEdge>)>>;
+
+/// The `deprecated` changes between two use schemas once localized, and the
+/// edges localizing them records (see [`DeprecationMemo`]).
+fn deprecation_values(
+    memo: &mut DeprecationMemo,
+    resolver: &PairResolver,
+    left: &Value,
+    right: &Value,
+) -> Rc<(Vec<ValueChange>, Vec<RefEdge>)> {
+    let key = (left.to_string(), right.to_string());
+    if let Some(compared) = memo.get(&key) {
+        return Rc::clone(compared);
+    }
+    let mut edges = Vec::new();
+    let (left, right) = resolver.localize(left, right, &mut edges);
+    let mut values = Vec::new();
+    diff::diff_values(
+        &semantic_attributes(&left),
+        &semantic_attributes(&right),
+        &mut String::new(),
+        &mut values,
+    );
+    values.retain(|value| is_schema_deprecation_pointer(&value.pointer));
+    let compared = Rc::new((values, edges));
+    memo.insert(key, Rc::clone(&compared));
+    compared
+}
+
+/// Where a deprecation fact is, as [`append_deprecation_facts`] dedups:
+/// its pointer, then its native coordinate's method, path, parameter
+/// location and status.
+type DeprecationPlace = (String, String, String, Option<String>, Option<String>);
+
+/// The deprecation facts in `changes` by [`DeprecationPlace`] (#196), so
+/// that deduplicating a new fact compares it only with the facts at its
+/// place: scanning every change per fact was quadratic, and a cut walk
+/// reports hundreds of thousands. It indexes exactly the changes that scan
+/// could match (deprecation facts with a string pointer and an OpenAPI
+/// coordinate naming a method and path), and [`Self::push`] keeps it in
+/// step with `changes`.
+struct DeprecationsSeen {
+    by_place: HashMap<DeprecationPlace, Vec<usize>>,
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Existing facts [`append_deprecation_facts`] compared a new fact with,
+    /// so tests can pin that it compares only those at the fact's place.
+    static DEPRECATION_COMPARISONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+impl DeprecationsSeen {
+    /// The index of the changes reported so far.
+    fn new(changes: &[Change]) -> Self {
+        let mut seen = DeprecationsSeen {
+            by_place: HashMap::new(),
+        };
+        for (index, change) in changes.iter().enumerate() {
+            seen.index(index, change);
+        }
+        seen
+    }
+
+    fn place(change: &Change) -> Option<DeprecationPlace> {
+        if change.kind != ChangeKind::DeprecatedChanged {
+            return None;
+        }
+        let pointer = change.details.get("pointer")?.as_str()?;
+        match &change.native {
+            NativeLocation::Openapi {
+                method: Some(method),
+                path: Some(path),
+                parameter_in,
+                status,
+                ..
+            } => Some((
+                pointer.to_string(),
+                method.clone(),
+                path.clone(),
+                parameter_in.clone(),
+                status.clone(),
+            )),
+            _ => None,
+        }
+    }
+
+    fn index(&mut self, index: usize, change: &Change) {
+        if let Some(place) = Self::place(change) {
+            self.by_place.entry(place).or_default().push(index);
+        }
+    }
+
+    /// Appends `change` to `changes`, indexing it.
+    fn push(&mut self, changes: &mut Vec<Change>, change: Change) {
+        self.index(changes.len(), &change);
+        changes.push(change);
+    }
+}
+
+/// The `deprecated` changes `values` between two localized use schemas
+/// (from [`deprecation_values`]) as facts on `subject`, skipping one
+/// already reported at the same place. With a media type (#154) it is in
+/// the details, and a fact is already reported when one on the same
+/// subject at the same place names no media type or the same one.
 #[allow(clippy::too_many_arguments)]
 fn append_deprecation_facts(
     changes: &mut Vec<Change>,
+    seen: &mut DeprecationsSeen,
     subject: &str,
     endpoint: &Endpoint,
-    before: &Value,
-    after: &Value,
+    values: &[ValueChange],
     parameter_in: Option<String>,
     status: Option<String>,
     media_type: Option<&str>,
 ) {
-    let before = semantic_attributes(before);
-    let after = semantic_attributes(after);
-    let mut values = Vec::new();
-    diff::diff_values(&before, &after, &mut String::new(), &mut values);
-    for value in values
-        .into_iter()
-        .filter(|v| is_schema_deprecation_pointer(&v.pointer))
-    {
+    for value in values {
         let (before, after) = match &value.kind {
             ValueChangeKind::Added(v) => {
                 (json!({"present":false}), json!({"present":true,"value":v}))
@@ -1467,19 +1576,29 @@ fn append_deprecation_facts(
             uses: Vec::new(),
         };
         change.refresh_id();
-        if !changes.iter().any(|existing| {
-            existing.kind == change.kind
-                && existing.details.get("pointer") == change.details.get("pointer")
-                && matches!(&existing.native, NativeLocation::Openapi { method:Some(m), path:Some(p), parameter_in:pi, status:s, .. }
-                    if m == &endpoint.method && p == &endpoint.path && pi == &parameter_in && s == &status)
-                && (media_type.is_none()
-                    || (existing.subject == change.subject
-                        && existing
-                            .details
-                            .get("media_type")
-                            .is_none_or(|seen| seen == &json!(media_type))))
-        }) {
-            changes.push(change);
+        // Every fact at this place has this kind, pointer, method, path,
+        // parameter location and status; the media type decides the rest.
+        let place = (
+            value.pointer.clone(),
+            endpoint.method.clone(),
+            endpoint.path.clone(),
+            parameter_in.clone(),
+            status.clone(),
+        );
+        let at_place = seen.by_place.get(&place).map_or(&[][..], Vec::as_slice);
+        let reported = at_place.iter().any(|&index| {
+            #[cfg(test)]
+            DEPRECATION_COMPARISONS.with(|count| count.set(count.get() + 1));
+            let existing = &changes[index];
+            media_type.is_none()
+                || (existing.subject == change.subject
+                    && existing
+                        .details
+                        .get("media_type")
+                        .is_none_or(|seen| seen == &json!(media_type)))
+        });
+        if !reported {
+            seen.push(changes, change);
         }
     }
 }
@@ -1578,7 +1697,7 @@ fn is_schema_deprecation_pointer(pointer: &str) -> bool {
             return true;
         }
         node = match node {
-            Node::Schema => match token.as_str() {
+            Node::Schema => match &*token {
                 "properties" | "patternProperties" | "definitions" | "$defs" => Node::Name,
                 "allOf" | "oneOf" | "anyOf" => Node::Index,
                 "items" | "not" | "additionalProperties" | "if" | "then" | "else" | "schema" => {
@@ -1976,5 +2095,104 @@ mod tests {
         let full = evidence(&deep, usize::MAX);
         assert!(full.iter().filter(|e| e.is_some()).count() >= 6, "{full:?}");
         assert_ne!(evidence(&deep, PAGINATION_LEVELS - 1), full);
+    }
+
+    /// The v2 deprecation pass, like the legacy diff, walks each schema pair
+    /// once however many uses compare it (#196): without
+    /// `deprecation_values`' memo it walks once per use.
+    #[test]
+    fn deprecation_pass_walks_each_pair_once() {
+        let (old, new) = crate::diff::shared_pair::specs(4, 3);
+        let resolver = crate::resolve::PairResolver::for_docs(&old, &new);
+        let legacy = crate::diff::diff_with_resolver(
+            &old,
+            &new,
+            crate::diff::EndpointMatching::Exact,
+            &resolver,
+        );
+        let before = resolver.walks.get();
+        let changes = super::diff_from(&old, &new, &legacy, &resolver).expect("diff");
+        assert_eq!(resolver.walks.get() - before, 1, "24 uses of one pair");
+        assert!(!changes.is_empty());
+    }
+
+    /// A deprecation fact is deduplicated against the facts at its place
+    /// only (#196): scanning every change reported so far per fact was
+    /// quadratic. 100 properties deprecated in two query parameters, a body
+    /// and a response, the last two under 3 media types: 700 facts, the
+    /// second parameter's 100 suppressed as duplicates of the first's, each
+    /// new fact compared with at most the 2 others at its place, where a
+    /// scan makes about 250,000 comparisons.
+    #[test]
+    fn deprecation_facts_are_deduplicated_by_place() {
+        let properties = |deprecated: bool| -> Value {
+            (0..100)
+                .map(|i| {
+                    let mut field = json!({"type": "string"});
+                    if deprecated {
+                        field["deprecated"] = json!(true);
+                    }
+                    (format!("p{i}"), field)
+                })
+                .collect::<serde_json::Map<_, _>>()
+                .into()
+        };
+        let spec = |schemas: Value, body: Value| -> ApiDocumentation {
+            let content: serde_json::Map<String, Value> =
+                ["application/json", "application/xml", "text/plain"]
+                    .iter()
+                    .map(|media_type| (media_type.to_string(), json!({"schema": body})))
+                    .collect();
+            let doc = json!({
+                "openapi": "3.0.0",
+                "info": {"title": "t", "version": "1"},
+                "paths": {"/x": {"post": {
+                    "parameters": [
+                        {"name": "a", "in": "query", "schema": body},
+                        {"name": "b", "in": "query", "schema": body}
+                    ],
+                    "requestBody": {"content": content},
+                    "responses": {"200": {"description": "ok", "content": content}}
+                }}},
+                "components": {"schemas": schemas}
+            });
+            crate::parse_openapi_bytes(doc.to_string().as_bytes(), "json", None)
+                .expect("test spec parses")
+        };
+        let old = spec(
+            json!({"Obj": {"type": "object", "properties": properties(false)}}),
+            json!({"$ref": "#/components/schemas/Obj"}),
+        );
+        let new = spec(
+            json!({}),
+            json!({"type": "object", "properties": properties(true)}),
+        );
+        super::DEPRECATION_COMPARISONS.with(|count| count.set(0));
+        let changes = super::diff(&old, &new).expect("diff");
+        let facts = changes
+            .iter()
+            .filter(|change| change.native_kind == "schema_deprecation")
+            .count();
+        // Query parameter `b`'s 100 facts share `a`'s places and are
+        // suppressed; the rest are the body's and response's 600.
+        assert_eq!(facts, 700);
+        let query_subjects: std::collections::BTreeSet<&str> = changes
+            .iter()
+            .filter(|change| {
+                change.native_kind == "schema_deprecation"
+                    && matches!(
+                        &change.native,
+                        super::NativeLocation::Openapi { parameter_in: Some(location), .. }
+                            if location == "query"
+                    )
+            })
+            .map(|change| change.subject.as_str())
+            .collect();
+        assert_eq!(query_subjects.len(), 1, "only `a` reports");
+        let compared = super::DEPRECATION_COMPARISONS.with(std::cell::Cell::get);
+        assert!(
+            compared > 0 && compared <= 2 * facts,
+            "{compared} comparisons"
+        );
     }
 }
