@@ -1,0 +1,147 @@
+---
+title: "Version comparison: v2.3.0 vs v2.2.0"
+description: "Vimanam 2.3.0 against 2.2.0 on the same machine: diff speed on OpenAI, Stripe, GraphQL and Protobuf histories, diff verdict changes, render parity, and measurement conditions."
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+This page is a snapshot of the 2.3.0 release, measured on 2026-11-27. Both release binaries ran on the same machine in the same session. The raw captures are:
+
+- [`scripts/benchmark-v23-results.json`](https://github.com/noemaforge/vimanam/blob/main/scripts/benchmark-v23-results.json): `hyperfine 2.0.0` medians, Q1–Q3 interquartile ranges (IQRs), peak RSS and CPU instruction counts.
+- [`scripts/benchmark-diff-refs-v23-results.json`](https://github.com/noemaforge/vimanam/blob/main/scripts/benchmark-diff-refs-v23-results.json): `vimanam diff` timings on OpenAI and Stripe, `5` runs each, with 2.2.0 stopped after `30 s`.
+
+In short, `diff` is faster in every format, and renders do the same work within a few percent. On 15 consecutive Stripe releases, 2.2.0 didn't finish any diff within `30 s`, and 2.3.0 finished each one in under `1.6 s`.
+
+---
+
+## Diff speed
+
+### OpenAI `openapi.json` (4.9 MB, `a01e367..373f26a`)
+
+Five runs per mode. The range is the minimum and maximum run.
+
+| Output | 2.2.0 median (range) | 2.3.0 median (range) | Speedup | Peak RSS (2.2.0 → 2.3.0) |
+|---|---:|---:|---:|---:|
+| Markdown | `310.9 ms` (`276.0–382.5`) | `180.3 ms` (`142.5–258.1`) | `1.72×` | `111.3 → 110.4 MiB` |
+| v1 JSON (`--contract 1`) | `401.8 ms` (`345.0–1,075.0`) | `155.2 ms` (`137.7–175.3`) | `2.59×` | `113.0 → 110.6 MiB` |
+| v2 JSON (`--contract 2`) | `2,722.3 ms` (`2,542.4–3,240.5`) | `484.9 ms` (`471.7–1,050.7`) | `5.61×` | `316.0 → 242.3 MiB` |
+
+The outputs differ between versions, because 2.3.0 changes some verdicts on this range. See [Diff verdict changes](#diff-verdict-changes).
+
+### Stripe `spec3.json` (7.9 MB)
+
+2.2.0 timed out after `30 s` in all `51` Stripe cases: a self-diff, the benchmark pair and 15 release pairs, each in three output modes. It reached between `1,017` and `9,111` MiB of peak RSS before it was stopped. 2.3.0 finished every case.
+
+The benchmark pair `2f8d147..5237fa0` compares two byte-identical `spec3.json` files, so it measures a diff with no changes. It gives the same output as the `5237fa0` self-diff. The Stripe probe on the 2.2.0 pages had the same property.
+
+| Case | Markdown | v1 JSON | v2 JSON |
+|---|---:|---:|---:|
+| `5237fa0` self-diff | `197.6 ms` | `216.6 ms` | `1,141.5 ms` |
+| `2f8d147..5237fa0` (identical files) | `192.0 ms` | `193.5 ms` | `1,005.2 ms` |
+
+Real changes come from 15 consecutive release pairs of the last 16 `spec3.json` commits. Every value is the 2.3.0 median of 5 runs, with the output size in parentheses:
+
+| Release pair | Markdown | v1 JSON | v2 JSON |
+|---|---:|---:|---:|
+| `a402765..0aaf9a6` | `242.7 ms` (`1.27 MB`) | `516.5 ms` (`22.4 MB`) | `1,170.5 ms` (`91.5 MB`) |
+| `0aaf9a6..da3eadb` | `195.3 ms` (`113 KB`) | `204.5 ms` (`1.71 MB`) | `1,114.8 ms` (`89.6 MB`) |
+| `da3eadb..cfe95bf` | `265.0 ms` (`1.55 MB`) | `670.1 ms` (`32.7 MB`) | `1,248.2 ms` (`93.3 MB`) |
+| `cfe95bf..a54c388` | `188.7 ms` (`112 KB`) | `201.5 ms` (`1.64 MB`) | `1,020.2 ms` (`90.5 MB`) |
+| `a54c388..d771243` | `294.9 ms` (`2.32 MB`) | `810.8 ms` (`53.3 MB`) | `1,185.8 ms` (`96.5 MB`) |
+| `d771243..6a1ea0a` | `263.1 ms` (`1.94 MB`) | `613.6 ms` (`40.2 MB`) | `1,132.8 ms` (`96.4 MB`) |
+| `6a1ea0a..fbd0091` | `188.9 ms` (`55 KB`) | `210.9 ms` (`806 KB`) | `1,046.0 ms` (`92.7 MB`) |
+| `fbd0091..f4ac6d9` | `234.0 ms` (`1.16 MB`) | `427.9 ms` (`21.1 MB`) | `1,291.8 ms` (`95.1 MB`) |
+| `f4ac6d9..7061322` | `205.5 ms` (`285 KB`) | `336.5 ms` (`10.5 MB`) | `1,073.6 ms` (`94.4 MB`) |
+| `7061322..d5d11f6` | `212.1 ms` (`286 KB`) | `330.6 ms` (`9.8 MB`) | `1,192.1 ms` (`94.3 MB`) |
+| `d5d11f6..af5309c` | `313.0 ms` (`1.72 MB`) | `872.3 ms` (`42.8 MB`) | `1,518.7 ms` (`98.1 MB`) |
+| `af5309c..30d3391` | `412.8 ms` (`731 KB`) | `365.1 ms` (`10.6 MB`) | `1,261.6 ms` (`96.5 MB`) |
+| `30d3391..c8faccb` | `301.9 ms` (`2.05 MB`) | `807.7 ms` (`49.7 MB`) | `1,286.9 ms` (`103.0 MB`) |
+| `c8faccb..2bab976` | `205.1 ms` (`57 KB`) | `213.9 ms` (`787 KB`) | `1,083.2 ms` (`99.3 MB`) |
+| `2bab976..bcfd59f` | `211.8 ms` (`57 KB`) | `227.9 ms` (`1.54 MB`) | `1,159.5 ms` (`99.4 MB`) |
+
+Across the 15 pairs, 2.3.0 medians range from `188.7` to `412.8 ms` in Markdown, `201.5` to `872.3 ms` in v1 JSON, and `1,020.2` to `1,518.7 ms` in v2 JSON. Peak RSS stays between `153` and `572` MiB. The v2 JSON sizes include both full contract surfaces. Pass `--omit-surfaces` to leave them out ([#159](https://github.com/noemaforge/vimanam/issues/159)); these runs didn't.
+
+A 2.2.0 timeout gives only a lower bound on the speedup. For example, `30 s` against the slowest Markdown median (`412.8 ms`) is at least `72×`.
+
+### GraphQL and Protobuf diffs
+
+| Diff | Runs | 2.2.0 median (IQR) | 2.3.0 median (IQR) | Speedup | Instructions (2.2.0 → 2.3.0) | Same changes? |
+|---|---:|---:|---:|---:|---:|---|
+| GitHub GraphQL SDL Git-ref (`a6de3c1..597478f`) | `5` | `863.87 ms` (`829.91–873.42`) | `431.68 ms` (`424.87–438.26`) | `2.00×` | `7,510.1M → 2,241.2M` | Yes |
+| GitHub GraphQL introspection Git-ref (`a6de3c1..597478f`) | `5` | `946.79 ms` (`933.72–951.26`) | `514.70 ms` (`507.27–525.23`) | `1.84×` | `8,520.5M → 3,339.0M` | Yes |
+| SpaceX Land SDL (`0a482d1..64a7fa9`) | `10` | `36.55 ms` (`35.58–39.20`) | `36.17 ms` (`27.52–54.26`) | `1.01×` | `355.3M → 103.5M` | Yes |
+| OpenTelemetry Proto Git-ref (`d31f7ac~1..d31f7ac`, `trace.proto`) | `6` | `853.99 ms` (`842.84–878.11`) | `284.28 ms` (`281.10–292.05`) | `3.00×` | `339.3M → 141.4M` | Yes (`1` change) |
+| Synthetic 200-proto repo Git-ref (4 imported) | `3` | `1,252.58 ms` (`1,083.06–1,729.96`) | `289.21 ms` (`285.70–483.33`) | `4.33×` | `294.3M → 108.5M` | Yes (`1` change) |
+
+The SpaceX diff does `71%` fewer instructions, but its wall time is within noise at this size. With `3` runs, the 200-proto IQR is the full range. The OpenTelemetry case diffs the pinned commit `d31f7ac`, the same one the 2.2.0 page measured, which has `1` change in `trace.proto`.
+
+---
+
+## Diff verdict changes
+
+On OpenAI `a01e367..373f26a`, 2.3.0 reports `4` breaking findings, all real. 2.2.0 reported `62`, of which `4` were real.
+
+| Finding group | 2.2.0 | 2.3.0 | What changed |
+|---|---:|---:|---|
+| Response `enum: [v]` → `const: v` rewrite | `49` breaking | `0` breaking | Removing a value from a response enum is now non-breaking ([#169](https://github.com/noemaforge/vimanam/issues/169)) |
+| Request `enum: [v]` → `const: v` rewrite | `9` breaking | `0` breaking | Dropping a whole request `enum` is now one non-breaking `/enum` change, and adding `const` is Review |
+| `notification_channel` `anyOf` edit on two spend-limit endpoints | `4` breaking | `4` breaking | Unchanged: `2` `field_required_changed` and `2` `field_type_changed` |
+
+The v2 JSON summary goes from `62` breaking, `12` non-breaking and `134` review to `4`, `17` and `133`. Vimanam still doesn't treat `enum: [v]` and `const: v` as equal ([#167](https://github.com/noemaforge/vimanam/issues/167)). It avoids the false alarm here only because of the two rules in the table.
+
+Other 2.3.0 changes that affect comparisons with other tools:
+
+- Changing an RPC between unary and streaming is now wire-breaking ([#153](https://github.com/noemaforge/vimanam/issues/153)). The Protobuf smoke test now matches `buf` WIRE on all 8 cases.
+- A `$ref` retargeted to a differently named component is now a Review change, even when the two components have the same shape.
+- 2.3.0 compares every media type of a request body or response, not only the first ([#154](https://github.com/noemaforge/vimanam/issues/154)).
+
+For accuracy against `oasdiff`, `graphql-inspector` and `buf` on real release histories, see [v2.3.0 vs external tools](/vimanam/benchmarks/v2-3-external-tools/#accuracy-on-real-release-histories).
+
+---
+
+## Render parity
+
+Renders use `--detail full --include-schemas --no-report`, `10` runs after `2` warmups. The output isn't byte-identical between versions, because 2.3.0 labels body-table root rows ([#156](https://github.com/noemaforge/vimanam/issues/156)) and adds GraphQL argument input types to slices ([#170](https://github.com/noemaforge/vimanam/issues/170)).
+
+| Public specification | 2.2.0 median (IQR / RSS) | 2.3.0 median (IQR / RSS) | IQRs disjoint? | Instructions (2.2.0 → 2.3.0) |
+|---|---|---|---|---:|
+| Petstore OAS3 (2.6 KB JSON) | `6.87 ms` (`6.51–7.21` / `4.0 MB`) | `8.65 ms` (`7.83–9.84` / `4.3 MB`) | Yes | `20.0M → 20.6M` (`+3.0%`) |
+| Petstore OAS3 (1.9 KB YAML) | `8.39 ms` (`8.00–8.59` / `5.1 MB`) | `8.83 ms` (`7.99–9.36` / `5.3 MB`) | No | `21.1M → 21.6M` (`+2.4%`) |
+| OpenAI OpenAPI 3.0 (1.3 MB YAML) | `50.77 ms` (`50.14–51.77` / `23.5 MB`) | `52.69 ms` (`51.77–53.43` / `24.0 MB`) | No | `467.8M → 468.1M` (`+0.1%`) |
+| Stripe OpenAPI 3.0 (7.9 MB JSON) | `123.94 ms` (`121.95–178.13` / `124.0 MB`) | `127.21 ms` (`122.04–145.76` / `124.3 MB`) | No | `1,470.5M → 1,455.8M` (`-1.0%`) |
+| Stripe OpenAPI 3.0 (6.3 MB YAML) | `218.95 ms` (`215.93–223.22` / `122.0 MB`) | `220.50 ms` (`219.09–225.88` / `122.5 MB`) | No | `2,841.8M → 2,833.4M` (`-0.3%`) |
+| SpaceX Land GraphQL (12 KB SDL) | `11.66 ms` (`10.10–12.86` / `5.2 MB`) | `12.10 ms` (`11.35–14.32` / `5.4 MB`) | No | `51.3M → 55.1M` (`+7.4%`) |
+| SpaceX Land GraphQL (120 KB introspection) | `16.33 ms` (`14.44–22.26` / `6.1 MB`) | `14.72 ms` (`13.38–15.62` / `6.3 MB`) | No | `79.3M → 82.4M` (`+3.9%`) |
+| GitHub GraphQL (1.2 MB SDL) | `70.18 ms` (`68.94–72.36` / `24.8 MB`) | `77.58 ms` (`75.07–78.41` / `25.0 MB`) | Yes | `828.5M → 881.7M` (`+6.4%`) |
+| GitHub GraphQL (5.0 MB introspection) | `102.99 ms` (`100.74–105.99` / `44.3 MB`) | `114.90 ms` (`108.93–128.24` / `44.5 MB`) | Yes | `1,259.5M → 1,312.4M` (`+4.2%`) |
+| gRPC Health v1.20.0 (`.proto`) | `7.32 ms` (`7.00–8.47` / `5.9 MB`) | `11.03 ms` (`9.32–12.86` / `6.2 MB`) | Yes | `25.7M → 26.3M` (`+2.3%`) |
+| gRPC Health v1.20.0 (`.pb` descriptor) | `10.09 ms` (`9.80–10.43` / `5.4 MB`) | `10.86 ms` (`10.40–11.24` / `5.6 MB`) | No | `24.0M → 24.5M` (`+2.1%`) |
+| OTel Collector TraceService (`.proto`) | `10.11 ms` (`9.57–11.05` / `7.4 MB`) | `11.72 ms` (`11.26–12.29` / `7.7 MB`) | Yes | `40.5M → 41.0M` (`+1.2%`) |
+| OTel Collector MetricsService (`.proto`) | `11.29 ms` (`11.04–11.64` / `8.0 MB`) | `12.29 ms` (`11.85–12.76` / `8.4 MB`) | Yes | `47.8M → 48.2M` (`+0.8%`) |
+| OTel Collector LogsService (`.proto`) | `10.12 ms` (`9.85–10.54` / `7.3 MB`) | `10.34 ms` (`10.25–11.02` / `7.5 MB`) | No | `37.8M → 38.3M` (`+1.3%`) |
+
+Render times are unchanged within noise. Instruction counts stay within ±3% for OpenAPI and Protobuf. GraphQL renders do 4% to 7% more work, which matches 2.3.0's new duplicate-member checks ([#163](https://github.com/noemaforge/vimanam/issues/163)) and argument input-type expansion ([#170](https://github.com/noemaforge/vimanam/issues/170)).
+
+Several small wall-time differences have disjoint IQRs but didn't hold up on a 30-run recheck:
+
+- GitHub GraphQL SDL: `73.8 ± 18.4 ms` (2.2.0) against `75.6 ± 10.1 ms` (2.3.0).
+- gRPC Health `.proto`: `9.5 ± 1.0 ms` against `9.8 ± 0.8 ms`, where the 10-run medians showed `7.3` against `11.0 ms`.
+
+---
+
+## Measurement conditions
+
+<Aside type="caution" title="The machine wasn't idle">
+  The load average was about 6 to 19 on 12 cores during these runs. Wall times and IQRs include that noise. CPU instruction counts don't depend on load, so treat them as the more reliable column.
+</Aside>
+
+| Item | Value |
+|---|---|
+| Machine | Apple Silicon, `macOS 26.7.3 arm64`, Apple Git `2.54.0` |
+| Timing harness | `hyperfine 2.0.0` for renders and GraphQL/Protobuf diffs; `scripts/benchmark-diff-refs.py` (median and range, peak RSS from `wait4`) for OpenAI and Stripe diffs |
+| Run counts | `10` per render and SpaceX diff, `5` per GitHub Git-ref diff and per OpenAI/Stripe mode, `6` for OpenTelemetry Git-ref, `3` for the 200-proto repo |
+| 2.2.0 binary | SHA-256 `ed253315…`, `9,731,360` bytes |
+| 2.3.0 binary | SHA-256 `f02778f4…`, `10,324,976` bytes (`+593,616` bytes, `+6.1%`) |
+| Timeout | `30 s` for 2.2.0 on Stripe; the slowest 2.3.0 Stripe case took `1,518.7 ms` |
+
+The 30-run rechecks above were run by hand after the main capture and aren't in the results files.
