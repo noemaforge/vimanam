@@ -78,7 +78,7 @@ vimanam man --out-dir ./man/man1
 The stdout page and `DIR/vimanam.1` are byte-identical.
 
 <Aside type="note" title="Core Rust library without CLI dependencies">
-  If you embed Vimanam in a Rust application, add `vimanam = { version = "2.2", default-features = false }` to `Cargo.toml`. That omits `clap`, `clap_complete`, `clap_complete_nushell`, `clap_mangen`, and `env_logger` from your dependency graph.
+  If you embed Vimanam in a Rust application, run `cargo add vimanam --no-default-features`. That omits `clap`, `clap_complete`, `clap_complete_nushell`, `clap_mangen`, and `env_logger` from your dependency graph. For version pinning, see [CI pipelines and Rust library](/vimanam/ci-and-library/#embed-vimanam-as-a-rust-library).
 </Aside>
 
 ## Next steps
