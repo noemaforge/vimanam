@@ -109,6 +109,9 @@ export default defineConfig({
           label: 'Benchmarks',
           items: [
             { label: 'Overview & methodology', slug: 'benchmarks' },
+            { label: 'v2.3 standalone & LLM eval', slug: 'benchmarks/v2-3' },
+            { label: 'v2.3 vs v2.2 upgrade', slug: 'benchmarks/v2-3-vs-v2-2' },
+            { label: 'v2.3 vs external tools', slug: 'benchmarks/v2-3-external-tools' },
             { label: 'v2.2 standalone & LLM eval', slug: 'benchmarks/v2-2' },
             { label: 'v2.2 vs v2.1 upgrade', slug: 'benchmarks/v2-2-vs-v2-1' },
             { label: 'v2.2 vs external tools', slug: 'benchmarks/external-tools' },

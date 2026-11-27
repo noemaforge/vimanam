@@ -109,10 +109,10 @@ python3 scripts/benchmark-diff-refs.py --binary target/release/vimanam \
 
 ## `benchmark-public.py` and `eval-context-accuracy.py`
 
-Reproducible evaluation scripts backing the [Benchmarks](https://noemaforge.github.io/vimanam/benchmarks/) section (`v2.2 standalone & LLM eval`, `v2.2 vs v2.1 upgrade`, and `v2.2 vs external tools`). Both use public open-source specifications (pinned SHAs for Stripe OpenAPI, OpenAI OpenAPI, GitHub GraphQL, SpaceX Land GraphQL, OpenTelemetry Proto, and gRPC Health) plus three checked-in synthetic multi-file Protobuf specs under `scripts/eval-fixtures/protos/`:
+Reproducible evaluation scripts backing the [Benchmarks](https://noemaforge.github.io/vimanam/benchmarks/) section (one standalone page, one upgrade comparison and one external-tools page per release). Both use public open-source specifications (pinned SHAs for Stripe OpenAPI, OpenAI OpenAPI, GitHub GraphQL, SpaceX Land GraphQL, OpenTelemetry Proto, and gRPC Health) plus three checked-in synthetic multi-file Protobuf specs under `scripts/eval-fixtures/protos/`:
 
-- `scripts/benchmark-public.py` → `scripts/benchmark-v22-results.json`: runs `hyperfine 2.0.0` (`median`, Q1–Q3 `IQR`, `min`, `max`, `mean`, `stddev`, peak RSS, CPU instructions, raw `samples_ms`, and disjoint-IQR checks), pins exact upstream commit SHAs (`PINNED_REVS`), compares `tiktoken` (`o200k_base`) BPE tokens against Vimanam's `chars / 4` estimate, benchmarks a generated 200-file `.proto` Git repo (`git fast-import`), compares against `oasdiff`, `buf breaking`, `graphql-inspector`, and `protoc-gen-doc`, and reconciles OpenAI `a01e367..373f26a` breaking findings.
-- `scripts/eval-context-accuracy.py` → `scripts/eval-context-accuracy-results.json`: a serial (`--workers 1`), repeated-trial (`--trials 3`) evaluation with 11 tasks and 6 conditions, graded by deterministic programmatic JSON assertions on `claude-haiku-5-5` (zero tools, isolated system prompt). The conditions are `no_spec`, `summary`, `routed_e2e`, `fixed_slice`, `oracle_slice` and `raw_spec`.
+- `scripts/benchmark-public.py` → `scripts/benchmark-v<NN>-results.json` (one file per release; `benchmark-v22-results.json` is 2.2.0 against 2.1.0, `benchmark-v23-results.json` is 2.3.0 against 2.2.0): runs `hyperfine 2.0.0` (`median`, Q1–Q3 `IQR`, `min`, `max`, `mean`, `stddev`, peak RSS, CPU instructions, raw `samples_ms`, and disjoint-IQR checks), pins exact upstream commit SHAs (`PINNED_REVS`), compares `tiktoken` (`o200k_base`) BPE tokens against Vimanam's `chars / 4` estimate, benchmarks a generated 200-file `.proto` Git repo (`git fast-import`), compares against `oasdiff`, `buf breaking`, `graphql-inspector`, and `protoc-gen-doc`, and reconciles OpenAI `a01e367..373f26a` breaking findings.
+- `scripts/eval-context-accuracy.py` → `scripts/eval-context-accuracy-v<NN>-results.json` (`eval-context-accuracy-results.json` is the 2.2.0 run): a serial (`--workers 1`), repeated-trial (`--trials 3`) evaluation with 11 tasks and 6 conditions, graded by deterministic programmatic JSON assertions on `claude-haiku-5-5` (zero tools, isolated system prompt). The conditions are `no_spec`, `summary`, `routed_e2e`, `fixed_slice`, `oracle_slice` and `raw_spec`.
   - **Cache protocol.** Every graded trial prepends a fresh nonce to each user prompt, so all graded trials are cold-cache calls and no trial reads another's cache. Right after trial 1 of each cell, its exact prompts are re-sent with the same nonce (`warm_replay`). The replay measures cost and token use only and is not graded. Each call records `uncached_input_tokens`, `cache_creation_input_tokens` and `cache_read_input_tokens`. Report cold against cold and warm against warm. Mixing the two inflated the earlier cost ratio from about 102× to 161×.
   - **`oracle_slice`** is the operation at `--schema-depth 2` plus `--schema` for exactly the named types that hold the answers. The build fails unless every task's `answer_markers` appear in it. `routed_e2e` vs `oracle_slice` isolates routing quality, and `oracle_slice` vs `raw_spec` isolates slice readability. `fixed_slice` (operation only, depth 2) remains a deliberately naive single-turn baseline.
   - **`answer_coverage`** is the fraction of answer markers present in each condition's context (per trial for `routed_e2e`). It separates "the answer was not retrieved" from "the answer was retrieved but misread".
@@ -129,9 +129,9 @@ C=/tmp/vimanam-eval-corpus; mkdir -p "$C" && cd "$C"
 git clone -q --filter=blob:none --no-checkout https://github.com/openai/openai-openapi.git openai-repo
 git -C openai-repo show 498c71d:openapi.yaml > openai.yaml
 git clone -q --filter=blob:none --no-checkout https://github.com/stripe/openapi.git stripe-openapi
-git -C stripe-openapi checkout -q 5237fa0 -- openapi/spec3.json
+git -C stripe-openapi checkout -q 5237fa0 -- openapi/spec3.json openapi/spec3.yaml
 git clone -q --filter=blob:none --no-checkout https://github.com/octokit/graphql-schema.git octokit-graphql
-git -C octokit-graphql checkout -q 82ff2d4 -- schema.graphql
+git -C octokit-graphql checkout -q 82ff2d4 -- schema.graphql schema.json
 git clone -q --filter=blob:none --no-checkout https://github.com/open-telemetry/opentelemetry-proto.git otel-proto
 git -C otel-proto checkout -q d31f7ac -- opentelemetry
 ```
@@ -139,20 +139,20 @@ git -C otel-proto checkout -q d31f7ac -- opentelemetry
 ```bash
 # Re-run public performance, BPE calibration, and 4 external baselines
 uv run --with tiktoken python3 scripts/benchmark-public.py \
-  --v21 /tmp/vimanam-v2.1.0/target/release/vimanam \
-  --v22 target/release/vimanam \
+  --baseline /tmp/vimanam-v2.2.0/target/release/vimanam \
+  --candidate target/release/vimanam \
   --corpus /tmp/vimanam-eval-corpus \
   --runs 10 \
-  --output scripts/benchmark-v22-results.json
+  --output scripts/benchmark-v23-results.json
 
 # Re-run the serial 3-trial LLM evaluation (cold trials + warm replays; ~1 h, a few USD)
 uv run --with tiktoken python3 scripts/eval-context-accuracy.py \
-  --v22 target/release/vimanam \
+  --vimanam target/release/vimanam \
   --corpus /tmp/vimanam-eval-corpus \
   --model haiku \
   --trials 3 \
   --workers 1 \
-  --output scripts/eval-context-accuracy-results.json
+  --output scripts/eval-context-accuracy-v23-results.json
 ```
 
 ## `compare-baseline.sh`

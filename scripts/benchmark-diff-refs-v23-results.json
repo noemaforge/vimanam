@@ -1,0 +1,1401 @@
+{
+  "environment": {
+    "platform": "macOS-26.7.3-arm64-arm-64bit-Mach-O",
+    "machine": "arm64",
+    "binary_version": "vimanam 2.3.0",
+    "baseline_version": "vimanam 2.2.0",
+    "runs": 5,
+    "timeout_s": 60.0
+  },
+  "cases": [
+    {
+      "case": "OpenAI a01e367..373f26a",
+      "mode": "md",
+      "binary": {
+        "exit": 0,
+        "median_ms": 180.3,
+        "min_ms": 142.5,
+        "max_ms": 258.1,
+        "max_rss_mib": 110.4,
+        "output_bytes": 17531,
+        "output_sha256": "ee242affa32d2ef7d3e72c20ff2a9889a8f38607b7a9268fb17f22647af03f8c",
+        "samples_ms": [
+          142.5,
+          220.0,
+          258.1,
+          160.0,
+          180.3
+        ]
+      },
+      "note": "",
+      "baseline": {
+        "exit": 0,
+        "median_ms": 310.9,
+        "min_ms": 276.0,
+        "max_ms": 382.5,
+        "max_rss_mib": 111.3,
+        "output_bytes": 20575,
+        "output_sha256": "ccecf17765918a666d17261c36b4123ed88e28ec8cec9d54573963783fa8ee9a",
+        "samples_ms": [
+          382.5,
+          294.7,
+          310.9,
+          314.1,
+          276.0
+        ]
+      },
+      "identical": false
+    },
+    {
+      "case": "OpenAI a01e367..373f26a",
+      "mode": "v1",
+      "binary": {
+        "exit": 0,
+        "median_ms": 155.2,
+        "min_ms": 137.7,
+        "max_ms": 175.3,
+        "max_rss_mib": 110.6,
+        "output_bytes": 103583,
+        "output_sha256": "5479c2a8644494964bd1ee5a893a53be13208ba8110d2596a6564c746b4dc5dd",
+        "samples_ms": [
+          137.7,
+          155.2,
+          175.3,
+          162.6,
+          139.9
+        ]
+      },
+      "note": "",
+      "baseline": {
+        "exit": 0,
+        "median_ms": 401.8,
+        "min_ms": 345.0,
+        "max_ms": 1075.0,
+        "max_rss_mib": 113.0,
+        "output_bytes": 98511,
+        "output_sha256": "ad65cd76d9d79d2b4d11ebe49c50204efc456aa88cdb95c9deed32097a85317c",
+        "samples_ms": [
+          345.0,
+          354.9,
+          1075.0,
+          436.3,
+          401.8
+        ]
+      },
+      "identical": false
+    },
+    {
+      "case": "OpenAI a01e367..373f26a",
+      "mode": "v2",
+      "binary": {
+        "exit": 0,
+        "median_ms": 484.9,
+        "min_ms": 471.7,
+        "max_ms": 1050.7,
+        "max_rss_mib": 242.3,
+        "output_bytes": 37137633,
+        "output_sha256": "0cfac71f6a5299739e2678989183ee0a38bfad73b515c94ae77eb5ffa9a250cf",
+        "samples_ms": [
+          599.6,
+          484.9,
+          1050.7,
+          477.2,
+          471.7
+        ]
+      },
+      "note": "",
+      "baseline": {
+        "exit": 0,
+        "median_ms": 2722.3,
+        "min_ms": 2542.4,
+        "max_ms": 3240.5,
+        "max_rss_mib": 316.0,
+        "output_bytes": 37133511,
+        "output_sha256": "243704b03535b56c870d8d508858351701090cb66e80cf225664feefc7a593ba",
+        "samples_ms": [
+          2722.3,
+          2657.5,
+          2798.1,
+          3240.5,
+          2542.4
+        ]
+      },
+      "identical": false
+    },
+    {
+      "case": "Stripe 5237fa0 self-diff",
+      "mode": "md",
+      "binary": {
+        "exit": 0,
+        "median_ms": 197.6,
+        "min_ms": 177.2,
+        "max_ms": 204.5,
+        "max_rss_mib": 166.1,
+        "output_bytes": 89,
+        "output_sha256": "10d39e29e7ec897e675a28c40fc226a884717ea9c17c1729672879863d0f0644",
+        "samples_ms": [
+          204.3,
+          178.6,
+          204.5,
+          197.6,
+          177.2
+        ]
+      },
+      "note": "",
+      "baseline": {
+        "timeout_s": 30.0,
+        "max_rss_mib": 1017.3
+      }
+    },
+    {
+      "case": "Stripe 5237fa0 self-diff",
+      "mode": "v1",
+      "binary": {
+        "exit": 0,
+        "median_ms": 216.6,
+        "min_ms": 189.3,
+        "max_ms": 485.4,
+        "max_rss_mib": 166.3,
+        "output_bytes": 601,
+        "output_sha256": "cd18944f5521da1df9e7bb4662f819285ff5376d0492ed4a55fd067036650235",
+        "samples_ms": [
+          485.4,
+          189.3,
+          216.6,
+          197.2,
+          246.2
+        ]
+      },
+      "note": "",
+      "baseline": {
+        "timeout_s": 30.0,
+        "max_rss_mib": 4351.1
+      }
+    },
+    {
+      "case": "Stripe 5237fa0 self-diff",
+      "mode": "v2",
+      "binary": {
+        "exit": 0,
+        "median_ms": 1141.5,
+        "min_ms": 1023.1,
+        "max_ms": 1305.4,
+        "max_rss_mib": 546.5,
+        "output_bytes": 99218164,
+        "output_sha256": "e00a6cb4cab99c4e40c7393ca79031a19aba2fa60b925415bb7ad8bf13330dcd",
+        "samples_ms": [
+          1305.4,
+          1219.6,
+          1023.1,
+          1128.2,
+          1141.5
+        ]
+      },
+      "note": "",
+      "baseline": {
+        "timeout_s": 30.0,
+        "max_rss_mib": 2991.1
+      }
+    },
+    {
+      "case": "Stripe 2f8d147..5237fa0",
+      "mode": "md",
+      "binary": {
+        "exit": 0,
+        "median_ms": 192.0,
+        "min_ms": 179.8,
+        "max_ms": 306.3,
+        "max_rss_mib": 166.0,
+        "output_bytes": 89,
+        "output_sha256": "10d39e29e7ec897e675a28c40fc226a884717ea9c17c1729672879863d0f0644",
+        "samples_ms": [
+          306.3,
+          184.3,
+          179.8,
+          193.8,
+          192.0
+        ]
+      },
+      "note": "",
+      "baseline": {
+        "timeout_s": 30.0,
+        "max_rss_mib": 5562.7
+      }
+    },
+    {
+      "case": "Stripe 2f8d147..5237fa0",
+      "mode": "v1",
+      "binary": {
+        "exit": 0,
+        "median_ms": 193.5,
+        "min_ms": 187.8,
+        "max_ms": 224.6,
+        "max_rss_mib": 166.1,
+        "output_bytes": 601,
+        "output_sha256": "cd18944f5521da1df9e7bb4662f819285ff5376d0492ed4a55fd067036650235",
+        "samples_ms": [
+          215.1,
+          191.0,
+          224.6,
+          187.8,
+          193.5
+        ]
+      },
+      "note": "",
+      "baseline": {
+        "timeout_s": 30.0,
+        "max_rss_mib": 6433.9
+      }
+    },
+    {
+      "case": "Stripe 2f8d147..5237fa0",
+      "mode": "v2",
+      "binary": {
+        "exit": 0,
+        "median_ms": 1005.2,
+        "min_ms": 962.1,
+        "max_ms": 1258.8,
+        "max_rss_mib": 549.2,
+        "output_bytes": 99218164,
+        "output_sha256": "e00a6cb4cab99c4e40c7393ca79031a19aba2fa60b925415bb7ad8bf13330dcd",
+        "samples_ms": [
+          1258.8,
+          1005.2,
+          988.6,
+          962.1,
+          1048.8
+        ]
+      },
+      "note": "",
+      "baseline": {
+        "timeout_s": 30.0,
+        "max_rss_mib": 6245.7
+      }
+    },
+    {
+      "case": "Stripe a402765..0aaf9a6",
+      "mode": "md",
+      "binary": {
+        "exit": 0,
+        "median_ms": 242.7,
+        "min_ms": 228.3,
+        "max_ms": 268.6,
+        "max_rss_mib": 158.6,
+        "output_bytes": 1269840,
+        "output_sha256": "8e48a468042982ccc965d71bb9417abedb214ae752fa3a5ea175a78e6a5d981f",
+        "samples_ms": [
+          256.9,
+          231.1,
+          242.7,
+          268.6,
+          228.3
+        ]
+      },
+      "note": "",
+      "baseline": {
+        "timeout_s": 30.0,
+        "max_rss_mib": 4645.4
+      }
+    },
+    {
+      "case": "Stripe a402765..0aaf9a6",
+      "mode": "v1",
+      "binary": {
+        "exit": 0,
+        "median_ms": 516.5,
+        "min_ms": 458.0,
+        "max_ms": 792.5,
+        "max_rss_mib": 207.7,
+        "output_bytes": 22416301,
+        "output_sha256": "5fb9b611b6ff14e4fdd79195150d8486847ac6f75443da01e9dbc620b04175a0",
+        "samples_ms": [
+          792.5,
+          520.2,
+          516.5,
+          470.6,
+          458.0
+        ]
+      },
+      "note": "",
+      "baseline": {
+        "timeout_s": 30.0,
+        "max_rss_mib": 4933.3
+      }
+    },
+    {
+      "case": "Stripe a402765..0aaf9a6",
+      "mode": "v2",
+      "binary": {
+        "exit": 0,
+        "median_ms": 1170.5,
+        "min_ms": 1155.2,
+        "max_ms": 1528.8,
+        "max_rss_mib": 509.6,
+        "output_bytes": 91534148,
+        "output_sha256": "fa251ef995ae3d24e1030a6b30498b6f9fd9a95c1f1319b9029badb8b8328ed7",
+        "samples_ms": [
+          1528.8,
+          1202.2,
+          1162.1,
+          1155.2,
+          1170.5
+        ]
+      },
+      "note": "",
+      "baseline": {
+        "timeout_s": 30.0,
+        "max_rss_mib": 5701.5
+      }
+    },
+    {
+      "case": "Stripe 0aaf9a6..da3eadb",
+      "mode": "md",
+      "binary": {
+        "exit": 0,
+        "median_ms": 195.3,
+        "min_ms": 191.2,
+        "max_ms": 263.7,
+        "max_rss_mib": 153.1,
+        "output_bytes": 112635,
+        "output_sha256": "461167352ffa136928773d754a398a5cb726cce0ec595b42ae4fd0c74d637b89",
+        "samples_ms": [
+          263.7,
+          192.3,
+          201.3,
+          195.3,
+          191.2
+        ]
+      },
+      "note": "",
+      "baseline": {
+        "timeout_s": 30.0,
+        "max_rss_mib": 4685.2
+      }
+    },
+    {
+      "case": "Stripe 0aaf9a6..da3eadb",
+      "mode": "v1",
+      "binary": {
+        "exit": 0,
+        "median_ms": 204.5,
+        "min_ms": 200.1,
+        "max_ms": 210.5,
+        "max_rss_mib": 154.3,
+        "output_bytes": 1709807,
+        "output_sha256": "d03d8513bf3bbb8add68094b6e684d60f5bf6cf85ee20555f278e5e5b2fc99d4",
+        "samples_ms": [
+          204.5,
+          200.1,
+          201.5,
+          210.5,
+          204.9
+        ]
+      },
+      "note": "",
+      "baseline": {
+        "timeout_s": 30.0,
+        "max_rss_mib": 5618.7
+      }
+    },
+    {
+      "case": "Stripe 0aaf9a6..da3eadb",
+      "mode": "v2",
+      "binary": {
+        "exit": 0,
+        "median_ms": 1114.8,
+        "min_ms": 974.2,
+        "max_ms": 1381.4,
+        "max_rss_mib": 501.6,
+        "output_bytes": 89568449,
+        "output_sha256": "71e94de1f1630f7ec4f1e4ef8ba14ba75d00ff65a902408a763937e81214be18",
+        "samples_ms": [
+          1381.4,
+          1082.8,
+          1114.8,
+          1146.5,
+          974.2
+        ]
+      },
+      "note": "",
+      "baseline": {
+        "timeout_s": 30.0,
+        "max_rss_mib": 6620.5
+      }
+    },
+    {
+      "case": "Stripe da3eadb..cfe95bf",
+      "mode": "md",
+      "binary": {
+        "exit": 0,
+        "median_ms": 265.0,
+        "min_ms": 250.2,
+        "max_ms": 306.0,
+        "max_rss_mib": 166.9,
+        "output_bytes": 1551410,
+        "output_sha256": "bc28872147af055486100ccf7b94b11617f7aa8eb9a8d56930a767a687617451",
+        "samples_ms": [
+          306.0,
+          265.0,
+          266.3,
+          264.6,
+          250.2
+        ]
+      },
+      "note": "",
+      "baseline": {
+        "timeout_s": 30.0,
+        "max_rss_mib": 5788.2
+      }
+    },
+    {
+      "case": "Stripe da3eadb..cfe95bf",
+      "mode": "v1",
+      "binary": {
+        "exit": 0,
+        "median_ms": 670.1,
+        "min_ms": 536.3,
+        "max_ms": 791.0,
+        "max_rss_mib": 246.9,
+        "output_bytes": 32660928,
+        "output_sha256": "7698b24f6cc418032ecbba27d8da8b210980407f3092300f4daceb071efa89e2",
+        "samples_ms": [
+          791.0,
+          687.0,
+          652.7,
+          536.3,
+          670.1
+        ]
+      },
+      "note": "",
+      "baseline": {
+        "timeout_s": 30.0,
+        "max_rss_mib": 3831.5
+      }
+    },
+    {
+      "case": "Stripe da3eadb..cfe95bf",
+      "mode": "v2",
+      "binary": {
+        "exit": 0,
+        "median_ms": 1248.2,
+        "min_ms": 1110.5,
+        "max_ms": 1453.1,
+        "max_rss_mib": 521.3,
+        "output_bytes": 93292031,
+        "output_sha256": "09ab11626039c4358c7046f144cc12c1bc8e3f563d6a36baa4dd9f1173ca8815",
+        "samples_ms": [
+          1453.1,
+          1269.5,
+          1248.2,
+          1133.6,
+          1110.5
+        ]
+      },
+      "note": "",
+      "baseline": {
+        "timeout_s": 30.0,
+        "max_rss_mib": 5296.0
+      }
+    },
+    {
+      "case": "Stripe cfe95bf..a54c388",
+      "mode": "md",
+      "binary": {
+        "exit": 0,
+        "median_ms": 188.7,
+        "min_ms": 186.3,
+        "max_ms": 250.5,
+        "max_rss_mib": 154.4,
+        "output_bytes": 111568,
+        "output_sha256": "ef15e2e76f7d8f0a30066b392953b66019e9292c452a4ed470eb20797a28b9b5",
+        "samples_ms": [
+          250.5,
+          188.7,
+          186.3,
+          192.7,
+          188.7
+        ]
+      },
+      "note": "",
+      "baseline": {
+        "timeout_s": 30.0,
+        "max_rss_mib": 5876.9
+      }
+    },
+    {
+      "case": "Stripe cfe95bf..a54c388",
+      "mode": "v1",
+      "binary": {
+        "exit": 0,
+        "median_ms": 201.5,
+        "min_ms": 199.5,
+        "max_ms": 253.3,
+        "max_rss_mib": 155.0,
+        "output_bytes": 1636252,
+        "output_sha256": "d44bbea18a779f96348a77b33cbe3823ba2569a5733f0408d4a07b69dd749c8f",
+        "samples_ms": [
+          253.3,
+          199.5,
+          212.6,
+          201.5,
+          200.4
+        ]
+      },
+      "note": "",
+      "baseline": {
+        "timeout_s": 30.0,
+        "max_rss_mib": 4758.1
+      }
+    },
+    {
+      "case": "Stripe cfe95bf..a54c388",
+      "mode": "v2",
+      "binary": {
+        "exit": 0,
+        "median_ms": 1020.2,
+        "min_ms": 985.8,
+        "max_ms": 1391.1,
+        "max_rss_mib": 508.4,
+        "output_bytes": 90458433,
+        "output_sha256": "47c61e4a1a079ba8046738579805255d2e0946497e7eb1f17f3d2859993c2fcb",
+        "samples_ms": [
+          1391.1,
+          1200.4,
+          985.8,
+          987.8,
+          1020.2
+        ]
+      },
+      "note": "",
+      "baseline": {
+        "timeout_s": 30.0,
+        "max_rss_mib": 5528.9
+      }
+    },
+    {
+      "case": "Stripe a54c388..d771243",
+      "mode": "md",
+      "binary": {
+        "exit": 0,
+        "median_ms": 294.9,
+        "min_ms": 273.6,
+        "max_ms": 383.3,
+        "max_rss_mib": 173.3,
+        "output_bytes": 2324059,
+        "output_sha256": "2b9fff624e45a562726177223b5ecbc7095e941e4edd5d8a63af7f86dfbfad5b",
+        "samples_ms": [
+          294.9,
+          280.2,
+          383.3,
+          308.5,
+          273.6
+        ]
+      },
+      "note": "",
+      "baseline": {
+        "timeout_s": 30.0,
+        "max_rss_mib": 6123.9
+      }
+    },
+    {
+      "case": "Stripe a54c388..d771243",
+      "mode": "v1",
+      "binary": {
+        "exit": 0,
+        "median_ms": 810.8,
+        "min_ms": 754.5,
+        "max_ms": 1535.4,
+        "max_rss_mib": 311.6,
+        "output_bytes": 53323826,
+        "output_sha256": "9a150d65f7341d89812122742d0f350738214ed10549581bc74657857fd87c7f",
+        "samples_ms": [
+          1535.4,
+          1363.8,
+          810.8,
+          754.5,
+          772.6
+        ]
+      },
+      "note": "",
+      "baseline": {
+        "timeout_s": 30.0,
+        "max_rss_mib": 2476.4
+      }
+    },
+    {
+      "case": "Stripe a54c388..d771243",
+      "mode": "v2",
+      "binary": {
+        "exit": 0,
+        "median_ms": 1185.8,
+        "min_ms": 1158.5,
+        "max_ms": 1470.0,
+        "max_rss_mib": 531.4,
+        "output_bytes": 96543405,
+        "output_sha256": "bcc301ffbebd0d479c032eb991b3f2c220849fb077884b5d1d5f36f6a9aaebda",
+        "samples_ms": [
+          1470.0,
+          1390.0,
+          1158.5,
+          1184.5,
+          1185.8
+        ]
+      },
+      "note": "",
+      "baseline": {
+        "timeout_s": 30.0,
+        "max_rss_mib": 5522.6
+      }
+    },
+    {
+      "case": "Stripe d771243..6a1ea0a",
+      "mode": "md",
+      "binary": {
+        "exit": 0,
+        "median_ms": 263.1,
+        "min_ms": 256.8,
+        "max_ms": 316.2,
+        "max_rss_mib": 171.6,
+        "output_bytes": 1944143,
+        "output_sha256": "97a2c4169cb8709b9b1912b98a307a8b7028ed439a742245aea6f29267d6e320",
+        "samples_ms": [
+          316.2,
+          260.8,
+          256.8,
+          300.3,
+          263.1
+        ]
+      },
+      "note": "",
+      "baseline": {
+        "timeout_s": 30.0,
+        "max_rss_mib": 6305.6
+      }
+    },
+    {
+      "case": "Stripe d771243..6a1ea0a",
+      "mode": "v1",
+      "binary": {
+        "exit": 0,
+        "median_ms": 613.6,
+        "min_ms": 604.9,
+        "max_ms": 902.4,
+        "max_rss_mib": 273.5,
+        "output_bytes": 40197703,
+        "output_sha256": "69ef73df148758ec84e3caafa58c157932e66c86a25a384209e74580295bbcba",
+        "samples_ms": [
+          902.4,
+          764.9,
+          607.6,
+          604.9,
+          613.6
+        ]
+      },
+      "note": "",
+      "baseline": {
+        "timeout_s": 30.0,
+        "max_rss_mib": 6329.4
+      }
+    },
+    {
+      "case": "Stripe d771243..6a1ea0a",
+      "mode": "v2",
+      "binary": {
+        "exit": 0,
+        "median_ms": 1132.8,
+        "min_ms": 1095.9,
+        "max_ms": 1501.8,
+        "max_rss_mib": 534.4,
+        "output_bytes": 96415012,
+        "output_sha256": "46546d0bfcffde1764e73587e12fb13e2db81f868161ef21575d3c4963cabb88",
+        "samples_ms": [
+          1501.8,
+          1189.3,
+          1132.8,
+          1108.8,
+          1095.9
+        ]
+      },
+      "note": "",
+      "baseline": {
+        "timeout_s": 30.0,
+        "max_rss_mib": 7892.5
+      }
+    },
+    {
+      "case": "Stripe 6a1ea0a..fbd0091",
+      "mode": "md",
+      "binary": {
+        "exit": 0,
+        "median_ms": 188.9,
+        "min_ms": 188.6,
+        "max_ms": 197.0,
+        "max_rss_mib": 157.5,
+        "output_bytes": 55013,
+        "output_sha256": "e06f68cd3f5870011d83aaa0658392010a92763e77092d504a3a13c68f458cc4",
+        "samples_ms": [
+          197.0,
+          188.9,
+          188.6,
+          188.9,
+          188.7
+        ]
+      },
+      "note": "",
+      "baseline": {
+        "timeout_s": 30.0,
+        "max_rss_mib": 8238.8
+      }
+    },
+    {
+      "case": "Stripe 6a1ea0a..fbd0091",
+      "mode": "v1",
+      "binary": {
+        "exit": 0,
+        "median_ms": 210.9,
+        "min_ms": 201.9,
+        "max_ms": 337.0,
+        "max_rss_mib": 157.9,
+        "output_bytes": 806317,
+        "output_sha256": "2a1a2a8de9db68e2fd8f7f0f05498ddb37820319bba774adabdc854cf57662dd",
+        "samples_ms": [
+          337.0,
+          201.9,
+          210.9,
+          238.3,
+          202.3
+        ]
+      },
+      "note": "",
+      "baseline": {
+        "timeout_s": 30.0,
+        "max_rss_mib": 7959.6
+      }
+    },
+    {
+      "case": "Stripe 6a1ea0a..fbd0091",
+      "mode": "v2",
+      "binary": {
+        "exit": 0,
+        "median_ms": 1046.0,
+        "min_ms": 976.8,
+        "max_ms": 1266.2,
+        "max_rss_mib": 518.0,
+        "output_bytes": 92726279,
+        "output_sha256": "7a1bb253c88619af794f26f23dacdfa5528932181b47394dee47ddb53967442d",
+        "samples_ms": [
+          1266.2,
+          1046.0,
+          976.8,
+          1047.3,
+          981.0
+        ]
+      },
+      "note": "",
+      "baseline": {
+        "timeout_s": 30.0,
+        "max_rss_mib": 7655.8
+      }
+    },
+    {
+      "case": "Stripe fbd0091..f4ac6d9",
+      "mode": "md",
+      "binary": {
+        "exit": 0,
+        "median_ms": 234.0,
+        "min_ms": 231.2,
+        "max_ms": 284.6,
+        "max_rss_mib": 167.8,
+        "output_bytes": 1159388,
+        "output_sha256": "32ea1e9f5478d0a7b734ff64d7bbf2c9e726c7a27eb7488848ac84e237fd3b4a",
+        "samples_ms": [
+          284.6,
+          231.2,
+          232.1,
+          278.9,
+          234.0
+        ]
+      },
+      "note": "",
+      "baseline": {
+        "timeout_s": 30.0,
+        "max_rss_mib": 8334.0
+      }
+    },
+    {
+      "case": "Stripe fbd0091..f4ac6d9",
+      "mode": "v1",
+      "binary": {
+        "exit": 0,
+        "median_ms": 427.9,
+        "min_ms": 414.0,
+        "max_ms": 456.1,
+        "max_rss_mib": 220.4,
+        "output_bytes": 21145621,
+        "output_sha256": "10a72addb9a5284898e2045959f13f4a0024569c0c6343ff8a705c4f5116ded2",
+        "samples_ms": [
+          456.1,
+          418.3,
+          427.9,
+          414.0,
+          428.8
+        ]
+      },
+      "note": "",
+      "baseline": {
+        "timeout_s": 30.0,
+        "max_rss_mib": 9111.4
+      }
+    },
+    {
+      "case": "Stripe fbd0091..f4ac6d9",
+      "mode": "v2",
+      "binary": {
+        "exit": 0,
+        "median_ms": 1291.8,
+        "min_ms": 1050.5,
+        "max_ms": 1720.6,
+        "max_rss_mib": 530.3,
+        "output_bytes": 95052595,
+        "output_sha256": "0a6677661c421f7af935990f596a06f34d5325e22e79cb76590d48468491de93",
+        "samples_ms": [
+          1720.6,
+          1432.6,
+          1291.8,
+          1116.8,
+          1050.5
+        ]
+      },
+      "note": "",
+      "baseline": {
+        "timeout_s": 30.0,
+        "max_rss_mib": 7677.3
+      }
+    },
+    {
+      "case": "Stripe f4ac6d9..7061322",
+      "mode": "md",
+      "binary": {
+        "exit": 0,
+        "median_ms": 205.5,
+        "min_ms": 203.9,
+        "max_ms": 289.1,
+        "max_rss_mib": 166.9,
+        "output_bytes": 285407,
+        "output_sha256": "a0ce56430d88ebb1763865e15aaeb848c7ad14c6468fbad13184a2786223fa9e",
+        "samples_ms": [
+          241.4,
+          289.1,
+          204.0,
+          205.5,
+          203.9
+        ]
+      },
+      "note": "",
+      "baseline": {
+        "timeout_s": 30.0,
+        "max_rss_mib": 8706.2
+      }
+    },
+    {
+      "case": "Stripe f4ac6d9..7061322",
+      "mode": "v1",
+      "binary": {
+        "exit": 0,
+        "median_ms": 336.5,
+        "min_ms": 316.6,
+        "max_ms": 436.9,
+        "max_rss_mib": 190.0,
+        "output_bytes": 10455880,
+        "output_sha256": "4d65905742cd13d4bf10a59b6a17d91d3ca738fd301b64e6b3154a246a2a2939",
+        "samples_ms": [
+          436.9,
+          336.5,
+          346.7,
+          316.6,
+          321.2
+        ]
+      },
+      "note": "",
+      "baseline": {
+        "timeout_s": 30.0,
+        "max_rss_mib": 7934.4
+      }
+    },
+    {
+      "case": "Stripe f4ac6d9..7061322",
+      "mode": "v2",
+      "binary": {
+        "exit": 0,
+        "median_ms": 1073.6,
+        "min_ms": 1024.5,
+        "max_ms": 1531.5,
+        "max_rss_mib": 528.0,
+        "output_bytes": 94390600,
+        "output_sha256": "ed9164717811e4a000aedf2eec83c8dc4bd4900945f5b8bf5f99c1a55f7c18a9",
+        "samples_ms": [
+          1531.5,
+          1309.0,
+          1073.6,
+          1055.4,
+          1024.5
+        ]
+      },
+      "note": "",
+      "baseline": {
+        "timeout_s": 30.0,
+        "max_rss_mib": 3805.3
+      }
+    },
+    {
+      "case": "Stripe 7061322..d5d11f6",
+      "mode": "md",
+      "binary": {
+        "exit": 0,
+        "median_ms": 212.1,
+        "min_ms": 203.4,
+        "max_ms": 263.1,
+        "max_rss_mib": 159.4,
+        "output_bytes": 286290,
+        "output_sha256": "e2fb06691858a3ff180758e563d9d2e1ca67d46672faaccfb08ef959387b992f",
+        "samples_ms": [
+          263.1,
+          215.4,
+          203.4,
+          203.7,
+          212.1
+        ]
+      },
+      "note": "",
+      "baseline": {
+        "timeout_s": 30.0,
+        "max_rss_mib": 7788.9
+      }
+    },
+    {
+      "case": "Stripe 7061322..d5d11f6",
+      "mode": "v1",
+      "binary": {
+        "exit": 0,
+        "median_ms": 330.6,
+        "min_ms": 316.6,
+        "max_ms": 462.8,
+        "max_rss_mib": 180.4,
+        "output_bytes": 9811899,
+        "output_sha256": "4ae02507feb14640425645154a826b67f53c4bb5922177cca7ee96fd90bafcb7",
+        "samples_ms": [
+          462.8,
+          316.6,
+          320.4,
+          330.6,
+          338.1
+        ]
+      },
+      "note": "",
+      "baseline": {
+        "timeout_s": 30.0,
+        "max_rss_mib": 7292.9
+      }
+    },
+    {
+      "case": "Stripe 7061322..d5d11f6",
+      "mode": "v2",
+      "binary": {
+        "exit": 0,
+        "median_ms": 1192.1,
+        "min_ms": 1028.8,
+        "max_ms": 1406.1,
+        "max_rss_mib": 525.8,
+        "output_bytes": 94322264,
+        "output_sha256": "7445f876798dd75f9acd97d9032e4d0d5aa20958ff76b1222fec8595e4fc452c",
+        "samples_ms": [
+          1406.1,
+          1187.1,
+          1223.4,
+          1028.8,
+          1192.1
+        ]
+      },
+      "note": "",
+      "baseline": {
+        "timeout_s": 30.0,
+        "max_rss_mib": 5816.0
+      }
+    },
+    {
+      "case": "Stripe d5d11f6..af5309c",
+      "mode": "md",
+      "binary": {
+        "exit": 0,
+        "median_ms": 313.0,
+        "min_ms": 268.0,
+        "max_ms": 346.2,
+        "max_rss_mib": 176.9,
+        "output_bytes": 1724496,
+        "output_sha256": "c21af09884582e410bd0481762f81dc5268b5ceac8c0ad55c99aec8ac8897e8c",
+        "samples_ms": [
+          313.0,
+          346.2,
+          319.5,
+          271.4,
+          268.0
+        ]
+      },
+      "note": "",
+      "baseline": {
+        "timeout_s": 30.0,
+        "max_rss_mib": 5303.4
+      }
+    },
+    {
+      "case": "Stripe d5d11f6..af5309c",
+      "mode": "v1",
+      "binary": {
+        "exit": 0,
+        "median_ms": 872.3,
+        "min_ms": 710.2,
+        "max_ms": 1011.9,
+        "max_rss_mib": 287.2,
+        "output_bytes": 42803273,
+        "output_sha256": "c598ef15afeebe9b0fcdf73bb75fe350a3cb8fbd9a2402790bfaa62d4790dae5",
+        "samples_ms": [
+          1011.9,
+          883.6,
+          872.3,
+          839.4,
+          710.2
+        ]
+      },
+      "note": "",
+      "baseline": {
+        "timeout_s": 30.0,
+        "max_rss_mib": 3663.6
+      }
+    },
+    {
+      "case": "Stripe d5d11f6..af5309c",
+      "mode": "v2",
+      "binary": {
+        "exit": 0,
+        "median_ms": 1518.7,
+        "min_ms": 1227.4,
+        "max_ms": 1894.2,
+        "max_rss_mib": 544.9,
+        "output_bytes": 98106859,
+        "output_sha256": "b26af05079e1150ecfad542f58eb74fa5ab577bb0870fd58f14056f338baa144",
+        "samples_ms": [
+          1894.2,
+          1227.4,
+          1665.9,
+          1518.7,
+          1493.3
+        ]
+      },
+      "note": "",
+      "baseline": {
+        "timeout_s": 30.0,
+        "max_rss_mib": 2357.6
+      }
+    },
+    {
+      "case": "Stripe af5309c..30d3391",
+      "mode": "md",
+      "binary": {
+        "exit": 0,
+        "median_ms": 412.8,
+        "min_ms": 281.4,
+        "max_ms": 558.2,
+        "max_rss_mib": 171.2,
+        "output_bytes": 730551,
+        "output_sha256": "b0454f20297d4fdf0e832457bf87fe27b6e134c41aca56c4e8e711e605d49d9b",
+        "samples_ms": [
+          281.4,
+          297.2,
+          455.5,
+          412.8,
+          558.2
+        ]
+      },
+      "note": "",
+      "baseline": {
+        "timeout_s": 30.0,
+        "max_rss_mib": 3022.2
+      }
+    },
+    {
+      "case": "Stripe af5309c..30d3391",
+      "mode": "v1",
+      "binary": {
+        "exit": 0,
+        "median_ms": 365.1,
+        "min_ms": 348.8,
+        "max_ms": 925.5,
+        "max_rss_mib": 191.3,
+        "output_bytes": 10572998,
+        "output_sha256": "6e7c4f9cb484bb002d1d43b4773a8ca4c381be5d8a0c1e6dede24366c5489c7e",
+        "samples_ms": [
+          925.5,
+          360.0,
+          366.1,
+          365.1,
+          348.8
+        ]
+      },
+      "note": "",
+      "baseline": {
+        "timeout_s": 30.0,
+        "max_rss_mib": 2325.1
+      }
+    },
+    {
+      "case": "Stripe af5309c..30d3391",
+      "mode": "v2",
+      "binary": {
+        "exit": 0,
+        "median_ms": 1261.6,
+        "min_ms": 1169.9,
+        "max_ms": 1697.5,
+        "max_rss_mib": 539.0,
+        "output_bytes": 96530181,
+        "output_sha256": "99914db593214663498ced014db3a8ac27f0bc6d6d4c945c3f5cba591bdcff0e",
+        "samples_ms": [
+          1697.5,
+          1207.0,
+          1346.3,
+          1169.9,
+          1261.6
+        ]
+      },
+      "note": "",
+      "baseline": {
+        "timeout_s": 30.0,
+        "max_rss_mib": 3107.0
+      }
+    },
+    {
+      "case": "Stripe 30d3391..c8faccb",
+      "mode": "md",
+      "binary": {
+        "exit": 0,
+        "median_ms": 301.9,
+        "min_ms": 288.2,
+        "max_ms": 318.4,
+        "max_rss_mib": 182.3,
+        "output_bytes": 2048479,
+        "output_sha256": "c119ebd7f5541da99884eb743638a10ee31b205a1fad5e0cdf848b18c885248f",
+        "samples_ms": [
+          301.9,
+          288.2,
+          305.8,
+          318.4,
+          296.5
+        ]
+      },
+      "note": "",
+      "baseline": {
+        "timeout_s": 30.0,
+        "max_rss_mib": 2649.6
+      }
+    },
+    {
+      "case": "Stripe 30d3391..c8faccb",
+      "mode": "v1",
+      "binary": {
+        "exit": 0,
+        "median_ms": 807.7,
+        "min_ms": 786.0,
+        "max_ms": 986.3,
+        "max_rss_mib": 314.2,
+        "output_bytes": 49654068,
+        "output_sha256": "969eae15bf27de350557cd0296679da79cfc43f98fa8c52400f6c3e0418ffd46",
+        "samples_ms": [
+          986.3,
+          807.7,
+          786.0,
+          814.8,
+          786.9
+        ]
+      },
+      "note": "",
+      "baseline": {
+        "timeout_s": 30.0,
+        "max_rss_mib": 5505.6
+      }
+    },
+    {
+      "case": "Stripe 30d3391..c8faccb",
+      "mode": "v2",
+      "binary": {
+        "exit": 0,
+        "median_ms": 1286.9,
+        "min_ms": 1250.4,
+        "max_ms": 1403.7,
+        "max_rss_mib": 572.2,
+        "output_bytes": 103028353,
+        "output_sha256": "7a7b2d80d6afdceb6a05ba54fee91942fb77590fa0bbc32259d537cea640e825",
+        "samples_ms": [
+          1403.7,
+          1301.9,
+          1254.7,
+          1286.9,
+          1250.4
+        ]
+      },
+      "note": "",
+      "baseline": {
+        "timeout_s": 30.0,
+        "max_rss_mib": 6596.5
+      }
+    },
+    {
+      "case": "Stripe c8faccb..2bab976",
+      "mode": "md",
+      "binary": {
+        "exit": 0,
+        "median_ms": 205.1,
+        "min_ms": 200.5,
+        "max_ms": 300.2,
+        "max_rss_mib": 166.9,
+        "output_bytes": 56813,
+        "output_sha256": "bc9f4e424af848b563fc70a7b5ac36eb52830a184e099670aa22e821100249c9",
+        "samples_ms": [
+          300.2,
+          201.1,
+          207.3,
+          200.5,
+          205.1
+        ]
+      },
+      "note": "",
+      "baseline": {
+        "timeout_s": 30.0,
+        "max_rss_mib": 4977.2
+      }
+    },
+    {
+      "case": "Stripe c8faccb..2bab976",
+      "mode": "v1",
+      "binary": {
+        "exit": 0,
+        "median_ms": 213.9,
+        "min_ms": 201.5,
+        "max_ms": 307.8,
+        "max_rss_mib": 167.0,
+        "output_bytes": 786715,
+        "output_sha256": "e3b5458ba638475942bea096c80de8e062802b4e78a6d5910d3cefca96215c2a",
+        "samples_ms": [
+          307.8,
+          201.5,
+          212.3,
+          217.2,
+          213.9
+        ]
+      },
+      "note": "",
+      "baseline": {
+        "timeout_s": 30.0,
+        "max_rss_mib": 7054.3
+      }
+    },
+    {
+      "case": "Stripe c8faccb..2bab976",
+      "mode": "v2",
+      "binary": {
+        "exit": 0,
+        "median_ms": 1083.2,
+        "min_ms": 1066.6,
+        "max_ms": 1255.9,
+        "max_rss_mib": 553.8,
+        "output_bytes": 99285917,
+        "output_sha256": "be7ba955f03cd505a2b08e59c8cfba19fe17226154f987f3dc4e4cb936cadb01",
+        "samples_ms": [
+          1255.9,
+          1095.7,
+          1066.6,
+          1081.9,
+          1083.2
+        ]
+      },
+      "note": "",
+      "baseline": {
+        "timeout_s": 30.0,
+        "max_rss_mib": 6943.0
+      }
+    },
+    {
+      "case": "Stripe 2bab976..bcfd59f",
+      "mode": "md",
+      "binary": {
+        "exit": 0,
+        "median_ms": 211.8,
+        "min_ms": 207.1,
+        "max_ms": 238.3,
+        "max_rss_mib": 167.4,
+        "output_bytes": 57072,
+        "output_sha256": "cea124e4169e2b91c7de335d07056ca791827d8c191dc52d6d33196f218eccbf",
+        "samples_ms": [
+          238.3,
+          211.8,
+          207.1,
+          216.3,
+          210.8
+        ]
+      },
+      "note": "",
+      "baseline": {
+        "timeout_s": 30.0,
+        "max_rss_mib": 6923.3
+      }
+    },
+    {
+      "case": "Stripe 2bab976..bcfd59f",
+      "mode": "v1",
+      "binary": {
+        "exit": 0,
+        "median_ms": 227.9,
+        "min_ms": 215.9,
+        "max_ms": 492.1,
+        "max_rss_mib": 167.6,
+        "output_bytes": 1538120,
+        "output_sha256": "6b6f63291d395eaeccca775c7ebab70ca09bebae68d4d184029334dc6722e43d",
+        "samples_ms": [
+          492.1,
+          223.4,
+          234.7,
+          215.9,
+          227.9
+        ]
+      },
+      "note": "",
+      "baseline": {
+        "timeout_s": 30.0,
+        "max_rss_mib": 4241.8
+      }
+    },
+    {
+      "case": "Stripe 2bab976..bcfd59f",
+      "mode": "v2",
+      "binary": {
+        "exit": 0,
+        "median_ms": 1159.5,
+        "min_ms": 1137.6,
+        "max_ms": 1647.2,
+        "max_rss_mib": 553.9,
+        "output_bytes": 99374342,
+        "output_sha256": "6dd4e52d808983be34be59b5681099dac17230ef294e74645e2addbfec247b7e",
+        "samples_ms": [
+          1647.2,
+          1159.5,
+          1137.6,
+          1155.7,
+          1184.8
+        ]
+      },
+      "note": "",
+      "baseline": {
+        "timeout_s": 30.0,
+        "max_rss_mib": 7716.8
+      }
+    }
+  ]
+}

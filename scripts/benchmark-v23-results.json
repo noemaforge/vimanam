@@ -1,0 +1,2014 @@
+{
+  "environment": {
+    "platform": "macOS-26.7.3-arm64-arm-64bit-Mach-O",
+    "machine": "arm64",
+    "hyperfine": "hyperfine 2.0.0",
+    "protoc": "libprotoc 36.2",
+    "git": "git version 2.54.0 (Apple Git-157)",
+    "baseline_version": "vimanam 2.2.0",
+    "candidate_version": "vimanam 2.3.0",
+    "baseline_sha256": "ed253315ec06912e635f62bf538bcf83d1e507bc40f8307fd0bc5e7b94688a03",
+    "candidate_sha256": "f02778f4f097672dca3679f7faaa77703de2ad1c406a25d692df8d7c765815c3",
+    "baseline_binary_bytes": 9731360,
+    "candidate_binary_bytes": 10324976,
+    "openai_openapi_clone_head": "abe304d",
+    "stripe_openapi_clone_head": "a8f2a25",
+    "octokit_graphql_clone_head": "82ff2d4",
+    "otel_proto_clone_head": "3a6e438"
+  },
+  "openapi": [
+    {
+      "name": "Petstore OAS3 (JSON)",
+      "format": "JSON",
+      "size_bytes": 2708,
+      "rc_base": 0,
+      "rc_cand": 0,
+      "err_base": "",
+      "byte_identical": false,
+      "hyperfine": {
+        "baseline": {
+          "count": 10,
+          "median_ms": 6.87,
+          "q1_ms": 6.51,
+          "q3_ms": 7.21,
+          "min_ms": 6.43,
+          "max_ms": 9.23,
+          "mean_ms": 7.06,
+          "stddev_ms": 0.82,
+          "rss_mb": 4.0,
+          "instructions_m": 20.0,
+          "samples_ms": [
+            7.19,
+            6.43,
+            6.52,
+            7.28,
+            6.66,
+            7.03,
+            6.98,
+            6.47,
+            9.23,
+            6.77
+          ]
+        },
+        "candidate": {
+          "count": 10,
+          "median_ms": 8.65,
+          "q1_ms": 7.83,
+          "q3_ms": 9.84,
+          "min_ms": 7.46,
+          "max_ms": 11.3,
+          "mean_ms": 8.89,
+          "stddev_ms": 1.23,
+          "rss_mb": 4.3,
+          "instructions_m": 20.6,
+          "samples_ms": [
+            8.83,
+            7.46,
+            7.9,
+            11.3,
+            7.63,
+            9.75,
+            8.47,
+            8.11,
+            10.11,
+            9.34
+          ]
+        },
+        "median_speedup_a_over_b": 0.79,
+        "iqrs_disjoint": true,
+        "ranges_disjoint": false
+      }
+    },
+    {
+      "name": "Petstore OAS3 (YAML)",
+      "format": "YAML",
+      "size_bytes": 1968,
+      "rc_base": 0,
+      "rc_cand": 0,
+      "err_base": "",
+      "byte_identical": false,
+      "hyperfine": {
+        "baseline": {
+          "count": 10,
+          "median_ms": 8.39,
+          "q1_ms": 8.0,
+          "q3_ms": 8.59,
+          "min_ms": 7.22,
+          "max_ms": 9.04,
+          "mean_ms": 8.29,
+          "stddev_ms": 0.5,
+          "rss_mb": 5.1,
+          "instructions_m": 21.1,
+          "samples_ms": [
+            8.06,
+            8.57,
+            8.47,
+            8.3,
+            7.82,
+            7.22,
+            9.04,
+            8.65,
+            8.51,
+            8.31
+          ]
+        },
+        "candidate": {
+          "count": 10,
+          "median_ms": 8.83,
+          "q1_ms": 7.99,
+          "q3_ms": 9.36,
+          "min_ms": 7.78,
+          "max_ms": 9.89,
+          "mean_ms": 8.76,
+          "stddev_ms": 0.69,
+          "rss_mb": 5.3,
+          "instructions_m": 21.6,
+          "samples_ms": [
+            9.89,
+            8.0,
+            9.06,
+            8.79,
+            7.97,
+            8.52,
+            9.36,
+            9.36,
+            8.88,
+            7.78
+          ]
+        },
+        "median_speedup_a_over_b": 0.95,
+        "iqrs_disjoint": false,
+        "ranges_disjoint": false
+      }
+    },
+    {
+      "name": "OpenAI OpenAPI 3.0 (YAML)",
+      "format": "YAML",
+      "size_bytes": 1376003,
+      "rc_base": 0,
+      "rc_cand": 0,
+      "err_base": "",
+      "byte_identical": false,
+      "hyperfine": {
+        "baseline": {
+          "count": 10,
+          "median_ms": 50.77,
+          "q1_ms": 50.14,
+          "q3_ms": 51.77,
+          "min_ms": 48.26,
+          "max_ms": 52.39,
+          "mean_ms": 50.77,
+          "stddev_ms": 1.21,
+          "rss_mb": 23.5,
+          "instructions_m": 467.8,
+          "samples_ms": [
+            50.64,
+            50.19,
+            50.98,
+            52.39,
+            48.26,
+            52.36,
+            50.43,
+            50.9,
+            51.57,
+            49.98
+          ]
+        },
+        "candidate": {
+          "count": 10,
+          "median_ms": 52.69,
+          "q1_ms": 51.77,
+          "q3_ms": 53.43,
+          "min_ms": 49.85,
+          "max_ms": 54.92,
+          "mean_ms": 52.52,
+          "stddev_ms": 1.46,
+          "rss_mb": 24.0,
+          "instructions_m": 468.1,
+          "samples_ms": [
+            52.14,
+            53.86,
+            52.26,
+            49.85,
+            50.65,
+            52.56,
+            52.82,
+            54.92,
+            52.83,
+            53.29
+          ]
+        },
+        "median_speedup_a_over_b": 0.96,
+        "iqrs_disjoint": false,
+        "ranges_disjoint": false
+      }
+    },
+    {
+      "name": "Stripe OpenAPI 3.0 (JSON)",
+      "format": "JSON",
+      "size_bytes": 8317513,
+      "rc_base": 0,
+      "rc_cand": 0,
+      "err_base": "",
+      "byte_identical": false,
+      "hyperfine": {
+        "baseline": {
+          "count": 10,
+          "median_ms": 123.94,
+          "q1_ms": 121.95,
+          "q3_ms": 178.13,
+          "min_ms": 118.14,
+          "max_ms": 242.81,
+          "mean_ms": 146.24,
+          "stddev_ms": 41.66,
+          "rss_mb": 124.0,
+          "instructions_m": 1470.5,
+          "samples_ms": [
+            118.14,
+            242.81,
+            184.9,
+            175.88,
+            123.11,
+            121.78,
+            125.89,
+            124.61,
+            123.27,
+            122.01
+          ]
+        },
+        "candidate": {
+          "count": 10,
+          "median_ms": 127.21,
+          "q1_ms": 122.04,
+          "q3_ms": 145.76,
+          "min_ms": 112.2,
+          "max_ms": 185.14,
+          "mean_ms": 134.38,
+          "stddev_ms": 21.81,
+          "rss_mb": 124.3,
+          "instructions_m": 1455.8,
+          "samples_ms": [
+            185.14,
+            155.88,
+            142.39,
+            125.94,
+            124.37,
+            126.51,
+            127.9,
+            128.43,
+            115.04,
+            112.2
+          ]
+        },
+        "median_speedup_a_over_b": 0.97,
+        "iqrs_disjoint": false,
+        "ranges_disjoint": false
+      }
+    },
+    {
+      "name": "Stripe OpenAPI 3.0 (YAML)",
+      "format": "YAML",
+      "size_bytes": 6630124,
+      "rc_base": 0,
+      "rc_cand": 0,
+      "err_base": "",
+      "byte_identical": false,
+      "hyperfine": {
+        "baseline": {
+          "count": 10,
+          "median_ms": 218.95,
+          "q1_ms": 215.93,
+          "q3_ms": 223.22,
+          "min_ms": 213.88,
+          "max_ms": 330.09,
+          "mean_ms": 229.78,
+          "stddev_ms": 35.39,
+          "rss_mb": 122.0,
+          "instructions_m": 2841.8,
+          "samples_ms": [
+            330.09,
+            224.52,
+            215.43,
+            219.15,
+            218.76,
+            216.1,
+            219.41,
+            222.79,
+            213.88,
+            217.72
+          ]
+        },
+        "candidate": {
+          "count": 10,
+          "median_ms": 220.5,
+          "q1_ms": 219.09,
+          "q3_ms": 225.88,
+          "min_ms": 217.15,
+          "max_ms": 238.52,
+          "mean_ms": 223.15,
+          "stddev_ms": 6.45,
+          "rss_mb": 122.5,
+          "instructions_m": 2833.4,
+          "samples_ms": [
+            219.25,
+            224.76,
+            220.69,
+            218.61,
+            220.31,
+            223.42,
+            229.24,
+            238.52,
+            217.15,
+            219.57
+          ]
+        },
+        "median_speedup_a_over_b": 0.99,
+        "iqrs_disjoint": false,
+        "ranges_disjoint": false
+      }
+    }
+  ],
+  "graphql": [
+    {
+      "name": "SpaceX Land (SDL)",
+      "kind": "SDL",
+      "size_bytes": 12439,
+      "byte_identical": false,
+      "hyperfine": {
+        "baseline": {
+          "count": 10,
+          "median_ms": 11.66,
+          "q1_ms": 10.1,
+          "q3_ms": 12.86,
+          "min_ms": 9.68,
+          "max_ms": 13.51,
+          "mean_ms": 11.61,
+          "stddev_ms": 1.43,
+          "rss_mb": 5.2,
+          "instructions_m": 51.3,
+          "samples_ms": [
+            12.69,
+            10.91,
+            11.52,
+            9.68,
+            13.36,
+            10.2,
+            13.51,
+            12.65,
+            11.81,
+            9.8
+          ]
+        },
+        "candidate": {
+          "count": 10,
+          "median_ms": 12.1,
+          "q1_ms": 11.35,
+          "q3_ms": 14.32,
+          "min_ms": 10.5,
+          "max_ms": 22.51,
+          "mean_ms": 13.41,
+          "stddev_ms": 3.48,
+          "rss_mb": 5.4,
+          "instructions_m": 55.1,
+          "samples_ms": [
+            12.08,
+            11.45,
+            10.5,
+            13.67,
+            14.2,
+            14.67,
+            11.89,
+            11.04,
+            12.13,
+            22.51
+          ]
+        },
+        "median_speedup_a_over_b": 0.96,
+        "iqrs_disjoint": false,
+        "ranges_disjoint": false
+      }
+    },
+    {
+      "name": "SpaceX Land (Introspection JSON)",
+      "kind": "Introspection",
+      "size_bytes": 120382,
+      "byte_identical": false,
+      "hyperfine": {
+        "baseline": {
+          "count": 10,
+          "median_ms": 16.33,
+          "q1_ms": 14.44,
+          "q3_ms": 22.26,
+          "min_ms": 11.63,
+          "max_ms": 22.86,
+          "mean_ms": 17.58,
+          "stddev_ms": 4.32,
+          "rss_mb": 6.1,
+          "instructions_m": 79.3,
+          "samples_ms": [
+            11.84,
+            11.63,
+            15.3,
+            16.72,
+            15.94,
+            15.61,
+            21.03,
+            22.86,
+            22.8,
+            22.08
+          ]
+        },
+        "candidate": {
+          "count": 10,
+          "median_ms": 14.72,
+          "q1_ms": 13.38,
+          "q3_ms": 15.62,
+          "min_ms": 11.77,
+          "max_ms": 16.56,
+          "mean_ms": 14.42,
+          "stddev_ms": 1.6,
+          "rss_mb": 6.3,
+          "instructions_m": 82.4,
+          "samples_ms": [
+            16.56,
+            15.62,
+            14.19,
+            13.89,
+            15.2,
+            15.62,
+            15.3,
+            14.23,
+            11.77,
+            11.84
+          ]
+        },
+        "median_speedup_a_over_b": 1.11,
+        "iqrs_disjoint": false,
+        "ranges_disjoint": false
+      }
+    },
+    {
+      "name": "GitHub GraphQL API (SDL)",
+      "kind": "SDL",
+      "size_bytes": 1223842,
+      "byte_identical": false,
+      "hyperfine": {
+        "baseline": {
+          "count": 10,
+          "median_ms": 70.18,
+          "q1_ms": 68.94,
+          "q3_ms": 72.36,
+          "min_ms": 62.94,
+          "max_ms": 72.92,
+          "mean_ms": 69.91,
+          "stddev_ms": 2.85,
+          "rss_mb": 24.8,
+          "instructions_m": 828.5,
+          "samples_ms": [
+            68.55,
+            69.07,
+            62.94,
+            72.92,
+            70.07,
+            70.29,
+            72.4,
+            70.54,
+            72.35,
+            69.97
+          ]
+        },
+        "candidate": {
+          "count": 10,
+          "median_ms": 77.58,
+          "q1_ms": 75.07,
+          "q3_ms": 78.41,
+          "min_ms": 70.9,
+          "max_ms": 79.48,
+          "mean_ms": 76.8,
+          "stddev_ms": 2.55,
+          "rss_mb": 25.0,
+          "instructions_m": 881.7,
+          "samples_ms": [
+            74.82,
+            70.9,
+            75.15,
+            77.15,
+            78.78,
+            78.25,
+            78.0,
+            77.16,
+            79.48,
+            78.29
+          ]
+        },
+        "median_speedup_a_over_b": 0.9,
+        "iqrs_disjoint": true,
+        "ranges_disjoint": false
+      }
+    },
+    {
+      "name": "GitHub GraphQL API (Introspection JSON)",
+      "kind": "Introspection",
+      "size_bytes": 4970156,
+      "byte_identical": false,
+      "hyperfine": {
+        "baseline": {
+          "count": 10,
+          "median_ms": 102.99,
+          "q1_ms": 100.74,
+          "q3_ms": 105.99,
+          "min_ms": 96.63,
+          "max_ms": 109.66,
+          "mean_ms": 103.31,
+          "stddev_ms": 3.69,
+          "rss_mb": 44.3,
+          "instructions_m": 1259.5,
+          "samples_ms": [
+            105.72,
+            96.63,
+            103.26,
+            100.83,
+            101.92,
+            100.46,
+            105.1,
+            109.66,
+            106.82,
+            102.73
+          ]
+        },
+        "candidate": {
+          "count": 10,
+          "median_ms": 114.9,
+          "q1_ms": 108.93,
+          "q3_ms": 128.24,
+          "min_ms": 107.13,
+          "max_ms": 185.51,
+          "mean_ms": 122.77,
+          "stddev_ms": 23.43,
+          "rss_mb": 44.5,
+          "instructions_m": 1312.4,
+          "samples_ms": [
+            128.53,
+            185.51,
+            110.44,
+            108.05,
+            109.22,
+            120.86,
+            117.88,
+            111.92,
+            128.14,
+            107.13
+          ]
+        },
+        "median_speedup_a_over_b": 0.9,
+        "iqrs_disjoint": true,
+        "ranges_disjoint": false
+      }
+    }
+  ],
+  "graphql_diffs": [
+    {
+      "name": "SpaceX Land SDL diff (0a482d1 -> 64a7fa9)",
+      "changes_exact_match": true,
+      "summary_candidate": {
+        "operations_added": 0,
+        "operations_removed": 4,
+        "operations_changed": 0,
+        "breaking": 8,
+        "non_breaking": 1,
+        "review": 0
+      },
+      "hyperfine": {
+        "baseline": {
+          "count": 10,
+          "median_ms": 36.55,
+          "q1_ms": 35.58,
+          "q3_ms": 39.2,
+          "min_ms": 31.57,
+          "max_ms": 71.97,
+          "mean_ms": 40.22,
+          "stddev_ms": 11.61,
+          "rss_mb": 6.8,
+          "instructions_m": 355.3,
+          "samples_ms": [
+            34.37,
+            36.31,
+            31.57,
+            35.98,
+            36.78,
+            36.3,
+            37.44,
+            37.03,
+            71.97,
+            44.48
+          ]
+        },
+        "candidate": {
+          "count": 10,
+          "median_ms": 36.17,
+          "q1_ms": 27.52,
+          "q3_ms": 54.26,
+          "min_ms": 18.66,
+          "max_ms": 103.04,
+          "mean_ms": 43.68,
+          "stddev_ms": 24.84,
+          "rss_mb": 7.0,
+          "instructions_m": 103.5,
+          "samples_ms": [
+            34.95,
+            61.85,
+            37.39,
+            51.73,
+            103.04,
+            31.28,
+            47.52,
+            29.84,
+            20.55,
+            18.66
+          ]
+        },
+        "median_speedup_a_over_b": 1.01,
+        "iqrs_disjoint": false,
+        "ranges_disjoint": false
+      }
+    },
+    {
+      "name": "GitHub GraphQL SDL Git-ref diff (a6de3c1 -> 597478f)",
+      "changes_exact_match": true,
+      "summary_candidate": {
+        "operations_added": 8,
+        "operations_removed": 2,
+        "operations_changed": 17,
+        "breaking": 11,
+        "non_breaking": 204,
+        "review": 17
+      },
+      "hyperfine": {
+        "baseline": {
+          "count": 5,
+          "median_ms": 863.87,
+          "q1_ms": 829.91,
+          "q3_ms": 873.42,
+          "min_ms": 823.96,
+          "max_ms": 882.21,
+          "mean_ms": 854.11,
+          "stddev_ms": 23.65,
+          "rss_mb": 54.2,
+          "instructions_m": 7510.1,
+          "samples_ms": [
+            823.96,
+            863.87,
+            835.87,
+            864.64,
+            882.21
+          ]
+        },
+        "candidate": {
+          "count": 5,
+          "median_ms": 431.68,
+          "q1_ms": 424.87,
+          "q3_ms": 438.26,
+          "min_ms": 419.28,
+          "max_ms": 442.87,
+          "mean_ms": 431.59,
+          "stddev_ms": 8.43,
+          "rss_mb": 54.7,
+          "instructions_m": 2241.2,
+          "samples_ms": [
+            419.28,
+            433.66,
+            430.45,
+            442.87,
+            431.68
+          ]
+        },
+        "median_speedup_a_over_b": 2.0,
+        "iqrs_disjoint": true,
+        "ranges_disjoint": true
+      }
+    },
+    {
+      "name": "GitHub GraphQL Introspection Git-ref diff (a6de3c1 -> 597478f)",
+      "changes_exact_match": true,
+      "summary_candidate": {
+        "operations_added": 0,
+        "operations_removed": 0,
+        "operations_changed": 0,
+        "breaking": 0,
+        "non_breaking": 1,
+        "review": 0
+      },
+      "hyperfine": {
+        "baseline": {
+          "count": 5,
+          "median_ms": 946.79,
+          "q1_ms": 933.72,
+          "q3_ms": 951.26,
+          "min_ms": 929.8,
+          "max_ms": 952.68,
+          "mean_ms": 943.35,
+          "stddev_ms": 9.45,
+          "rss_mb": 71.1,
+          "instructions_m": 8520.5,
+          "samples_ms": [
+            949.85,
+            937.65,
+            929.8,
+            952.68,
+            946.79
+          ]
+        },
+        "candidate": {
+          "count": 5,
+          "median_ms": 514.7,
+          "q1_ms": 507.27,
+          "q3_ms": 525.23,
+          "min_ms": 505.79,
+          "max_ms": 527.58,
+          "mean_ms": 515.94,
+          "stddev_ms": 9.22,
+          "rss_mb": 62.9,
+          "instructions_m": 3339.0,
+          "samples_ms": [
+            527.58,
+            514.7,
+            505.79,
+            522.88,
+            508.76
+          ]
+        },
+        "median_speedup_a_over_b": 1.84,
+        "iqrs_disjoint": true,
+        "ranges_disjoint": true
+      }
+    }
+  ],
+  "protobuf_targets": [
+    {
+      "name": "gRPC Health v1.20.0 (.proto)",
+      "baseline_bytes": 4717,
+      "candidate_bytes": 4745,
+      "field_notes_baseline": 2,
+      "field_notes_candidate": 2,
+      "hyperfine": {
+        "baseline": {
+          "count": 10,
+          "median_ms": 7.32,
+          "q1_ms": 7.0,
+          "q3_ms": 8.47,
+          "min_ms": 6.84,
+          "max_ms": 10.81,
+          "mean_ms": 7.92,
+          "stddev_ms": 1.5,
+          "rss_mb": 5.9,
+          "instructions_m": 25.7,
+          "samples_ms": [
+            7.28,
+            7.08,
+            7.37,
+            7.51,
+            10.81,
+            6.95,
+            7.02,
+            10.62,
+            6.84,
+            7.75
+          ]
+        },
+        "candidate": {
+          "count": 10,
+          "median_ms": 11.03,
+          "q1_ms": 9.32,
+          "q3_ms": 12.86,
+          "min_ms": 7.61,
+          "max_ms": 13.22,
+          "mean_ms": 10.83,
+          "stddev_ms": 1.88,
+          "rss_mb": 6.2,
+          "instructions_m": 26.3,
+          "samples_ms": [
+            7.61,
+            12.87,
+            9.39,
+            12.86,
+            9.57,
+            13.22,
+            10.82,
+            11.24,
+            11.59,
+            9.09
+          ]
+        },
+        "median_speedup_a_over_b": 0.66,
+        "iqrs_disjoint": true,
+        "ranges_disjoint": false
+      }
+    },
+    {
+      "name": "gRPC Health v1.20.0 (.pb descriptor)",
+      "baseline_bytes": 3768,
+      "candidate_bytes": 3796,
+      "field_notes_baseline": 2,
+      "field_notes_candidate": 2,
+      "hyperfine": {
+        "baseline": {
+          "count": 10,
+          "median_ms": 10.09,
+          "q1_ms": 9.8,
+          "q3_ms": 10.43,
+          "min_ms": 9.6,
+          "max_ms": 10.69,
+          "mean_ms": 10.11,
+          "stddev_ms": 0.36,
+          "rss_mb": 5.4,
+          "instructions_m": 24.0,
+          "samples_ms": [
+            10.69,
+            10.07,
+            10.32,
+            10.11,
+            9.83,
+            9.6,
+            9.72,
+            9.89,
+            10.47,
+            10.41
+          ]
+        },
+        "candidate": {
+          "count": 10,
+          "median_ms": 10.86,
+          "q1_ms": 10.4,
+          "q3_ms": 11.24,
+          "min_ms": 9.78,
+          "max_ms": 11.58,
+          "mean_ms": 10.81,
+          "stddev_ms": 0.56,
+          "rss_mb": 5.6,
+          "instructions_m": 24.5,
+          "samples_ms": [
+            11.58,
+            11.18,
+            11.43,
+            11.18,
+            10.38,
+            10.41,
+            10.41,
+            10.72,
+            9.78,
+            11.0
+          ]
+        },
+        "median_speedup_a_over_b": 0.93,
+        "iqrs_disjoint": false,
+        "ranges_disjoint": false
+      }
+    },
+    {
+      "name": "OTel Collector TraceService (.proto)",
+      "baseline_bytes": 37438,
+      "candidate_bytes": 37452,
+      "field_notes_baseline": 63,
+      "field_notes_candidate": 63,
+      "hyperfine": {
+        "baseline": {
+          "count": 10,
+          "median_ms": 10.11,
+          "q1_ms": 9.57,
+          "q3_ms": 11.05,
+          "min_ms": 9.4,
+          "max_ms": 11.23,
+          "mean_ms": 10.29,
+          "stddev_ms": 0.7,
+          "rss_mb": 7.4,
+          "instructions_m": 40.5,
+          "samples_ms": [
+            11.12,
+            10.82,
+            10.12,
+            10.1,
+            11.23,
+            9.57,
+            11.03,
+            9.94,
+            9.57,
+            9.4
+          ]
+        },
+        "candidate": {
+          "count": 10,
+          "median_ms": 11.72,
+          "q1_ms": 11.26,
+          "q3_ms": 12.29,
+          "min_ms": 10.65,
+          "max_ms": 12.58,
+          "mean_ms": 11.7,
+          "stddev_ms": 0.62,
+          "rss_mb": 7.7,
+          "instructions_m": 41.0,
+          "samples_ms": [
+            11.37,
+            12.58,
+            11.71,
+            10.65,
+            11.93,
+            11.46,
+            12.26,
+            11.73,
+            12.37,
+            10.92
+          ]
+        },
+        "median_speedup_a_over_b": 0.86,
+        "iqrs_disjoint": true,
+        "ranges_disjoint": false
+      }
+    },
+    {
+      "name": "OTel Collector MetricsService (.proto)",
+      "baseline_bytes": 68417,
+      "candidate_bytes": 68431,
+      "field_notes_baseline": 101,
+      "field_notes_candidate": 101,
+      "hyperfine": {
+        "baseline": {
+          "count": 10,
+          "median_ms": 11.29,
+          "q1_ms": 11.04,
+          "q3_ms": 11.64,
+          "min_ms": 10.58,
+          "max_ms": 12.02,
+          "mean_ms": 11.33,
+          "stddev_ms": 0.44,
+          "rss_mb": 8.0,
+          "instructions_m": 47.8,
+          "samples_ms": [
+            12.02,
+            10.58,
+            11.26,
+            11.08,
+            11.33,
+            11.08,
+            11.53,
+            10.94,
+            11.87,
+            11.57
+          ]
+        },
+        "candidate": {
+          "count": 10,
+          "median_ms": 12.29,
+          "q1_ms": 11.85,
+          "q3_ms": 12.76,
+          "min_ms": 11.53,
+          "max_ms": 13.09,
+          "mean_ms": 12.3,
+          "stddev_ms": 0.53,
+          "rss_mb": 8.4,
+          "instructions_m": 48.2,
+          "samples_ms": [
+            13.09,
+            12.6,
+            12.72,
+            12.06,
+            12.89,
+            11.92,
+            11.53,
+            11.74,
+            12.53,
+            11.88
+          ]
+        },
+        "median_speedup_a_over_b": 0.92,
+        "iqrs_disjoint": true,
+        "ranges_disjoint": false
+      }
+    },
+    {
+      "name": "OTel Collector LogsService (.proto)",
+      "baseline_bytes": 28056,
+      "candidate_bytes": 28070,
+      "field_notes_baseline": 45,
+      "field_notes_candidate": 45,
+      "hyperfine": {
+        "baseline": {
+          "count": 10,
+          "median_ms": 10.12,
+          "q1_ms": 9.85,
+          "q3_ms": 10.54,
+          "min_ms": 9.36,
+          "max_ms": 10.9,
+          "mean_ms": 10.14,
+          "stddev_ms": 0.46,
+          "rss_mb": 7.3,
+          "instructions_m": 37.8,
+          "samples_ms": [
+            9.93,
+            10.2,
+            10.24,
+            9.7,
+            10.5,
+            10.9,
+            10.66,
+            9.36,
+            9.9,
+            10.04
+          ]
+        },
+        "candidate": {
+          "count": 10,
+          "median_ms": 10.34,
+          "q1_ms": 10.25,
+          "q3_ms": 11.02,
+          "min_ms": 9.95,
+          "max_ms": 11.17,
+          "mean_ms": 10.5,
+          "stddev_ms": 0.43,
+          "rss_mb": 7.5,
+          "instructions_m": 38.3,
+          "samples_ms": [
+            10.31,
+            10.33,
+            11.17,
+            9.95,
+            11.0,
+            10.4,
+            10.33,
+            10.08,
+            10.36,
+            11.07
+          ]
+        },
+        "median_speedup_a_over_b": 0.98,
+        "iqrs_disjoint": false,
+        "ranges_disjoint": false
+      }
+    }
+  ],
+  "protobuf_git_diff_otel": {
+    "repo": "open-telemetry/opentelemetry-proto",
+    "commit": "d31f7ac",
+    "spec": "opentelemetry/proto/trace/v1/trace.proto",
+    "changes_exact_match": true,
+    "changes_count": 1,
+    "hyperfine": {
+      "baseline": {
+        "count": 6,
+        "median_ms": 853.99,
+        "q1_ms": 842.84,
+        "q3_ms": 878.11,
+        "min_ms": 833.43,
+        "max_ms": 887.52,
+        "mean_ms": 858.31,
+        "stddev_ms": 19.94,
+        "rss_mb": 8.2,
+        "instructions_m": 339.3,
+        "samples_ms": [
+          833.43,
+          845.98,
+          858.97,
+          887.52,
+          874.97,
+          849.01
+        ]
+      },
+      "candidate": {
+        "count": 6,
+        "median_ms": 284.28,
+        "q1_ms": 281.1,
+        "q3_ms": 292.05,
+        "min_ms": 278.02,
+        "max_ms": 302.31,
+        "mean_ms": 286.61,
+        "stddev_ms": 8.52,
+        "rss_mb": 8.8,
+        "instructions_m": 141.4,
+        "samples_ms": [
+          282.35,
+          278.02,
+          286.21,
+          282.13,
+          288.63,
+          302.31
+        ]
+      },
+      "median_speedup_a_over_b": 3.0,
+      "iqrs_disjoint": true,
+      "ranges_disjoint": true
+    },
+    "note": "Re-measured at the pinned revision on 2026-11-27 after the first run used the clone's HEAD (3a6e438, no changes)."
+  },
+  "protobuf_git_diff_200_synthetic": {
+    "total_committed_protos": 200,
+    "imported_protos_used": 4,
+    "changes_count": 1,
+    "changes_exact_match": true,
+    "hyperfine": {
+      "baseline": {
+        "count": 3,
+        "median_ms": 1252.58,
+        "q1_ms": 1083.06,
+        "q3_ms": 1729.96,
+        "min_ms": 1083.06,
+        "max_ms": 1729.96,
+        "mean_ms": 1355.2,
+        "stddev_ms": 335.44,
+        "rss_mb": 6.7,
+        "instructions_m": 294.3,
+        "samples_ms": [
+          1252.58,
+          1729.96,
+          1083.06
+        ]
+      },
+      "candidate": {
+        "count": 3,
+        "median_ms": 289.21,
+        "q1_ms": 285.7,
+        "q3_ms": 483.33,
+        "min_ms": 285.7,
+        "max_ms": 483.33,
+        "mean_ms": 352.75,
+        "stddev_ms": 113.1,
+        "rss_mb": 7.3,
+        "instructions_m": 108.5,
+        "samples_ms": [
+          289.21,
+          285.7,
+          483.33
+        ]
+      },
+      "median_speedup_a_over_b": 4.33,
+      "iqrs_disjoint": true,
+      "ranges_disjoint": true
+    }
+  },
+  "token_calibration": [
+    {
+      "name": "OpenAI OpenAPI 3.0 (1.3 MB YAML)",
+      "format": "YAML",
+      "raw_chars": 1375985,
+      "raw_bpe_o200k": 281146,
+      "raw_chars_div_4": 343997,
+      "raw_chars_per_o200k": 4.89,
+      "full_md_bpe_o200k": 152167,
+      "full_md_chars_div_4": 154574,
+      "full_md_chars_per_o200k": 4.06,
+      "summary_bpe_o200k": 1041,
+      "focused_bpe_o200k": 1503,
+      "focused_vs_raw_o200k_reduction_pct": 99.5
+    },
+    {
+      "name": "Stripe OpenAPI 3.0 (7.9 MB JSON)",
+      "format": "JSON",
+      "raw_chars": 8316842,
+      "raw_bpe_o200k": 1418244,
+      "raw_chars_div_4": 2079211,
+      "raw_chars_per_o200k": 5.86,
+      "full_md_bpe_o200k": 1081302,
+      "full_md_chars_div_4": 1119870,
+      "full_md_chars_per_o200k": 4.14,
+      "summary_bpe_o200k": 4991,
+      "focused_bpe_o200k": 4726,
+      "focused_vs_raw_o200k_reduction_pct": 99.7
+    },
+    {
+      "name": "GitHub GraphQL API (1.2 MB SDL)",
+      "format": "GraphQL SDL",
+      "raw_chars": 1223834,
+      "raw_bpe_o200k": 286673,
+      "raw_chars_div_4": 305959,
+      "raw_chars_per_o200k": 4.27,
+      "full_md_bpe_o200k": 496216,
+      "full_md_chars_div_4": 513030,
+      "full_md_chars_per_o200k": 4.14,
+      "summary_bpe_o200k": 2236,
+      "focused_bpe_o200k": 13730,
+      "focused_vs_raw_o200k_reduction_pct": 95.2
+    },
+    {
+      "name": "SpaceX Land GraphQL (12 KB SDL)",
+      "format": "GraphQL SDL",
+      "raw_chars": 12439,
+      "raw_bpe_o200k": 3672,
+      "raw_chars_div_4": 3110,
+      "raw_chars_per_o200k": 3.39,
+      "full_md_bpe_o200k": 18215,
+      "full_md_chars_div_4": 16036,
+      "full_md_chars_per_o200k": 3.52,
+      "summary_bpe_o200k": 251,
+      "focused_bpe_o200k": 2000,
+      "focused_vs_raw_o200k_reduction_pct": 45.5
+    },
+    {
+      "name": "OTel TraceService (.proto + 3 transitive)",
+      "format": "Protobuf",
+      "raw_chars": 28142,
+      "raw_bpe_o200k": 6696,
+      "raw_chars_div_4": 7036,
+      "raw_chars_per_o200k": 4.2,
+      "full_md_bpe_o200k": 9371,
+      "full_md_chars_div_4": 9363,
+      "full_md_chars_per_o200k": 4.0,
+      "summary_bpe_o200k": 66,
+      "focused_bpe_o200k": 1557,
+      "focused_vs_raw_o200k_reduction_pct": 76.7
+    }
+  ],
+  "external_baselines": {
+    "oasdiff": {
+      "oasdiff_version": "oasdiff version 1.40.0",
+      "openai_4_9mb_diff": {
+        "old_commit": "a01e367",
+        "new_commit": "373f26a",
+        "old_bytes": 5138860,
+        "new_bytes": 5138366,
+        "vimanam_md_bytes": 17531,
+        "vimanam_v1_json_bytes": 103583,
+        "vimanam_v2_json_bytes": 37137633,
+        "vimanam_v1_summary": {
+          "endpoints_added": 0,
+          "endpoints_removed": 0,
+          "endpoints_changed": 37,
+          "breaking": 4,
+          "non_breaking": 21,
+          "review": 113
+        },
+        "vimanam_v2_summary": {
+          "operations_added": 0,
+          "operations_removed": 0,
+          "operations_changed": 37,
+          "breaking": 4,
+          "non_breaking": 17,
+          "review": 133
+        },
+        "oasdiff_breaking_count": 20,
+        "oasdiff_changelog_count": 128,
+        "breaking_reconciliation": {
+          "vimanam_breaking_by_category": {
+            "type:field_required_changed": 2,
+            "type:field_type_changed": 2
+          },
+          "oasdiff_breaking_by_id": {
+            "request-property-const-added": 9,
+            "request-property-enum-value-removed": 9,
+            "request-property-any-of-removed": 2
+          },
+          "oasdiff_changelog_by_level_and_id": {
+            "level_1:response-property-const-added": 50,
+            "level_1:response-property-enum-value-removed": 50,
+            "level_3:request-property-const-added": 9,
+            "level_3:request-property-enum-value-removed": 9,
+            "level_1:response-optional-property-added": 4,
+            "level_3:request-property-any-of-removed": 2,
+            "level_1:request-property-any-of-added": 2,
+            "level_1:new-optional-request-property": 2
+          }
+        },
+        "hyperfine": {
+          "oasdiff_breaking": {
+            "count": 5,
+            "median_ms": 1056.76,
+            "q1_ms": 1050.42,
+            "q3_ms": 1064.66,
+            "min_ms": 1049.53,
+            "max_ms": 1069.76,
+            "mean_ms": 1057.39,
+            "stddev_ms": 8.01,
+            "rss_mb": 482.4,
+            "instructions_m": 19262.8,
+            "samples_ms": [
+              1059.57,
+              1069.76,
+              1051.32,
+              1049.53,
+              1056.76
+            ]
+          },
+          "oasdiff_changelog": {
+            "count": 5,
+            "median_ms": 1257.56,
+            "q1_ms": 1141.64,
+            "q3_ms": 1658.53,
+            "min_ms": 1065.25,
+            "max_ms": 1836.53,
+            "mean_ms": 1371.58,
+            "stddev_ms": 299.36,
+            "rss_mb": 470.6,
+            "instructions_m": 19384.3,
+            "samples_ms": [
+              1065.25,
+              1218.04,
+              1836.53,
+              1480.52,
+              1257.56
+            ]
+          },
+          "vimanam_diff_md": {
+            "count": 5,
+            "median_ms": 127.58,
+            "q1_ms": 123.46,
+            "q3_ms": 376.31,
+            "min_ms": 121.48,
+            "max_ms": 416.97,
+            "mean_ms": 225.42,
+            "stddev_ms": 140.72,
+            "rss_mb": 110.2,
+            "instructions_m": 1292.6,
+            "samples_ms": [
+              416.97,
+              335.64,
+              127.58,
+              125.44,
+              121.48
+            ]
+          },
+          "vimanam_diff_v1_json": {
+            "count": 5,
+            "median_ms": 125.24,
+            "q1_ms": 123.03,
+            "q3_ms": 127.88,
+            "min_ms": 121.42,
+            "max_ms": 129.17,
+            "mean_ms": 125.41,
+            "stddev_ms": 2.83,
+            "rss_mb": 110.1,
+            "instructions_m": 1300.7,
+            "samples_ms": [
+              125.24,
+              121.42,
+              124.63,
+              126.6,
+              129.17
+            ]
+          },
+          "vimanam_diff_v2_json": {
+            "count": 5,
+            "median_ms": 506.54,
+            "q1_ms": 462.37,
+            "q3_ms": 887.45,
+            "min_ms": 441.06,
+            "max_ms": 1073.22,
+            "mean_ms": 641.23,
+            "stddev_ms": 261.39,
+            "rss_mb": 240.6,
+            "instructions_m": 5813.8,
+            "samples_ms": [
+              1073.22,
+              701.68,
+              506.54,
+              483.68,
+              441.06
+            ]
+          }
+        }
+      },
+      "stripe_7_9mb_probe": {
+        "old_commit": "2f8d147",
+        "new_commit": "5237fa0",
+        "old_bytes": 8317513,
+        "new_bytes": 8317513,
+        "timeout_s": 15,
+        "oasdiff_breaking": {
+          "status": "ok",
+          "wall_ms": 1460.9,
+          "stdout_bytes": 3
+        },
+        "vimanam_diff_md": {
+          "status": "ok",
+          "wall_ms": 201.4,
+          "stdout_bytes": 89
+        },
+        "vimanam_diff_v2_json": {
+          "status": "ok",
+          "wall_ms": 1325.8,
+          "stdout_bytes": 99218164
+        }
+      },
+      "smoke_matrix": [
+        {
+          "case": "Endpoint removed (POST /v1/items)",
+          "vimanam_breaking": true,
+          "vimanam_kinds": [
+            "operation_removed"
+          ],
+          "oasdiff_breaking": true,
+          "oasdiff_ids": [
+            "api-removed-without-deprecation"
+          ],
+          "verdict_match": true
+        },
+        {
+          "case": "Required query parameter added",
+          "vimanam_breaking": true,
+          "vimanam_kinds": [
+            "argument_added"
+          ],
+          "oasdiff_breaking": true,
+          "oasdiff_ids": [
+            "new-required-request-parameter"
+          ],
+          "verdict_match": true
+        },
+        {
+          "case": "Request body property made required",
+          "vimanam_breaking": true,
+          "vimanam_kinds": [
+            "field_required_changed"
+          ],
+          "oasdiff_breaking": true,
+          "oasdiff_ids": [
+            "request-property-became-required"
+          ],
+          "verdict_match": true
+        },
+        {
+          "case": "Response property removed (optional)",
+          "vimanam_breaking": true,
+          "vimanam_kinds": [
+            "field_removed"
+          ],
+          "oasdiff_breaking": false,
+          "oasdiff_ids": [],
+          "verdict_match": false
+        },
+        {
+          "case": "Optional response property added",
+          "vimanam_breaking": false,
+          "vimanam_kinds": [
+            "field_added"
+          ],
+          "oasdiff_breaking": false,
+          "oasdiff_ids": [],
+          "verdict_match": true
+        },
+        {
+          "case": "Versioned path moved (/v1/items -> /v2/items)",
+          "vimanam_breaking": true,
+          "vimanam_kinds": [
+            "operation_moved"
+          ],
+          "oasdiff_breaking": true,
+          "oasdiff_ids": [
+            "api-path-removed-without-deprecation"
+          ],
+          "verdict_match": true
+        }
+      ]
+    },
+    "buf": {
+      "buf_version": "1.75.0",
+      "otel_git_ref_comparison": {
+        "old_commit": "40cb2e5",
+        "new_commit": "d31f7ac",
+        "scope_note": "buf breaking checks all 11 .proto files in the OTel module using go-git in-process; vimanam diff checks trace_service.proto plus its 3 transitive imports (4 files) via git subprocess blob resolution.",
+        "hyperfine": {
+          "buf_breaking_git": {
+            "count": 6,
+            "median_ms": 216.93,
+            "q1_ms": 202.17,
+            "q3_ms": 675.79,
+            "min_ms": 189.78,
+            "max_ms": 1035.84,
+            "mean_ms": 403.59,
+            "stddev_ms": 339.81,
+            "rss_mb": 36.4,
+            "instructions_m": 199.1,
+            "samples_ms": [
+              209.05,
+              189.78,
+              1035.84,
+              555.78,
+              206.3,
+              224.81
+            ]
+          },
+          "vimanam_git_diff_trace": {
+            "count": 6,
+            "median_ms": 279.2,
+            "q1_ms": 269.78,
+            "q3_ms": 335.19,
+            "min_ms": 257.29,
+            "max_ms": 479.65,
+            "mean_ms": 309.39,
+            "stddev_ms": 84.0,
+            "rss_mb": 9.0,
+            "instructions_m": 143.7,
+            "samples_ms": [
+              479.65,
+              257.29,
+              278.43,
+              287.04,
+              279.97,
+              273.95
+            ]
+          },
+          "median_speedup_a_over_b": 0.78,
+          "iqrs_disjoint": false,
+          "ranges_disjoint": false
+        }
+      },
+      "smoke_matrix": [
+        {
+          "case": "Field type changed (int32 -> string)",
+          "vimanam_wire_breaking": true,
+          "buf_wire_breaking": true,
+          "vimanam_source_breaking": true,
+          "buf_wire_json_breaking": true,
+          "buf_file_breaking": true,
+          "vimanam_native_kinds": [
+            "FIELD_SAME_TYPE",
+            "PROTOBUF_SURFACE_CHANGED"
+          ],
+          "buf_file_rules": [
+            "FIELD_SAME_TYPE"
+          ]
+        },
+        {
+          "case": "Field removed without reserving number",
+          "vimanam_wire_breaking": true,
+          "buf_wire_breaking": true,
+          "vimanam_source_breaking": true,
+          "buf_wire_json_breaking": true,
+          "buf_file_breaking": true,
+          "vimanam_native_kinds": [
+            "FIELD_NO_DELETE",
+            "FIELD_NO_DELETE_UNLESS_NUMBER_RESERVED"
+          ],
+          "buf_file_rules": [
+            "FIELD_NO_DELETE"
+          ]
+        },
+        {
+          "case": "Field removed with number reserved",
+          "vimanam_wire_breaking": false,
+          "buf_wire_breaking": false,
+          "vimanam_source_breaking": true,
+          "buf_wire_json_breaking": true,
+          "buf_file_breaking": true,
+          "vimanam_native_kinds": [
+            "FIELD_NO_DELETE"
+          ],
+          "buf_file_rules": [
+            "FIELD_NO_DELETE"
+          ]
+        },
+        {
+          "case": "Same-number field rename (quantity -> qty)",
+          "vimanam_wire_breaking": false,
+          "buf_wire_breaking": false,
+          "vimanam_source_breaking": true,
+          "buf_wire_json_breaking": true,
+          "buf_file_breaking": true,
+          "vimanam_native_kinds": [
+            "FIELD_SAME_JSON_NAME",
+            "FIELD_SAME_NAME"
+          ],
+          "buf_file_rules": [
+            "FIELD_SAME_JSON_NAME",
+            "FIELD_SAME_NAME"
+          ]
+        },
+        {
+          "case": "JSON name override changed",
+          "vimanam_wire_breaking": false,
+          "buf_wire_breaking": false,
+          "vimanam_source_breaking": true,
+          "buf_wire_json_breaking": true,
+          "buf_file_breaking": true,
+          "vimanam_native_kinds": [
+            "FIELD_SAME_JSON_NAME"
+          ],
+          "buf_file_rules": [
+            "FIELD_SAME_JSON_NAME"
+          ]
+        },
+        {
+          "case": "Enum value removed without reserving number",
+          "vimanam_wire_breaking": true,
+          "buf_wire_breaking": true,
+          "vimanam_source_breaking": true,
+          "buf_wire_json_breaking": true,
+          "buf_file_breaking": true,
+          "vimanam_native_kinds": [
+            "ENUM_VALUE_NO_DELETE",
+            "ENUM_VALUE_NO_DELETE_UNLESS_NUMBER_RESERVED"
+          ],
+          "buf_file_rules": [
+            "ENUM_VALUE_NO_DELETE"
+          ]
+        },
+        {
+          "case": "RPC changed from unary to server streaming",
+          "vimanam_wire_breaking": true,
+          "buf_wire_breaking": true,
+          "vimanam_source_breaking": true,
+          "buf_wire_json_breaking": true,
+          "buf_file_breaking": true,
+          "vimanam_native_kinds": [
+            "RPC_SAME_SERVER_STREAMING"
+          ],
+          "buf_file_rules": [
+            "RPC_SAME_SERVER_STREAMING"
+          ]
+        },
+        {
+          "case": "Optional field added (non-breaking)",
+          "vimanam_wire_breaking": false,
+          "buf_wire_breaking": false,
+          "vimanam_source_breaking": false,
+          "buf_wire_json_breaking": false,
+          "buf_file_breaking": false,
+          "vimanam_native_kinds": [
+            "PROTOBUF_SURFACE_CHANGED"
+          ],
+          "buf_file_rules": []
+        }
+      ]
+    },
+    "graphql_inspector": {
+      "graphql_inspector_version": "graphql-inspector 7.0.8",
+      "spacex_land": {
+        "vimanam_summary": {
+          "operations_added": 0,
+          "operations_removed": 4,
+          "operations_changed": 0,
+          "breaking": 8,
+          "non_breaking": 1,
+          "review": 0
+        },
+        "vimanam_changes": 9,
+        "graphql_inspector_exit": 1,
+        "graphql_inspector_total_changes": 9,
+        "graphql_inspector_breaking": 8,
+        "hyperfine": {
+          "graphql_inspector": {
+            "count": 8,
+            "median_ms": 283.95,
+            "q1_ms": 275.11,
+            "q3_ms": 287.78,
+            "min_ms": 271.91,
+            "max_ms": 308.34,
+            "mean_ms": 284.48,
+            "stddev_ms": 11.26,
+            "rss_mb": 121.9,
+            "instructions_m": 3525.0,
+            "samples_ms": [
+              308.34,
+              283.46,
+              288.38,
+              271.91,
+              273.55,
+              286.0,
+              279.79,
+              284.45
+            ]
+          },
+          "vimanam": {
+            "count": 8,
+            "median_ms": 13.51,
+            "q1_ms": 13.38,
+            "q3_ms": 13.7,
+            "min_ms": 13.03,
+            "max_ms": 13.99,
+            "mean_ms": 13.53,
+            "stddev_ms": 0.28,
+            "rss_mb": 7.0,
+            "instructions_m": 100.9,
+            "samples_ms": [
+              13.53,
+              13.03,
+              13.99,
+              13.72,
+              13.63,
+              13.35,
+              13.45,
+              13.49
+            ]
+          },
+          "median_speedup_a_over_b": 21.02,
+          "iqrs_disjoint": true,
+          "ranges_disjoint": true
+        }
+      },
+      "github_5_0mb_introspection_json": {
+        "old_commit": "a6de3c1",
+        "new_commit": "597478f",
+        "old_bytes": 4967369,
+        "new_bytes": 4970156,
+        "vimanam_md_bytes": 212,
+        "vimanam_json_bytes": 17108851,
+        "vimanam_summary": {
+          "operations_added": 0,
+          "operations_removed": 0,
+          "operations_changed": 0,
+          "breaking": 0,
+          "non_breaking": 1,
+          "review": 0
+        },
+        "vimanam_changes": 1,
+        "graphql_inspector_exit": 0,
+        "graphql_inspector_total_changes": 1,
+        "graphql_inspector_breaking": 0,
+        "hyperfine": {
+          "graphql_inspector": {
+            "count": 5,
+            "median_ms": 408.67,
+            "q1_ms": 397.9,
+            "q3_ms": 458.01,
+            "min_ms": 396.88,
+            "max_ms": 496.73,
+            "mean_ms": 424.1,
+            "stddev_ms": 41.57,
+            "rss_mb": 194.7,
+            "instructions_m": 6648.7,
+            "samples_ms": [
+              496.73,
+              419.29,
+              398.92,
+              396.88,
+              408.67
+            ]
+          },
+          "vimanam_md": {
+            "count": 5,
+            "median_ms": 211.49,
+            "q1_ms": 208.88,
+            "q3_ms": 214.55,
+            "min_ms": 208.22,
+            "max_ms": 216.59,
+            "mean_ms": 211.67,
+            "stddev_ms": 3.21,
+            "rss_mb": 62.5,
+            "instructions_m": 3004.1,
+            "samples_ms": [
+              212.5,
+              211.49,
+              208.22,
+              209.55,
+              216.59
+            ]
+          },
+          "vimanam_json": {
+            "count": 5,
+            "median_ms": 227.21,
+            "q1_ms": 222.67,
+            "q3_ms": 248.33,
+            "min_ms": 221.04,
+            "max_ms": 257.16,
+            "mean_ms": 233.84,
+            "stddev_ms": 14.79,
+            "rss_mb": 62.6,
+            "instructions_m": 3270.1,
+            "samples_ms": [
+              227.21,
+              221.04,
+              224.3,
+              239.49,
+              257.16
+            ]
+          }
+        }
+      },
+      "github_1_2mb_sdl_probe": {
+        "old_commit": "a6de3c1",
+        "new_commit": "597478f",
+        "old_bytes": 1177658,
+        "new_bytes": 1223842,
+        "graphql_inspector_exit": 1,
+        "graphql_inspector_error": "Error: Field \"EnterpriseOwnerInfo.repositoryDeployKeySetting\" can only be defined once.",
+        "vimanam_md_ms": 133.7,
+        "vimanam_md_bytes": 53145,
+        "vimanam_json_ms": 162.0,
+        "vimanam_json_bytes": 17439126,
+        "vimanam_summary": {
+          "operations_added": 8,
+          "operations_removed": 2,
+          "operations_changed": 17,
+          "breaking": 11,
+          "non_breaking": 204,
+          "review": 17
+        },
+        "vimanam_changes": 232
+      },
+      "smoke_matrix": [
+        {
+          "case": "Output field removed (User.name)",
+          "vimanam_severities": [
+            "breaking"
+          ],
+          "vimanam_breaking": true,
+          "graphql_inspector_breaking": true,
+          "graphql_inspector_dangerous": false,
+          "breaking_verdict_match": true
+        },
+        {
+          "case": "Output field made nullable (User.name)",
+          "vimanam_severities": [
+            "breaking"
+          ],
+          "vimanam_breaking": true,
+          "graphql_inspector_breaking": true,
+          "graphql_inspector_dangerous": false,
+          "breaking_verdict_match": true
+        },
+        {
+          "case": "Required argument added (Query.user)",
+          "vimanam_severities": [
+            "breaking"
+          ],
+          "vimanam_breaking": true,
+          "graphql_inspector_breaking": true,
+          "graphql_inspector_dangerous": false,
+          "breaking_verdict_match": true
+        },
+        {
+          "case": "Optional argument added (Query.user)",
+          "vimanam_severities": [
+            "non_breaking"
+          ],
+          "vimanam_breaking": false,
+          "graphql_inspector_breaking": false,
+          "graphql_inspector_dangerous": false,
+          "breaking_verdict_match": true
+        },
+        {
+          "case": "Input field made non-null without default",
+          "vimanam_severities": [
+            "breaking"
+          ],
+          "vimanam_breaking": true,
+          "graphql_inspector_breaking": true,
+          "graphql_inspector_dangerous": false,
+          "breaking_verdict_match": true
+        },
+        {
+          "case": "Output enum value added (Role.AUDITOR)",
+          "vimanam_severities": [
+            "review"
+          ],
+          "vimanam_breaking": false,
+          "graphql_inspector_breaking": false,
+          "graphql_inspector_dangerous": true,
+          "breaking_verdict_match": true
+        },
+        {
+          "case": "Input default value changed (limit: 10 -> 20)",
+          "vimanam_severities": [
+            "review"
+          ],
+          "vimanam_breaking": false,
+          "graphql_inspector_breaking": false,
+          "graphql_inspector_dangerous": true,
+          "breaking_verdict_match": true
+        },
+        {
+          "case": "List field converted to Relay connection",
+          "vimanam_severities": [
+            "breaking",
+            "non_breaking"
+          ],
+          "vimanam_breaking": true,
+          "graphql_inspector_breaking": true,
+          "graphql_inspector_dangerous": false,
+          "breaking_verdict_match": true
+        }
+      ]
+    },
+    "protoc_gen_doc": {
+      "protoc_gen_doc_version": "protoc-gen-doc version 1.5.1",
+      "targets": [
+        {
+          "name": "gRPC Health v1.20.0 (.proto)",
+          "protoc_gen_doc_bytes": 5351,
+          "protoc_gen_doc_bpe_o200k": 1409,
+          "vimanam_bytes": 4745,
+          "vimanam_bpe_o200k": 1130,
+          "hyperfine": {
+            "protoc_gen_doc": {
+              "count": 10,
+              "median_ms": 53.53,
+              "q1_ms": 50.02,
+              "q3_ms": 57.55,
+              "min_ms": 48.77,
+              "max_ms": 85.12,
+              "mean_ms": 56.47,
+              "stddev_ms": 10.77,
+              "rss_mb": 13.7,
+              "instructions_m": 354.8,
+              "samples_ms": [
+                61.97,
+                85.12,
+                56.08,
+                50.25,
+                48.77,
+                49.32,
+                53.72,
+                51.78,
+                53.35,
+                54.29
+              ]
+            },
+            "vimanam": {
+              "count": 10,
+              "median_ms": 9.07,
+              "q1_ms": 8.6,
+              "q3_ms": 10.2,
+              "min_ms": 8.14,
+              "max_ms": 13.19,
+              "mean_ms": 9.61,
+              "stddev_ms": 1.59,
+              "rss_mb": 6.3,
+              "instructions_m": 27.3,
+              "samples_ms": [
+                9.18,
+                8.43,
+                8.14,
+                8.66,
+                13.19,
+                9.08,
+                9.71,
+                9.06,
+                8.95,
+                11.66
+              ]
+            },
+            "median_speedup_a_over_b": 5.9,
+            "iqrs_disjoint": true,
+            "ranges_disjoint": true
+          }
+        },
+        {
+          "name": "OTel Collector TraceService (+ 3 transitive protos)",
+          "protoc_gen_doc_bytes": 32362,
+          "protoc_gen_doc_bpe_o200k": 8215,
+          "vimanam_bytes": 37452,
+          "vimanam_bpe_o200k": 9371,
+          "hyperfine": {
+            "protoc_gen_doc": {
+              "count": 10,
+              "median_ms": 51.55,
+              "q1_ms": 48.87,
+              "q3_ms": 53.42,
+              "min_ms": 47.47,
+              "max_ms": 56.64,
+              "mean_ms": 51.5,
+              "stddev_ms": 2.84,
+              "rss_mb": 14.9,
+              "instructions_m": 365.2,
+              "samples_ms": [
+                48.46,
+                51.96,
+                50.14,
+                53.1,
+                47.47,
+                56.64,
+                52.68,
+                51.13,
+                49.01,
+                54.39
+              ]
+            },
+            "vimanam": {
+              "count": 10,
+              "median_ms": 10.89,
+              "q1_ms": 10.61,
+              "q3_ms": 11.05,
+              "min_ms": 10.55,
+              "max_ms": 11.45,
+              "mean_ms": 10.89,
+              "stddev_ms": 0.28,
+              "rss_mb": 7.7,
+              "instructions_m": 40.3,
+              "samples_ms": [
+                11.02,
+                11.45,
+                11.09,
+                10.55,
+                10.94,
+                10.62,
+                10.84,
+                11.04,
+                10.56,
+                10.72
+              ]
+            },
+            "median_speedup_a_over_b": 4.73,
+            "iqrs_disjoint": true,
+            "ranges_disjoint": true
+          }
+        }
+      ]
+    }
+  },
+  "pinned_revs": {
+    "openai_old": "a01e367",
+    "openai_new": "373f26a",
+    "stripe_old": "2f8d147",
+    "stripe_new": "5237fa0",
+    "otel_old": "40cb2e5",
+    "otel_new": "d31f7ac",
+    "octo_old": "a6de3c1",
+    "octo_new": "597478f"
+  }
+}

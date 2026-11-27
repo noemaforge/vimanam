@@ -1,0 +1,231 @@
+---
+title: "v2.3.0 vs external tools"
+description: "Vimanam 2.3.0 against oasdiff, buf breaking, graphql-inspector and protoc-gen-doc: speed, smoke-test verdicts, and breaking-change accuracy on real OpenAPI, GraphQL and Protobuf release histories."
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+This page is a snapshot of the 2.3.0 release, measured on 2026-11-27. All tools ran on the same Apple Silicon machine: `oasdiff 1.40.0`, `buf 1.75.0`, `graphql-inspector 7.0.8` and `protoc-gen-doc 1.5.1`. The raw captures are:
+
+- [`scripts/benchmark-v23-results.json`](https://github.com/noemaforge/vimanam/blob/main/scripts/benchmark-v23-results.json): speed, smoke matrices and the OpenAI reconciliation.
+- [`scripts/benchmark-diff-accuracy-v23-results.json`](https://github.com/noemaforge/vimanam/blob/main/scripts/benchmark-diff-accuracy-v23-results.json): 15 Stripe releases against `oasdiff`.
+- [`scripts/benchmark-diff-accuracy-graphql-v23-results.json`](https://github.com/noemaforge/vimanam/blob/main/scripts/benchmark-diff-accuracy-graphql-v23-results.json): 8 GitHub GraphQL schema changes against `graphql-inspector`.
+- [`scripts/benchmark-diff-accuracy-protobuf-v23-results.json`](https://github.com/noemaforge/vimanam/blob/main/scripts/benchmark-diff-accuracy-protobuf-v23-results.json): 8 OpenTelemetry Proto releases against `buf breaking`.
+
+The machine wasn't idle during the run, so expect noise in wall times and IQRs. For the 2.2.0 numbers, see [v2.2.0 vs external tools](/vimanam/benchmarks/external-tools/).
+
+---
+
+## OpenAPI: `vimanam diff` vs `oasdiff 1.40.0`
+
+### Diff speed on OpenAI `openapi.json` (4.9 MB, `a01e367..373f26a`, 5 runs)
+
+| Command | Median | IQR (Q1–Q3) | Peak RSS | Output size | Findings |
+|---|---:|---:|---:|---:|---|
+| `vimanam diff --format json --contract 1` | `125.24 ms` | `123.03–127.88 ms` | `110.1 MB` | `103.6 KB` | v1 JSON: `4` breaking, `21` non-breaking, `113` review |
+| `vimanam diff` (Markdown) | `127.58 ms` | `123.46–376.31 ms` | `110.2 MB` | `17.5 KB` | `37` endpoints changed |
+| `vimanam diff --format json --contract 2` | `506.54 ms` | `462.37–887.45 ms` | `240.6 MB` | `37.1 MB` | `4` breaking, `17` non-breaking, `133` review |
+| `oasdiff breaking --format json` | `1,056.76 ms` | `1,050.42–1,064.66 ms` | `482.4 MB` | not recorded | `20` breaking entries |
+| `oasdiff changelog --format json` | `1,257.56 ms` | `1,141.64–1,658.53 ms` | `470.6 MB` | not recorded | `128` changelog entries |
+
+The v2 JSON size includes both full contract surfaces. `--omit-surfaces` leaves them out ([#159](https://github.com/noemaforge/vimanam/issues/159)); this run didn't use it.
+
+### Breaking findings on OpenAI `a01e367..373f26a`
+
+OpenAI commit `2a24dea` rewrote single-value `{"enum": ["list"]}` properties as `{"const": "list"}`, which means the same thing in JSON Schema 2020-12. Commit `5532232` made the only real breaking change in the range: it simplified `notification_channel` on two spend-limit endpoints.
+
+| Finding group | `vimanam 2.3.0` | `oasdiff 1.40.0` | Notes |
+|---|---:|---:|---|
+| Response `enum: [v]` → `const: v` rewrite | `0` breaking | `0` breaking (`50` INFO enum-removed, `50` INFO const-added) | Both tools rate the response side as non-breaking |
+| Request `enum: [v]` → `const: v` rewrite | `0` breaking | `18` breaking (`9` `request-property-enum-value-removed`, `9` `request-property-const-added`) | `oasdiff` counts each of the 9 properties twice |
+| `notification_channel` `anyOf` edit | `4` breaking (`2` `field_required_changed`, `2` `field_type_changed`) | `2` breaking (`request-property-any-of-removed`) | Same 2 endpoints; Vimanam compares `anyOf[0]` element by element |
+| Total | `4`, all real | `20`: `18` false positives, `2` real | |
+
+Vimanam still doesn't treat `enum: [v]` and `const: v` as equal ([#167](https://github.com/noemaforge/vimanam/issues/167)). It avoids the false alarm because dropping a request `enum` is non-breaking and adding `const` is Review. In 2.2.0, Vimanam reported `62` breaking findings on this range, `4` of them real.
+
+### Stripe `spec3.json` probe (`2f8d147..5237fa0`, one run, 15 s limit)
+
+The two files in this pair are byte-identical (`8,317,513` bytes each), so the probe measures a diff with no changes.
+
+| Tool | Wall time | Output |
+|---|---:|---:|
+| `vimanam diff` (Markdown) | `201.4 ms` | `89` bytes |
+| `vimanam diff --format json --contract 2` | `1,325.8 ms` | `99.2 MB` |
+| `oasdiff breaking` | `1,460.9 ms` | `3` bytes |
+
+In 2.2.0, `vimanam diff` timed out on this pair. For timings on 15 Stripe releases with real changes, see [Version comparison: v2.3.0 vs v2.2.0](/vimanam/benchmarks/v2-3-vs-v2-2/#stripe-spec3json-79-mb).
+
+### 6-case OpenAPI smoke test (`--fail-on-breaking` vs `oasdiff breaking --fail-on ERR`)
+
+| Mutation | `vimanam diff` 2.3.0 | `oasdiff breaking` 1.40.0 | Agreement |
+|---|---|---|---|
+| Endpoint removed (`POST /v1/items`) | Breaking (`operation_removed`) | Breaking (`api-removed-without-deprecation`) | Match |
+| Required query parameter added | Breaking (`argument_added`) | Breaking (`new-required-request-parameter`) | Match |
+| Request body property made required | Breaking (`field_required_changed`) | Breaking (`request-property-became-required`) | Match |
+| Optional response property removed | Breaking (`field_removed`) | Not breaking | Policy differs: Vimanam rates any response field removal as breaking |
+| Optional response property added | Non-breaking (`field_added`) | Not breaking | Match |
+| Versioned path moved (`/v1/items` → `/v2/items`) | Breaking (`operation_moved`) | Breaking (`api-path-removed-without-deprecation`) | Match; Vimanam pairs the move |
+
+---
+
+## Protobuf: `vimanam diff` vs `buf breaking 1.75.0`
+
+### OpenTelemetry Proto Git-ref comparison (`40cb2e5..d31f7ac`, 6 runs)
+
+| Tool and scope | Median | IQR (Q1–Q3) | Peak RSS |
+|---|---:|---:|---:|
+| `buf breaking` (all 11 `.proto` files, Git objects read in-process) | `216.93 ms` | `202.17–675.79 ms` | `36.4 MB` |
+| `vimanam diff --from-ref 40cb2e5 --to-ref d31f7ac` (`trace_service.proto` and 3 imports) | `279.20 ms` | `269.78–335.19 ms` | `9.0 MB` |
+
+The IQRs overlap, so neither tool is measurably faster here. In 2.2.0, Vimanam took `1,012.4 ms` on this pair; 2.3.0 batches its Git subprocess calls ([#164](https://github.com/noemaforge/vimanam/issues/164)).
+
+### 8-case Protobuf smoke test (`--breaking wire` / `source` vs `buf` WIRE / FILE)
+
+| Mutation | Vimanam `wire` / `buf` WIRE | Vimanam `source` / `buf` FILE | `buf` rule |
+|---|---|---|---|
+| Field type changed (`int32` → `string`) | Breaking / Breaking | Breaking / Breaking | `FIELD_SAME_TYPE` |
+| Field removed without reserving its number | Breaking / Breaking | Breaking / Breaking | `FIELD_NO_DELETE` |
+| Field removed with its number reserved | Pass / Pass | Breaking / Breaking | `FIELD_NO_DELETE` |
+| Same-number field rename (`quantity` → `qty`) | Pass / Pass | Breaking / Breaking | `FIELD_SAME_NAME`, `FIELD_SAME_JSON_NAME` |
+| `json_name` override changed | Pass / Pass | Breaking / Breaking | `FIELD_SAME_JSON_NAME` |
+| Enum value removed without reserving its number | Breaking / Breaking | Breaking / Breaking | `ENUM_VALUE_NO_DELETE` |
+| RPC changed from unary to server streaming | Breaking / Breaking | Breaking / Breaking | `RPC_SAME_SERVER_STREAMING` |
+| Optional field added | Pass / Pass | Pass / Pass | none |
+
+All 8 cases match. In 2.2.0, `--breaking wire` passed the streaming change; 2.3.0 rates it wire-breaking ([#153](https://github.com/noemaforge/vimanam/issues/153)).
+
+---
+
+## GraphQL: `vimanam diff` vs `graphql-inspector 7.0.8`
+
+### Real-spec diff speed
+
+| Comparison | `graphql-inspector` | `vimanam diff` (Markdown) | `vimanam diff --format json` (v2) | Findings |
+|---|---:|---:|---:|---|
+| SpaceX Land SDL (12 KB, `0a482d1..64a7fa9`, 8 runs) | `283.95 ms` (IQR `275.11–287.78`) | not measured | `13.51 ms` (IQR `13.38–13.70`) | Same `9` changes: `8` breaking, `1` non-breaking |
+| GitHub introspection JSON (5.0 MB, `a6de3c1..597478f`, 5 runs) | `408.67 ms` (IQR `397.90–458.01`) | `211.49 ms` (IQR `208.88–214.55`) | `227.21 ms` (IQR `222.67–248.33`, `17.1 MB` output) | Same `1` non-breaking change |
+| GitHub SDL (1.2 MB, `a6de3c1..597478f`, one run) | Rejected (`exit 1`) | `133.7 ms` (`53.1 KB`) | `162.0 ms` (`17.4 MB`) | Vimanam: `232` changes (`11` breaking, `204` non-breaking, `17` review) |
+
+Both SpaceX times include process startup, so the `21.0×` ratio on a 12 KB file says little about parser speed. `graphql-inspector` rejects GitHub's SDL because `EnterpriseOwnerInfo.repositoryDeployKeySetting` is defined twice. Since 2.3.0, Vimanam checks repeated members: an identical repeat keeps the first definition and prints a warning ([#163](https://github.com/noemaforge/vimanam/issues/163)).
+
+### 8-case GraphQL smoke test
+
+| Mutation | `vimanam diff` 2.3.0 | `graphql-inspector` 7.0.8 | Agreement |
+|---|---|---|---|
+| Output field removed (`User.name`) | Breaking | Breaking | Match |
+| Output field made nullable (`User.name`) | Breaking | Breaking | Match |
+| Required argument added (`Query.user`) | Breaking | Breaking | Match |
+| Optional argument added (`Query.user`) | Non-breaking | Non-breaking | Match |
+| Input field made non-null without default | Breaking | Breaking | Match |
+| Output enum value added (`Role.AUDITOR`) | Review | Dangerous | Match |
+| Input default value changed (`limit: 10` → `20`) | Review | Dangerous | Match |
+| List field converted to Relay connection | Breaking | Breaking | Match |
+
+---
+
+## Protobuf Markdown: `vimanam` vs `protoc` + `protoc-gen-doc 1.5.1`
+
+Both tools generated full Markdown from the same `.proto` inputs (`10` runs, `2` warmups).
+
+| Target | `protoc 36.2` + `protoc-gen-doc 1.5.1` | `vimanam 2.3.0` (no `protoc`) | Median speedup | Output size (`o200k_base` tokens) |
+|---|---:|---:|---:|---|
+| gRPC Health v1.20.0 (`.proto`) | `53.53 ms` (IQR `50.02–57.55`) | `9.07 ms` (IQR `8.60–10.20`) | `5.90×` | `1,409` vs `1,130` |
+| OTel TraceService (and 3 imported `.proto` files) | `51.55 ms` (IQR `48.87–53.42`) | `10.89 ms` (IQR `10.61–11.05`) | `4.73×` | `8,215` vs `9,371` |
+
+---
+
+## Accuracy on real release histories
+
+Speed says nothing about whether a verdict is right. These checks compare each tool's breaking-change findings with a ground truth computed from the specs themselves. Where the tools disagree, a person reviewed the evidence.
+
+For each pair of versions, the scripts check:
+
+1. Ground truth: a structural diff of the two documents lists every changed location. An operation counts as changed when its own definition, or any component it reaches through `$ref`, changed.
+2. Grounding: every finding must name a changed operation, coordinate or element.
+3. Coverage: every changed operation or coordinate should get at least one finding from each tool.
+4. Agreement: operations each tool rates breaking are sorted into both, Vimanam only, and the other tool only.
+
+### OpenAPI: 15 Stripe releases vs `oasdiff 1.40.0`
+
+The pairs are consecutive releases of Stripe's `openapi/spec3.json`. Vimanam runs with `--contract 1`, and `oasdiff breaking` counts at level ERR. "Changed ops" is the ground truth.
+
+| Release pair | Changed ops | Vimanam findings (breaking / review / non-breaking) | Vimanam breaking ops | `oasdiff` ERR findings | `oasdiff` breaking ops | Breaking ops: both / Vimanam only / `oasdiff` only |
+|---|---:|---|---:|---:|---:|---|
+| `a402765..0aaf9a6` | `589` | `1,863` / `17,784` / `7,501` | `588` | `7,556` | `588` | `588` / `0` / `0` |
+| `0aaf9a6..da3eadb` | `587` | `0` / `1,898` / `8` | `0` | `967` | `587` | `0` / `0` / `587` |
+| `da3eadb..cfe95bf` | `587` | `11,183` / `13,162` / `15,027` | `587` | `16,897` | `587` | `587` / `0` / `0` |
+| `cfe95bf..a54c388` | `587` | `4` / `931` / `991` | `1` | `4` | `1` | `1` / `0` / `0` |
+| `a54c388..d771243` | `587` | `2,793` / `34,594` / `27,217` | `587` | `27,146` | `587` | `587` / `0` / `0` |
+| `d771243..6a1ea0a` | `587` | `7` / `17,890` / `30,017` | `1` | `9,518` | `587` | `1` / `0` / `586` |
+| `6a1ea0a..fbd0091` | `587` | `0` / `931` / `0` | `0` | `0` | `0` | `0` / `0` / `0` |
+| `fbd0091..f4ac6d9` | `587` | `3,724` / `6,526` / `14,999` | `587` | `5,592` | `587` | `587` / `0` / `0` |
+| `f4ac6d9..7061322` | `587` | `15` / `5,581` / `7,528` | `2` | `5,590` | `587` | `2` / `0` / `585` |
+| `7061322..d5d11f6` | `587` | `6,599` / `1` / `5,601` | `587` | `981` | `587` | `587` / `0` / `0` |
+| `d5d11f6..af5309c` | `589` | `946` / `22,380` / `22,543` | `587` | `18,670` | `587` | `587` / `0` / `0` |
+| `af5309c..30d3391` | `594` | `935` / `6,595` / `4,781` | `589` | `4,676` | `589` | `589` / `0` / `0` |
+| `30d3391..c8faccb` | `612` | `997` / `21,902` / `36,997` | `594` | `22,869` | `594` | `594` / `0` / `0` |
+| `c8faccb..2bab976` | `612` | `0` / `0` / `964` | `0` | `0` | `0` | `0` / `0` / `0` |
+| `2bab976..bcfd59f` | `612` | `0` / `1,928` / `0` | `0` | `1,928` | `612` | `0` / `0` / `612` |
+
+What the checks show:
+
+- No operation is rated breaking by Vimanam alone. Every Vimanam finding lands on a changed operation or component, and Vimanam reports every changed operation.
+- Where both tools rate an operation breaking, it's the same real break. On `a402765..0aaf9a6`, a response property in `payment_method_details_payment_record_boleto` became nullable and optional, and 2 endpoints were removed.
+- The 4 releases with disagreements differ in policy, not detection. `oasdiff` rates an added response enum value or an added response `anyOf` branch as ERR, and Vimanam rates it Review. On `2bab976..bcfd59f`, both tools report `1,928` changes.
+- On `6a1ea0a..fbd0091`, a `$ref` moved to a newly named component with the same shape. Vimanam reports it as Review on every changed operation, and `oasdiff` reports nothing.
+- The script also counts `1` to `4` `oasdiff` findings per release on operations the ground truth marks unchanged, in 10 of the 15 releases. This page doesn't classify them.
+
+### GraphQL: 8 GitHub schema changes vs `graphql-inspector 7.0.8`
+
+The pairs are consecutive `octokit/graphql-schema` commits that changed `schema.json`, GitHub's introspection JSON. The ground truth ignores descriptions.
+
+| Commit pair | Changed coordinates | Vimanam findings | `graphql-inspector` findings | Breaking: both / Vimanam only / inspector only | Changed coordinates not reported (Vimanam / inspector) |
+|---|---:|---|---|---|---|
+| `b64979a..4b94ff4` | `61` | `17` non-breaking | `17` safe | `0` / `0` / `0` | `1` / `1` |
+| `4b94ff4..48b05fb` | `2` | `2` non-breaking | `2` safe | `0` / `0` / `0` | `0` / `0` |
+| `48b05fb..fc3abe0` | `71` | `16` non-breaking | `16` safe | `0` / `0` / `0` | `1` / `1` |
+| `fc3abe0..d345d19` | `9` | `3` non-breaking | `3` safe | `0` / `0` / `0` | `0` / `0` |
+| `d345d19..8d8d6f1` | `2` | `2` non-breaking | `2` safe | `0` / `0` / `0` | `0` / `0` |
+| `8d8d6f1..ee111b5` | `7` | `2` breaking | `3` breaking | `2` / `0` / `1` (`@defer`) | `5` / `2` |
+| `ee111b5..503d8f1` | `11` | `8` non-breaking | `7` dangerous, `1` safe | `0` / `0` / `0` | `0` / `0` |
+| `503d8f1..597478f` | `8` | `1` non-breaking | `1` safe | `0` / `0` / `0` | `0` / `0` |
+
+Every breaking verdict matches except one real Vimanam miss. On `8d8d6f1..ee111b5`, GitHub removed the `@defer` directive, and Vimanam doesn't report it because it doesn't compare directive definitions ([#201](https://github.com/noemaforge/vimanam/issues/201)). On `ee111b5..503d8f1`, `graphql-inspector` rates 7 changes dangerous and Vimanam rates them non-breaking; neither tool rates them breaking.
+
+The script also diffs `schema.graphql` against `schema.json` at each commit:
+
+| Commit | Changes between SDL and introspection |
+|---|---|
+| `b64979a`, `4b94ff4`, `48b05fb`, `fc3abe0`, `d345d19`, `8d8d6f1` | `2` non-breaking each |
+| `ee111b5`, `503d8f1` | `0` |
+| `597478f` | `231` (`127` breaking, `104` non-breaking) |
+
+Where octokit keeps its two files in sync (`ee111b5` and `503d8f1`), Vimanam's two readers agree exactly. At other commits the upstream files differ. For example, `twoFactorDisallowedMethodsSetting` is in the SDL but not in the JSON at `597478f`. That's why the same commit range gives `232` changes from SDL and `1` from introspection.
+
+### Protobuf: 8 OpenTelemetry Proto releases vs `buf breaking 1.75.0`
+
+The pairs are consecutive `opentelemetry-proto` release tags. Vimanam diffs each shared `.proto` file with each side's own import root (`--old-proto-path`, `--new-proto-path`). `buf breaking` runs once with WIRE rules and once with FILE rules. Counts are distinct messages, enums and services with a breaking finding.
+
+| Release pair | Files shared / changed | Wire: Vimanam / `buf` WIRE | Source: Vimanam / `buf` FILE | Disagreements |
+|---|---|---:|---:|---|
+| `v1.4.0..v1.5.0` | `10` / `4` | `1` / `1` | `2` / `2` | none |
+| `v1.5.0..v1.6.0` | `10` / `9` | `1` / `1` | `1` / `1` | none |
+| `v1.6.0..v1.7.0` | `10` / `2` | `1` / `1` | `1` / `1` | none |
+| `v1.7.0..v1.8.0` | `10` / `4` | `5` / `5` | `6` / `6` | none |
+| `v1.8.0..v1.9.0` | `10` / `6` | `2` / `2` | `5` / `4` | None (`v1development` is a naming artifact; see below) |
+| `v1.9.0..v1.10.0` | `10` / `3` | `1` / `1` | `1` / `1` | none |
+| `v1.10.0..v1.11.0` | `10` / `4` (1 added) | `0` / `0` | `0` / `0` | none |
+| `v1.11.0..v1.11.1` | `11` / `8` | `0` / `0` | `0` / `0` | none |
+
+Wire verdicts agree on every message, enum and service in all 8 releases. Source verdicts agree on every message, enum and service that `buf` names. The one extra source entry, `v1development` in `v1.8.0..v1.9.0`, is a package name segment rather than a message, enum or service.
+
+The script names a field or enum value by its parent, and protobuf scopes the values of a top-level enum to the package. A breaking finding on such a value therefore gets the package segment as its name. The entry comes from the deletion of the `AggregationTemporality` enum in `opentelemetry.proto.profiles.v1development`. Vimanam reports the enum and each of its three values, and `buf` reports the enum, so both tools flag the same change. This was checked by hand against the run's evidence files, which aren't checked in.
+
+`buf` names a renamed or renumbered field by its new name and number, and Vimanam by its old identity. Element names differ only in those cases, which is why the comparison works at message, enum and service level.
+
+<Aside type="caution" title="Method limits">
+  - Comparing at message, enum and service level can hide a disagreement about individual fields inside the same element.
+  - The Stripe ground truth works at operation level. Stripe's reference cycle reaches nearly every operation from any changed component, so almost every operation counts as changed in most releases.
+  - `graphql-inspector` findings are parsed from its text output, not from structured data.
+  - Deciding which tool is right where they disagree was done by hand from the evidence the scripts write out.
+</Aside>

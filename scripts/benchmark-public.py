@@ -205,7 +205,7 @@ def build_synthetic_200_proto_repo(tmpdir: Path) -> Path:
     return repo
 
 
-def run_oasdiff_comparison(v22: str, openai_repo: Path, stripe_repo: Path, tmpdir: Path) -> dict:
+def run_oasdiff_comparison(cand: str, openai_repo: Path, stripe_repo: Path, tmpdir: Path) -> dict:
     """Compare vimanam diff vs oasdiff 1.39.0 at 4.9 MB OpenAI scale, 7.9 MB Stripe probe, and 6-case smoke matrix."""
     out: dict = {"oasdiff_version": subprocess.check_output(["oasdiff", "--version"], text=True).strip()}
 
@@ -217,9 +217,9 @@ def run_oasdiff_comparison(v22: str, openai_repo: Path, stripe_repo: Path, tmpdi
     oa_old.write_bytes(subprocess.check_output(["git", "-C", str(openai_repo), "show", f"{oa_old_sha}:openapi.json"]))
     oa_new.write_bytes(subprocess.check_output(["git", "-C", str(openai_repo), "show", f"{oa_new_sha}:openapi.json"]))
 
-    vmd_rc, vmd_out, _, _ = run_cmd([v22, "diff", str(oa_old), str(oa_new)])
-    vv1_rc, vv1_out, _, _ = run_cmd([v22, "diff", str(oa_old), str(oa_new), "--format", "json", "--contract", "1"])
-    vv2_rc, vv2_out, _, _ = run_cmd([v22, "diff", str(oa_old), str(oa_new), "--format", "json", "--contract", "2"])
+    vmd_rc, vmd_out, _, _ = run_cmd([cand, "diff", str(oa_old), str(oa_new)])
+    vv1_rc, vv1_out, _, _ = run_cmd([cand, "diff", str(oa_old), str(oa_new), "--format", "json", "--contract", "1"])
+    vv2_rc, vv2_out, _, _ = run_cmd([cand, "diff", str(oa_old), str(oa_new), "--format", "json", "--contract", "2"])
     ob_rc, ob_out, _, _ = run_cmd(["oasdiff", "breaking", str(oa_old), str(oa_new), "--format", "json"])
     oc_rc, oc_out, _, _ = run_cmd(["oasdiff", "changelog", str(oa_old), str(oa_new), "--format", "json"])
     vj1 = json.loads(vv1_out) if vv1_rc == 0 else None
@@ -262,9 +262,9 @@ def run_oasdiff_comparison(v22: str, openai_repo: Path, stripe_repo: Path, tmpdi
             [
                 ("oasdiff_breaking", sh_quote(["oasdiff", "breaking", str(oa_old), str(oa_new), "--format", "json"])),
                 ("oasdiff_changelog", sh_quote(["oasdiff", "changelog", str(oa_old), str(oa_new), "--format", "json"])),
-                ("vimanam_diff_md", sh_quote([v22, "diff", str(oa_old), str(oa_new)])),
-                ("vimanam_diff_v1_json", sh_quote([v22, "diff", str(oa_old), str(oa_new), "--format", "json", "--contract", "1"])),
-                ("vimanam_diff_v2_json", sh_quote([v22, "diff", str(oa_old), str(oa_new), "--format", "json", "--contract", "2"])),
+                ("vimanam_diff_md", sh_quote([cand, "diff", str(oa_old), str(oa_new)])),
+                ("vimanam_diff_v1_json", sh_quote([cand, "diff", str(oa_old), str(oa_new), "--format", "json", "--contract", "1"])),
+                ("vimanam_diff_v2_json", sh_quote([cand, "diff", str(oa_old), str(oa_new), "--format", "json", "--contract", "2"])),
             ],
             runs=5,
             warmup=1,
@@ -289,8 +289,8 @@ def run_oasdiff_comparison(v22: str, openai_repo: Path, stripe_repo: Path, tmpdi
     }
     for key, cmd in [
         ("oasdiff_breaking", ["oasdiff", "breaking", str(s_old), str(s_new), "--format", "json"]),
-        ("vimanam_diff_md", [v22, "diff", str(s_old), str(s_new)]),
-        ("vimanam_diff_v2_json", [v22, "diff", str(s_old), str(s_new), "--format", "json", "--contract", "2"]),
+        ("vimanam_diff_md", [cand, "diff", str(s_old), str(s_new)]),
+        ("vimanam_diff_v2_json", [cand, "diff", str(s_old), str(s_new), "--format", "json", "--contract", "2"]),
     ]:
         t0 = time.perf_counter()
         try:
@@ -372,7 +372,7 @@ def run_oasdiff_comparison(v22: str, openai_repo: Path, stripe_repo: Path, tmpdi
         s = base_spec(); fn(s)
         new_p = mat_dir / f"new_{idx}.json"
         new_p.write_text(json.dumps(s, indent=2))
-        v_rc, v_out, _, _ = run_cmd([v22, "diff", str(old_p), str(new_p), "--format", "json", "--fail-on-breaking"])
+        v_rc, v_out, _, _ = run_cmd([cand, "diff", str(old_p), str(new_p), "--format", "json", "--fail-on-breaking"])
         o_rc, o_out, _, _ = run_cmd(["oasdiff", "breaking", str(old_p), str(new_p), "--format", "json", "--fail-on", "ERR"])
         vj = json.loads(v_out)
         oj = json.loads(o_out) if o_out.strip() else []
@@ -387,7 +387,7 @@ def run_oasdiff_comparison(v22: str, openai_repo: Path, stripe_repo: Path, tmpdi
     return out
 
 
-def run_buf_comparison(v22: str, otel_repo: Path, tmpdir: Path) -> dict:
+def run_buf_comparison(cand: str, otel_repo: Path, tmpdir: Path) -> dict:
     """Compare vimanam diff vs buf breaking 1.75.0 on real multi-file OTel Git-ref + 8-case smoke matrix."""
     out: dict = {"buf_version": subprocess.check_output(["buf", "--version"], text=True).strip()}
 
@@ -402,7 +402,7 @@ def run_buf_comparison(v22: str, otel_repo: Path, tmpdir: Path) -> dict:
         "hyperfine": hyperfine_multi(
             [
                 ("buf_breaking_git", sh_quote(["buf", "breaking", f".git#ref={new_sha}", "--against", f".git#ref={old_sha}"])),
-                ("vimanam_git_diff_trace", sh_quote([v22, "diff", "--from-ref", old_sha, "--to-ref", new_sha, "--spec", "opentelemetry/proto/collector/trace/v1/trace_service.proto", "-I", ".", "--format", "json"])),
+                ("vimanam_git_diff_trace", sh_quote([cand, "diff", "--from-ref", old_sha, "--to-ref", new_sha, "--spec", "opentelemetry/proto/collector/trace/v1/trace_service.proto", "-I", ".", "--format", "json"])),
             ],
             runs=6,
             warmup=1,
@@ -458,8 +458,8 @@ service OrderService {
         (ndir / "buf.yaml").write_text("version: v2\nbreaking:\n  use:\n    - FILE\n")
         bf_rc, bf_out, _, _ = run_cmd(["buf", "breaking", str(ndir), "--against", str(mdir / "old"), "--error-format", "json"])
 
-        vw_rc, vw_out, _, _ = run_cmd([v22, "diff", str(mdir / "old/api.proto"), str(ndir / "api.proto"), "--format", "json", "--breaking", "wire", "--fail-on-breaking"])
-        vs_rc, _, _, _ = run_cmd([v22, "diff", str(mdir / "old/api.proto"), str(ndir / "api.proto"), "--format", "json", "--breaking", "source", "--fail-on-breaking"])
+        vw_rc, vw_out, _, _ = run_cmd([cand, "diff", str(mdir / "old/api.proto"), str(ndir / "api.proto"), "--format", "json", "--breaking", "wire", "--fail-on-breaking"])
+        vs_rc, _, _, _ = run_cmd([cand, "diff", str(mdir / "old/api.proto"), str(ndir / "api.proto"), "--format", "json", "--breaking", "source", "--fail-on-breaking"])
         vj = json.loads(vw_out)
         buf_rules = sorted({json.loads(line).get("type", "") for line in bf_out.decode().splitlines() if line.strip()})
         out["smoke_matrix"].append({
@@ -475,14 +475,14 @@ service OrderService {
     return out
 
 
-def run_graphql_inspector_comparison(v22: str, octo_repo: Path, tmpdir: Path) -> dict:
+def run_graphql_inspector_comparison(cand: str, octo_repo: Path, tmpdir: Path) -> dict:
     """Compare vimanam diff vs graphql-inspector on SpaceX Land, GitHub 1.2 MB SDL, and an 8-case matrix."""
     brew_ver = subprocess.run(["brew", "list", "--versions", "graphql-inspector"], capture_output=True, text=True).stdout.strip()
     out: dict = {"graphql_inspector_version": brew_ver or "graphql-inspector"}
 
     sp_old = REPO / "tests/fixtures/graphql/spacex-land-0a482d1.graphql"
     sp_new = REPO / "tests/fixtures/graphql/spacex-land-64a7fa9.graphql"
-    v_rc, v_out, _, _ = run_cmd([v22, "diff", str(sp_old), str(sp_new), "--format", "json", "--fail-on-breaking"])
+    v_rc, v_out, _, _ = run_cmd([cand, "diff", str(sp_old), str(sp_new), "--format", "json", "--fail-on-breaking"])
     g_rc, g_out, g_err, _ = run_cmd(["graphql-inspector", "diff", str(sp_old), str(sp_new)])
     vj = json.loads(v_out)
     g_text = (g_out + g_err).decode("utf-8", errors="replace")
@@ -497,7 +497,7 @@ def run_graphql_inspector_comparison(v22: str, octo_repo: Path, tmpdir: Path) ->
         "hyperfine": hyperfine_multi(
             [
                 ("graphql_inspector", sh_quote(["graphql-inspector", "diff", str(sp_old), str(sp_new)])),
-                ("vimanam_2_2", sh_quote([v22, "diff", str(sp_old), str(sp_new), "--format", "json"])),
+                ("vimanam", sh_quote([cand, "diff", str(sp_old), str(sp_new), "--format", "json"])),
             ],
             runs=8,
             warmup=1,
@@ -514,8 +514,8 @@ def run_graphql_inspector_comparison(v22: str, octo_repo: Path, tmpdir: Path) ->
     gh_old_json.write_bytes(subprocess.check_output(["git", "-C", str(octo_repo), "show", f"{old_sha}:schema.json"]))
     gh_new_json.write_bytes(subprocess.check_output(["git", "-C", str(octo_repo), "show", f"{new_sha}:schema.json"]))
 
-    vmd_rc, vmd_out, _, _ = run_cmd([v22, "diff", str(gh_old_json), str(gh_new_json)])
-    v_rc, v_out, _, _ = run_cmd([v22, "diff", str(gh_old_json), str(gh_new_json), "--format", "json"])
+    vmd_rc, vmd_out, _, _ = run_cmd([cand, "diff", str(gh_old_json), str(gh_new_json)])
+    v_rc, v_out, _, _ = run_cmd([cand, "diff", str(gh_old_json), str(gh_new_json), "--format", "json"])
     g_rc, g_out, g_err, _ = run_cmd(["graphql-inspector", "diff", str(gh_old_json), str(gh_new_json)])
     vj = json.loads(v_out) if v_rc == 0 else None
     g_text = (g_out + g_err).decode("utf-8", errors="replace")
@@ -536,8 +536,8 @@ def run_graphql_inspector_comparison(v22: str, octo_repo: Path, tmpdir: Path) ->
         "hyperfine": hyperfine_multi(
             [
                 ("graphql_inspector", sh_quote(["graphql-inspector", "diff", str(gh_old_json), str(gh_new_json)])),
-                ("vimanam_2_2_md", sh_quote([v22, "diff", str(gh_old_json), str(gh_new_json)])),
-                ("vimanam_2_2_json", sh_quote([v22, "diff", str(gh_old_json), str(gh_new_json), "--format", "json"])),
+                ("vimanam_md", sh_quote([cand, "diff", str(gh_old_json), str(gh_new_json)])),
+                ("vimanam_json", sh_quote([cand, "diff", str(gh_old_json), str(gh_new_json), "--format", "json"])),
             ],
             runs=5,
             warmup=1,
@@ -551,8 +551,8 @@ def run_graphql_inspector_comparison(v22: str, octo_repo: Path, tmpdir: Path) ->
     gh_old_sdl.write_bytes(subprocess.check_output(["git", "-C", str(octo_repo), "show", f"{old_sha}:schema.graphql"]))
     gh_new_sdl.write_bytes(subprocess.check_output(["git", "-C", str(octo_repo), "show", f"{new_sha}:schema.graphql"]))
     gs_rc, gs_out, gs_err, gs_ms = run_cmd(["graphql-inspector", "diff", str(gh_old_sdl), str(gh_new_sdl)])
-    vs_rc, vs_out, _, vs_ms = run_cmd([v22, "diff", str(gh_old_sdl), str(gh_new_sdl)])
-    vsj_rc, vsj_out, _, vsj_ms = run_cmd([v22, "diff", str(gh_old_sdl), str(gh_new_sdl), "--format", "json"])
+    vs_rc, vs_out, _, vs_ms = run_cmd([cand, "diff", str(gh_old_sdl), str(gh_new_sdl)])
+    vsj_rc, vsj_out, _, vsj_ms = run_cmd([cand, "diff", str(gh_old_sdl), str(gh_new_sdl), "--format", "json"])
     vsj = json.loads(vsj_out) if vsj_rc == 0 else None
     out["github_1_2mb_sdl_probe"] = {
         "old_commit": old_sha,
@@ -609,7 +609,7 @@ type Query {
     for idx, (label, new_src) in enumerate(gcases):
         gn = gdir / f"new_{idx}.graphql"
         gn.write_text(new_src)
-        v_rc, v_out, _, _ = run_cmd([v22, "diff", str(go), str(gn), "--format", "json", "--fail-on-breaking"])
+        v_rc, v_out, _, _ = run_cmd([cand, "diff", str(go), str(gn), "--format", "json", "--fail-on-breaking"])
         g_rc, g_out, g_err, _ = run_cmd(["graphql-inspector", "diff", str(go), str(gn)])
         vj = json.loads(v_out)
         g_txt = (g_out + g_err).decode("utf-8", errors="replace")
@@ -627,7 +627,7 @@ type Query {
     return out
 
 
-def run_protoc_gen_doc_comparison(v22: str, otel_repo: Path, tmpdir: Path) -> dict:
+def run_protoc_gen_doc_comparison(cand: str, otel_repo: Path, tmpdir: Path) -> dict:
     """Compare vimanam pure-Rust .proto Markdown vs protoc + protoc-gen-doc 1.5.1."""
     out: dict = {
         "protoc_gen_doc_version": subprocess.check_output(["protoc-gen-doc", "--version"], text=True).strip(),
@@ -666,7 +666,7 @@ def run_protoc_gen_doc_comparison(v22: str, otel_repo: Path, tmpdir: Path) -> di
         ]
         vim_md = doc_out / f"vim_{idx}.md"
         vim_cmd = [
-            v22,
+            cand,
             str(entry),
             *[a for d in inc_dirs for a in ("-I", str(d))],
             "--detail", "full",
@@ -681,7 +681,7 @@ def run_protoc_gen_doc_comparison(v22: str, otel_repo: Path, tmpdir: Path) -> di
         hf = hyperfine_multi(
             [
                 ("protoc_gen_doc", sh_quote(pgd_cmd)),
-                ("vimanam_2_2", sh_quote(vim_cmd)),
+                ("vimanam", sh_quote(vim_cmd)),
             ],
             runs=10,
             warmup=2,
@@ -699,15 +699,15 @@ def run_protoc_gen_doc_comparison(v22: str, otel_repo: Path, tmpdir: Path) -> di
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--v21", required=True)
-    ap.add_argument("--v22", required=True)
+    ap.add_argument("--baseline", "--base", dest="baseline", required=True, help="older release binary")
+    ap.add_argument("--candidate", "--cand", dest="candidate", required=True, help="release binary under test")
     ap.add_argument("--corpus", required=True)
     ap.add_argument("--runs", type=int, default=10)
     ap.add_argument("--output", required=True)
     args = ap.parse_args()
 
-    v21 = str(Path(args.v21).resolve())
-    v22 = str(Path(args.v22).resolve())
+    base = str(Path(args.baseline).resolve())
+    cand = str(Path(args.candidate).resolve())
     corpus = Path(args.corpus).resolve()
     stripe_repo = corpus / "stripe-openapi"
     openai_repo = corpus / "openai-repo"
@@ -724,17 +724,18 @@ def main():
             "hyperfine": subprocess.check_output(["hyperfine", "--version"], text=True).strip(),
             "protoc": subprocess.check_output(["protoc", "--version"], text=True).strip(),
             "git": subprocess.check_output(["git", "--version"], text=True).strip(),
-            "v21_version": subprocess.check_output([v21, "--version"], text=True).strip(),
-            "v22_version": subprocess.check_output([v22, "--version"], text=True).strip(),
-            "v21_sha256": file_sha256(v21),
-            "v22_sha256": file_sha256(v22),
-            "v21_binary_bytes": os.path.getsize(v21),
-            "v22_binary_bytes": os.path.getsize(v22),
-            "openai_openapi_commit": subprocess.check_output(["git", "-C", str(openai_repo), "rev-parse", "--short", "HEAD"], text=True).strip(),
-            "stripe_openapi_commit": subprocess.check_output(["git", "-C", str(stripe_repo), "rev-parse", "--short", "HEAD"], text=True).strip(),
-            "octokit_graphql_commit": subprocess.check_output(["git", "-C", str(octo), "rev-parse", "--short", "HEAD"], text=True).strip(),
-            "otel_proto_commit": subprocess.check_output(["git", "-C", str(otel), "rev-parse", "--short", "HEAD"], text=True).strip(),
+            "baseline_version": subprocess.check_output([base, "--version"], text=True).strip(),
+            "candidate_version": subprocess.check_output([cand, "--version"], text=True).strip(),
+            "baseline_sha256": file_sha256(base),
+            "candidate_sha256": file_sha256(cand),
+            "baseline_binary_bytes": os.path.getsize(base),
+            "candidate_binary_bytes": os.path.getsize(cand),
+            "openai_openapi_clone_head": subprocess.check_output(["git", "-C", str(openai_repo), "rev-parse", "--short", "HEAD"], text=True).strip(),
+            "stripe_openapi_clone_head": subprocess.check_output(["git", "-C", str(stripe_repo), "rev-parse", "--short", "HEAD"], text=True).strip(),
+            "octokit_graphql_clone_head": subprocess.check_output(["git", "-C", str(octo), "rev-parse", "--short", "HEAD"], text=True).strip(),
+            "otel_proto_clone_head": subprocess.check_output(["git", "-C", str(otel), "rev-parse", "--short", "HEAD"], text=True).strip(),
         },
+        "pinned_revs": PINNED_REVS,
         "openapi": [],
         "graphql": [],
         "graphql_diffs": [],
@@ -755,24 +756,24 @@ def main():
         ("Stripe OpenAPI 3.0 (YAML)", stripe_repo / "openapi/spec3.yaml", "YAML", args.runs),
     ]:
         flags = [str(path), "--detail", "full", "--include-schemas", "--no-report"]
-        rc21, out21, err21, _ = run_cmd([v21, *flags])
-        rc22, out22, _, _ = run_cmd([v22, *flags])
+        rc_base, out_base, err_base, _ = run_cmd([base, *flags])
+        rc_cand, out_cand, _, _ = run_cmd([cand, *flags])
         hf = (
-            hyperfine_multi([("v2_1", sh_quote([v21, *flags])), ("v2_2", sh_quote([v22, *flags]))], runs=runs)
-            if (rc21 == 0 and rc22 == 0)
-            else hyperfine_multi([("v2_2", sh_quote([v22, *flags]))], runs=runs)
+            hyperfine_multi([("baseline", sh_quote([base, *flags])), ("candidate", sh_quote([cand, *flags]))], runs=runs)
+            if (rc_base == 0 and rc_cand == 0)
+            else hyperfine_multi([("candidate", sh_quote([cand, *flags]))], runs=runs)
         )
         results["openapi"].append({
             "name": name,
             "format": fmt,
             "size_bytes": path.stat().st_size,
-            "rc21": rc21,
-            "rc22": rc22,
-            "err21": err21.decode("utf-8", errors="replace").strip()[:220] if rc21 != 0 else "",
-            "byte_identical": (rc21 == 0 and rc22 == 0 and out21 == out22),
+            "rc_base": rc_base,
+            "rc_cand": rc_cand,
+            "err_base": err_base.decode("utf-8", errors="replace").strip()[:220] if rc_base != 0 else "",
+            "byte_identical": (rc_base == 0 and rc_cand == 0 and out_base == out_cand),
             "hyperfine": hf,
         })
-        print(f"  {name}: med_v21={hf.get('v2_1',{}).get('median_ms')} med_v22={hf['v2_2']['median_ms']} ratio={hf.get('median_speedup_a_over_b')} iqrs_disjoint={hf.get('iqrs_disjoint')}", flush=True)
+        print(f"  {name}: med_baseline={hf.get('baseline',{}).get('median_ms')} med_candidate={hf['candidate']['median_ms']} ratio={hf.get('median_speedup_a_over_b')} iqrs_disjoint={hf.get('iqrs_disjoint')}", flush=True)
 
     # 2. GraphQL benchmarks (10 runs)
     print("[2/6] GraphQL benchmarks...", flush=True)
@@ -783,17 +784,17 @@ def main():
         ("GitHub GraphQL API (Introspection JSON)", octo / "schema.json", "Introspection", args.runs),
     ]:
         flags = [str(path), "--detail", "full", "--include-schemas", "--no-report"]
-        rc21, out21, _, _ = run_cmd([v21, *flags])
-        rc22, out22, _, _ = run_cmd([v22, *flags])
-        hf = hyperfine_multi([("v2_1", sh_quote([v21, *flags])), ("v2_2", sh_quote([v22, *flags]))], runs=runs)
+        rc_base, out_base, _, _ = run_cmd([base, *flags])
+        rc_cand, out_cand, _, _ = run_cmd([cand, *flags])
+        hf = hyperfine_multi([("baseline", sh_quote([base, *flags])), ("candidate", sh_quote([cand, *flags]))], runs=runs)
         results["graphql"].append({
             "name": name,
             "kind": kind,
             "size_bytes": path.stat().st_size,
-            "byte_identical": (rc21 == 0 and rc22 == 0 and out21 == out22),
+            "byte_identical": (rc_base == 0 and rc_cand == 0 and out_base == out_cand),
             "hyperfine": hf,
         })
-        print(f"  {name}: med_v21={hf['v2_1']['median_ms']} med_v22={hf['v2_2']['median_ms']} iqrs_disjoint={hf['iqrs_disjoint']}", flush=True)
+        print(f"  {name}: med_baseline={hf['baseline']['median_ms']} med_candidate={hf['candidate']['median_ms']} iqrs_disjoint={hf['iqrs_disjoint']}", flush=True)
 
     gql_old_sha = resolve_rev(octo, PINNED_REVS["octo_old"], "HEAD~1")
     gql_new_sha = resolve_rev(octo, PINNED_REVS["octo_new"], "HEAD")
@@ -802,17 +803,17 @@ def main():
         (f"GitHub GraphQL SDL Git-ref diff ({gql_old_sha} -> {gql_new_sha})", ["diff", "--from-ref", gql_old_sha, "--to-ref", gql_new_sha, "--spec", "schema.graphql", "--format", "json"], str(octo), 5),
         (f"GitHub GraphQL Introspection Git-ref diff ({gql_old_sha} -> {gql_new_sha})", ["diff", "--from-ref", gql_old_sha, "--to-ref", gql_new_sha, "--spec", "schema.json", "--format", "json"], str(octo), 5),
     ]:
-        _, d21, _, _ = run_cmd([v21, *dflags], cwd=cwd)
-        _, d22, _, _ = run_cmd([v22, *dflags], cwd=cwd)
-        j21, j22 = json.loads(d21), json.loads(d22)
-        hf = hyperfine_multi([("v2_1", sh_quote([v21, *dflags])), ("v2_2", sh_quote([v22, *dflags]))], runs=runs, cwd=cwd)
+        _, d_base, _, _ = run_cmd([base, *dflags], cwd=cwd)
+        _, d_cand, _, _ = run_cmd([cand, *dflags], cwd=cwd)
+        j_base, j_cand = json.loads(d_base), json.loads(d_cand)
+        hf = hyperfine_multi([("baseline", sh_quote([base, *dflags])), ("candidate", sh_quote([cand, *dflags]))], runs=runs, cwd=cwd)
         results["graphql_diffs"].append({
             "name": label,
-            "changes_exact_match": (j21["changes"] == j22["changes"]),
-            "summary_v22": j22["summary"],
+            "changes_exact_match": (j_base["changes"] == j_cand["changes"]),
+            "summary_candidate": j_cand["summary"],
             "hyperfine": hf,
         })
-        print(f"  {label}: med_v21={hf['v2_1']['median_ms']} med_v22={hf['v2_2']['median_ms']} iqrs_disjoint={hf['iqrs_disjoint']}", flush=True)
+        print(f"  {label}: med_baseline={hf['baseline']['median_ms']} med_candidate={hf['candidate']['median_ms']} iqrs_disjoint={hf['iqrs_disjoint']}", flush=True)
 
     # 3. Protobuf targets (10 runs; zero-protoc verified via env_no_protoc)
     print("[3/6] Protobuf benchmarks...", flush=True)
@@ -824,33 +825,35 @@ def main():
         ("OTel Collector LogsService (.proto)", otel / "opentelemetry/proto/collector/logs/v1/logs_service.proto", ["-I", str(otel)]),
     ]:
         pflags = [str(p), *inc, "--detail", "full", "--include-schemas", "--no-report"]
-        _, o21, _, _ = run_cmd([v21, *pflags])
-        rc22, o22, _, _ = run_cmd([v22, *pflags], env=env_no_protoc)
-        assert rc22 == 0, f"v2.2 failed with PATH='': {label}"
-        hf = hyperfine_multi([("v2_1", sh_quote([v21, *pflags])), ("v2_2", sh_quote([v22, *pflags]))], runs=args.runs)
+        _, o_base, _, _ = run_cmd([base, *pflags])
+        rc_cand, o_cand, _, _ = run_cmd([cand, *pflags], env=env_no_protoc)
+        assert rc_cand == 0, f"candidate failed with PATH='': {label}"
+        hf = hyperfine_multi([("baseline", sh_quote([base, *pflags])), ("candidate", sh_quote([cand, *pflags]))], runs=args.runs)
         results["protobuf_targets"].append({
             "name": label,
-            "v21_bytes": len(o21),
-            "v22_bytes": len(o22),
-            "field_notes_v21": len(re.findall(r"Field #\d+", o21.decode("utf-8", errors="replace"))),
-            "field_notes_v22": len(re.findall(r"Field #\d+", o22.decode("utf-8", errors="replace"))),
+            "baseline_bytes": len(o_base),
+            "candidate_bytes": len(o_cand),
+            "field_notes_baseline": len(re.findall(r"Field #\d+", o_base.decode("utf-8", errors="replace"))),
+            "field_notes_candidate": len(re.findall(r"Field #\d+", o_cand.decode("utf-8", errors="replace"))),
             "hyperfine": hf,
         })
-        print(f"  {label}: med_v21={hf['v2_1']['median_ms']} med_v22={hf['v2_2']['median_ms']} ratio={hf['median_speedup_a_over_b']}x", flush=True)
+        print(f"  {label}: med_baseline={hf['baseline']['median_ms']} med_candidate={hf['candidate']['median_ms']} ratio={hf['median_speedup_a_over_b']}x", flush=True)
 
-    otel_commit = results["environment"]["otel_proto_commit"]
+    # Pinned, not the clone's HEAD: a blobless --no-checkout clone sits at the
+    # upstream tip, where the trace.proto diff can be empty.
+    otel_commit = resolve_rev(otel, PINNED_REVS["otel_new"], "HEAD")
     gargs = ["diff", "--from-ref", f"{otel_commit}~1", "--to-ref", otel_commit, "--spec", "opentelemetry/proto/trace/v1/trace.proto", "-I", ".", "--format", "json"]
-    rc21, o21, _, _ = run_cmd([v21, *gargs], cwd=str(otel))
-    rc22, o22, _, _ = run_cmd([v22, *gargs], cwd=str(otel))
-    if rc21 == 0 and rc22 == 0:
-        j21, j22 = json.loads(o21), json.loads(o22)
+    rc_base, o_base, _, _ = run_cmd([base, *gargs], cwd=str(otel))
+    rc_cand, o_cand, _, _ = run_cmd([cand, *gargs], cwd=str(otel))
+    if rc_base == 0 and rc_cand == 0:
+        j_base, j_cand = json.loads(o_base), json.loads(o_cand)
         results["protobuf_git_diff_otel"] = {
             "repo": "open-telemetry/opentelemetry-proto",
             "commit": otel_commit,
             "spec": "opentelemetry/proto/trace/v1/trace.proto",
-            "changes_exact_match": (j21["changes"] == j22["changes"]),
-            "changes_count": len(j22["changes"]),
-            "hyperfine": hyperfine_multi([("v2_1", sh_quote([v21, *gargs])), ("v2_2", sh_quote([v22, *gargs]))], runs=6, cwd=str(otel)),
+            "changes_exact_match": (j_base["changes"] == j_cand["changes"]),
+            "changes_count": len(j_cand["changes"]),
+            "hyperfine": hyperfine_multi([("baseline", sh_quote([base, *gargs])), ("candidate", sh_quote([cand, *gargs]))], runs=6, cwd=str(otel)),
         }
 
     # 4. Synthetic 200-proto Git-ref scaling + 5. Large-scale external baselines
@@ -859,29 +862,29 @@ def main():
         tmp = Path(td)
         p200 = build_synthetic_200_proto_repo(tmp)
         sargs = ["diff", "--from-ref", "v1", "--to-ref", "v2", "--spec", "protos/orders/service.proto", "-I", "protos", "--format", "json"]
-        _, so21, _, _ = run_cmd([v21, *sargs], cwd=str(p200))
-        _, so22, _, _ = run_cmd([v22, *sargs], cwd=str(p200))
-        sj21, sj22 = json.loads(so21), json.loads(so22)
+        _, so_base, _, _ = run_cmd([base, *sargs], cwd=str(p200))
+        _, so_cand, _, _ = run_cmd([cand, *sargs], cwd=str(p200))
+        sj21, sj22 = json.loads(so_base), json.loads(so_cand)
         results["protobuf_git_diff_200_synthetic"] = {
             "total_committed_protos": 200,
             "imported_protos_used": 4,
             "changes_count": len(sj22["changes"]),
             "changes_exact_match": (sj21["changes"] == sj22["changes"]),
-            "hyperfine": hyperfine_multi([("v2_1", sh_quote([v21, *sargs])), ("v2_2", sh_quote([v22, *sargs]))], runs=3, warmup=1, cwd=str(p200)),
+            "hyperfine": hyperfine_multi([("baseline", sh_quote([base, *sargs])), ("candidate", sh_quote([cand, *sargs]))], runs=3, warmup=1, cwd=str(p200)),
         }
         print(f"  200-proto Git-ref diff: {results['protobuf_git_diff_200_synthetic']['hyperfine']['median_speedup_a_over_b']}x", flush=True)
 
-        results["external_baselines"]["oasdiff"] = run_oasdiff_comparison(v22, openai_repo, stripe_repo, tmp)
+        results["external_baselines"]["oasdiff"] = run_oasdiff_comparison(cand, openai_repo, stripe_repo, tmp)
         print(f"  OpenAI 4.9 MB oasdiff vs vimanam: { {k: v['median_ms'] for k, v in results['external_baselines']['oasdiff']['openai_4_9mb_diff']['hyperfine'].items() if isinstance(v, dict)} }", flush=True)
         print(f"  Stripe 7.9 MB probe: { {k: results['external_baselines']['oasdiff']['stripe_7_9mb_probe'][k] for k in ('oasdiff_breaking', 'vimanam_diff_md', 'vimanam_diff_v2_json')} }", flush=True)
 
-        results["external_baselines"]["buf"] = run_buf_comparison(v22, otel, tmp)
+        results["external_baselines"]["buf"] = run_buf_comparison(cand, otel, tmp)
         print(f"  OTel multi-file buf vs vimanam: { {k: v['median_ms'] for k, v in results['external_baselines']['buf']['otel_git_ref_comparison']['hyperfine'].items() if isinstance(v, dict)} }", flush=True)
 
-        results["external_baselines"]["graphql_inspector"] = run_graphql_inspector_comparison(v22, octo, tmp)
+        results["external_baselines"]["graphql_inspector"] = run_graphql_inspector_comparison(cand, octo, tmp)
         print(f"  GitHub 5.0 MB Introspection graphql-inspector vs vimanam: { {k: v['median_ms'] for k, v in results['external_baselines']['graphql_inspector']['github_5_0mb_introspection_json']['hyperfine'].items() if isinstance(v, dict)} }", flush=True)
 
-        results["external_baselines"]["protoc_gen_doc"] = run_protoc_gen_doc_comparison(v22, otel, tmp)
+        results["external_baselines"]["protoc_gen_doc"] = run_protoc_gen_doc_comparison(cand, otel, tmp)
         print(f"  protoc-gen-doc vs vimanam: {[ (t['name'], t['hyperfine']['median_speedup_a_over_b']) for t in results['external_baselines']['protoc_gen_doc']['targets'] ]}", flush=True)
 
     # 6. o200k_base BPE vs chars/4 calibration
@@ -903,9 +906,9 @@ def main():
             if fmt == "Protobuf"
             else path.read_text(encoding="utf-8", errors="replace")
         )
-        _, full_out, _, _ = run_cmd([v22, str(path), *inc, "--detail", "full", "--include-schemas", "--no-report"])
-        _, sum_out, _, _ = run_cmd([v22, str(path), *inc, "--detail", "summary", "--no-report"])
-        _, foc_out, _, _ = run_cmd([v22, str(path), *inc, *sel_flags])
+        _, full_out, _, _ = run_cmd([cand, str(path), *inc, "--detail", "full", "--include-schemas", "--no-report"])
+        _, sum_out, _, _ = run_cmd([cand, str(path), *inc, "--detail", "summary", "--no-report"])
+        _, foc_out, _, _ = run_cmd([cand, str(path), *inc, *sel_flags])
 
         full_t, sum_t, foc_t = full_out.decode("utf-8", "replace"), sum_out.decode("utf-8", "replace"), foc_out.decode("utf-8", "replace")
         raw_bpe, full_bpe, sum_bpe, foc_bpe = count_bpe(raw_text), count_bpe(full_t), count_bpe(sum_t), count_bpe(foc_t)

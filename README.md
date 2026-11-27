@@ -85,7 +85,7 @@ vimanam diff old.graphql new.graphql --context --max-tokens 2000 --fail-on-break
 - **[Neutral JSON contract v2](https://noemaforge.github.io/vimanam/json-contracts/)** — Stable `ve2_`/`vc2_` SHA-256 IDs and `--contract 1` legacy mode
 - **[CI pipelines & Rust library](https://noemaforge.github.io/vimanam/ci-and-library/)** — [`noemaforge/vimanam-action`](https://github.com/noemaforge/vimanam-action) and embedding `vimanam` with `default-features = false`
 - **[CLI reference](https://noemaforge.github.io/vimanam/cli-reference/)** — Complete options, subcommands (`diff`, `completions`, `man`), and exit codes
-- **[Benchmarks & v2.2 analysis](https://noemaforge.github.io/vimanam/benchmarks/)** — Task-accuracy eval, exact BPE tokenization, external baselines (`oasdiff`, `buf`), and `v2.2.0` vs `v2.1.0` data
+- **[Benchmarks & v2.3 analysis](https://noemaforge.github.io/vimanam/benchmarks/)** — Task-accuracy eval, exact BPE tokenization, breaking-change accuracy against `oasdiff`, `buf` and `graphql-inspector` on real release histories, and `v2.3.0` vs `v2.2.0` data
 
 ## Release history & license
 

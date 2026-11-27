@@ -1,0 +1,321 @@
+{
+ "environment": {
+  "vimanam": "vimanam 2.3.0",
+  "graphql_inspector": "graphql-inspector 7.0.8"
+ },
+ "pairs": [
+  {
+   "pair": "b64979a..4b94ff4",
+   "ground_truth": {
+    "changed_coordinates": 61,
+    "changed_types": 15
+   },
+   "vimanam": {
+    "findings": 17,
+    "by_severity": {
+     "non_breaking": 17
+    },
+    "breaking_coordinates": 0,
+    "ungrounded_findings": 0,
+    "changed_coordinates_not_reported": 1
+   },
+   "graphql_inspector": {
+    "findings": 17,
+    "by_level": {
+     "safe": 17
+    },
+    "unparsed_lines": 0,
+    "breaking_coordinates": 0,
+    "ungrounded_findings": 0,
+    "changed_coordinates_not_reported": 1
+   },
+   "agreement": {
+    "breaking_in_both": 0,
+    "breaking_vimanam_only": [],
+    "breaking_inspector_only": []
+   }
+  },
+  {
+   "pair": "4b94ff4..48b05fb",
+   "ground_truth": {
+    "changed_coordinates": 2,
+    "changed_types": 1
+   },
+   "vimanam": {
+    "findings": 2,
+    "by_severity": {
+     "non_breaking": 2
+    },
+    "breaking_coordinates": 0,
+    "ungrounded_findings": 0,
+    "changed_coordinates_not_reported": 0
+   },
+   "graphql_inspector": {
+    "findings": 2,
+    "by_level": {
+     "safe": 2
+    },
+    "unparsed_lines": 0,
+    "breaking_coordinates": 0,
+    "ungrounded_findings": 0,
+    "changed_coordinates_not_reported": 0
+   },
+   "agreement": {
+    "breaking_in_both": 0,
+    "breaking_vimanam_only": [],
+    "breaking_inspector_only": []
+   }
+  },
+  {
+   "pair": "48b05fb..fc3abe0",
+   "ground_truth": {
+    "changed_coordinates": 71,
+    "changed_types": 15
+   },
+   "vimanam": {
+    "findings": 16,
+    "by_severity": {
+     "non_breaking": 16
+    },
+    "breaking_coordinates": 0,
+    "ungrounded_findings": 0,
+    "changed_coordinates_not_reported": 1
+   },
+   "graphql_inspector": {
+    "findings": 16,
+    "by_level": {
+     "safe": 16
+    },
+    "unparsed_lines": 0,
+    "breaking_coordinates": 0,
+    "ungrounded_findings": 0,
+    "changed_coordinates_not_reported": 1
+   },
+   "agreement": {
+    "breaking_in_both": 0,
+    "breaking_vimanam_only": [],
+    "breaking_inspector_only": []
+   }
+  },
+  {
+   "pair": "fc3abe0..d345d19",
+   "ground_truth": {
+    "changed_coordinates": 9,
+    "changed_types": 3
+   },
+   "vimanam": {
+    "findings": 3,
+    "by_severity": {
+     "non_breaking": 3
+    },
+    "breaking_coordinates": 0,
+    "ungrounded_findings": 0,
+    "changed_coordinates_not_reported": 0
+   },
+   "graphql_inspector": {
+    "findings": 3,
+    "by_level": {
+     "safe": 3
+    },
+    "unparsed_lines": 0,
+    "breaking_coordinates": 0,
+    "ungrounded_findings": 0,
+    "changed_coordinates_not_reported": 0
+   },
+   "agreement": {
+    "breaking_in_both": 0,
+    "breaking_vimanam_only": [],
+    "breaking_inspector_only": []
+   }
+  },
+  {
+   "pair": "d345d19..8d8d6f1",
+   "ground_truth": {
+    "changed_coordinates": 2,
+    "changed_types": 2
+   },
+   "vimanam": {
+    "findings": 2,
+    "by_severity": {
+     "non_breaking": 2
+    },
+    "breaking_coordinates": 0,
+    "ungrounded_findings": 0,
+    "changed_coordinates_not_reported": 0
+   },
+   "graphql_inspector": {
+    "findings": 2,
+    "by_level": {
+     "safe": 2
+    },
+    "unparsed_lines": 0,
+    "breaking_coordinates": 0,
+    "ungrounded_findings": 0,
+    "changed_coordinates_not_reported": 0
+   },
+   "agreement": {
+    "breaking_in_both": 0,
+    "breaking_vimanam_only": [],
+    "breaking_inspector_only": []
+   }
+  },
+  {
+   "pair": "8d8d6f1..ee111b5",
+   "ground_truth": {
+    "changed_coordinates": 7,
+    "changed_types": 7
+   },
+   "vimanam": {
+    "findings": 2,
+    "by_severity": {
+     "breaking": 2
+    },
+    "breaking_coordinates": 2,
+    "ungrounded_findings": 0,
+    "changed_coordinates_not_reported": 5
+   },
+   "graphql_inspector": {
+    "findings": 3,
+    "by_level": {
+     "breaking": 3
+    },
+    "unparsed_lines": 0,
+    "breaking_coordinates": 3,
+    "ungrounded_findings": 0,
+    "changed_coordinates_not_reported": 2
+   },
+   "agreement": {
+    "breaking_in_both": 2,
+    "breaking_vimanam_only": [],
+    "breaking_inspector_only": [
+     "@defer"
+    ]
+   }
+  },
+  {
+   "pair": "ee111b5..503d8f1",
+   "ground_truth": {
+    "changed_coordinates": 11,
+    "changed_types": 8
+   },
+   "vimanam": {
+    "findings": 8,
+    "by_severity": {
+     "non_breaking": 8
+    },
+    "breaking_coordinates": 0,
+    "ungrounded_findings": 0,
+    "changed_coordinates_not_reported": 0
+   },
+   "graphql_inspector": {
+    "findings": 8,
+    "by_level": {
+     "dangerous": 7,
+     "safe": 1
+    },
+    "unparsed_lines": 0,
+    "breaking_coordinates": 0,
+    "ungrounded_findings": 0,
+    "changed_coordinates_not_reported": 0
+   },
+   "agreement": {
+    "breaking_in_both": 0,
+    "breaking_vimanam_only": [],
+    "breaking_inspector_only": []
+   }
+  },
+  {
+   "pair": "503d8f1..597478f",
+   "ground_truth": {
+    "changed_coordinates": 8,
+    "changed_types": 1
+   },
+   "vimanam": {
+    "findings": 1,
+    "by_severity": {
+     "non_breaking": 1
+    },
+    "breaking_coordinates": 0,
+    "ungrounded_findings": 0,
+    "changed_coordinates_not_reported": 0
+   },
+   "graphql_inspector": {
+    "findings": 1,
+    "by_level": {
+     "safe": 1
+    },
+    "unparsed_lines": 0,
+    "breaking_coordinates": 0,
+    "ungrounded_findings": 0,
+    "changed_coordinates_not_reported": 0
+   },
+   "agreement": {
+    "breaking_in_both": 0,
+    "breaking_vimanam_only": [],
+    "breaking_inspector_only": []
+   }
+  }
+ ],
+ "sdl_vs_introspection": [
+  {
+   "commit": "b64979a",
+   "changes": 2,
+   "by_severity": {
+    "non_breaking": 2
+   }
+  },
+  {
+   "commit": "4b94ff4",
+   "changes": 2,
+   "by_severity": {
+    "non_breaking": 2
+   }
+  },
+  {
+   "commit": "48b05fb",
+   "changes": 2,
+   "by_severity": {
+    "non_breaking": 2
+   }
+  },
+  {
+   "commit": "fc3abe0",
+   "changes": 2,
+   "by_severity": {
+    "non_breaking": 2
+   }
+  },
+  {
+   "commit": "d345d19",
+   "changes": 2,
+   "by_severity": {
+    "non_breaking": 2
+   }
+  },
+  {
+   "commit": "8d8d6f1",
+   "changes": 2,
+   "by_severity": {
+    "non_breaking": 2
+   }
+  },
+  {
+   "commit": "ee111b5",
+   "changes": 0,
+   "by_severity": {}
+  },
+  {
+   "commit": "503d8f1",
+   "changes": 0,
+   "by_severity": {}
+  },
+  {
+   "commit": "597478f",
+   "changes": 231,
+   "by_severity": {
+    "breaking": 127,
+    "non_breaking": 104
+   }
+  }
+ ]
+}

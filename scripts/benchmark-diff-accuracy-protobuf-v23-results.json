@@ -1,0 +1,291 @@
+{
+ "environment": {
+  "vimanam": "vimanam 2.3.0",
+  "buf": "1.75.0",
+  "comparison": "vimanam wire-impact breaking vs buf WIRE; vimanam breaking vs buf FILE; per .proto file"
+ },
+ "pairs": [
+  {
+   "pair": "v1.4.0..v1.5.0",
+   "files": {
+    "shared": 10,
+    "changed": 4,
+    "added": [],
+    "removed": []
+   },
+   "vimanam": {
+    "wire_breaking_elements": 1,
+    "source_breaking_elements": 2
+   },
+   "buf": {
+    "wire_breaking_elements": 1,
+    "file_breaking_elements": 2,
+    "wire_rules": {
+     "FIELD_NO_DELETE_UNLESS_NUMBER_RESERVED": 1
+    },
+    "file_rules": {
+     "MESSAGE_NO_DELETE": 1,
+     "FIELD_NO_DELETE": 1
+    },
+    "unparsed_messages": 0
+   },
+   "agreement": {
+    "wire_both": 1,
+    "wire_vimanam_only": [],
+    "wire_buf_only": [],
+    "source_both": 2,
+    "source_vimanam_only": [],
+    "source_buf_only": []
+   }
+  },
+  {
+   "pair": "v1.5.0..v1.6.0",
+   "files": {
+    "shared": 10,
+    "changed": 9,
+    "added": [],
+    "removed": []
+   },
+   "vimanam": {
+    "wire_breaking_elements": 1,
+    "source_breaking_elements": 1
+   },
+   "buf": {
+    "wire_breaking_elements": 1,
+    "file_breaking_elements": 1,
+    "wire_rules": {
+     "FIELD_NO_DELETE_UNLESS_NUMBER_RESERVED": 7,
+     "FIELD_WIRE_COMPATIBLE_TYPE": 8,
+     "FIELD_WIRE_COMPATIBLE_CARDINALITY": 7
+    },
+    "file_rules": {
+     "FIELD_NO_DELETE": 7,
+     "FIELD_SAME_JSON_NAME": 12,
+     "FIELD_SAME_TYPE": 12,
+     "FIELD_SAME_NAME": 12,
+     "FIELD_SAME_CARDINALITY": 8
+    },
+    "unparsed_messages": 0
+   },
+   "agreement": {
+    "wire_both": 1,
+    "wire_vimanam_only": [],
+    "wire_buf_only": [],
+    "source_both": 1,
+    "source_vimanam_only": [],
+    "source_buf_only": []
+   }
+  },
+  {
+   "pair": "v1.6.0..v1.7.0",
+   "files": {
+    "shared": 10,
+    "changed": 2,
+    "added": [],
+    "removed": []
+   },
+   "vimanam": {
+    "wire_breaking_elements": 1,
+    "source_breaking_elements": 1
+   },
+   "buf": {
+    "wire_breaking_elements": 1,
+    "file_breaking_elements": 1,
+    "wire_rules": {
+     "FIELD_NO_DELETE_UNLESS_NUMBER_RESERVED": 6,
+     "FIELD_WIRE_COMPATIBLE_CARDINALITY": 1,
+     "FIELD_WIRE_COMPATIBLE_TYPE": 1
+    },
+    "file_rules": {
+     "FIELD_NO_DELETE": 6,
+     "FIELD_SAME_CARDINALITY": 1,
+     "FIELD_SAME_JSON_NAME": 1,
+     "FIELD_SAME_TYPE": 1,
+     "FIELD_SAME_NAME": 1
+    },
+    "unparsed_messages": 0
+   },
+   "agreement": {
+    "wire_both": 1,
+    "wire_vimanam_only": [],
+    "wire_buf_only": [],
+    "source_both": 1,
+    "source_vimanam_only": [],
+    "source_buf_only": []
+   }
+  },
+  {
+   "pair": "v1.7.0..v1.8.0",
+   "files": {
+    "shared": 10,
+    "changed": 4,
+    "added": [],
+    "removed": []
+   },
+   "vimanam": {
+    "wire_breaking_elements": 5,
+    "source_breaking_elements": 6
+   },
+   "buf": {
+    "wire_breaking_elements": 5,
+    "file_breaking_elements": 6,
+    "wire_rules": {
+     "FIELD_WIRE_COMPATIBLE_TYPE": 10,
+     "FIELD_NO_DELETE_UNLESS_NUMBER_RESERVED": 8,
+     "FIELD_WIRE_COMPATIBLE_CARDINALITY": 9
+    },
+    "file_rules": {
+     "MESSAGE_NO_DELETE": 1,
+     "FIELD_SAME_TYPE": 16,
+     "FIELD_SAME_JSON_NAME": 17,
+     "FIELD_SAME_NAME": 17,
+     "FIELD_NO_DELETE": 8,
+     "FIELD_SAME_CARDINALITY": 12
+    },
+    "unparsed_messages": 0
+   },
+   "agreement": {
+    "wire_both": 5,
+    "wire_vimanam_only": [],
+    "wire_buf_only": [],
+    "source_both": 6,
+    "source_vimanam_only": [],
+    "source_buf_only": []
+   }
+  },
+  {
+   "pair": "v1.8.0..v1.9.0",
+   "files": {
+    "shared": 10,
+    "changed": 6,
+    "added": [],
+    "removed": []
+   },
+   "vimanam": {
+    "wire_breaking_elements": 2,
+    "source_breaking_elements": 5
+   },
+   "buf": {
+    "wire_breaking_elements": 2,
+    "file_breaking_elements": 4,
+    "wire_rules": {
+     "FIELD_NO_DELETE_UNLESS_NUMBER_RESERVED": 2,
+     "FIELD_WIRE_COMPATIBLE_CARDINALITY": 2,
+     "FIELD_WIRE_COMPATIBLE_TYPE": 4
+    },
+    "file_rules": {
+     "ENUM_NO_DELETE": 1,
+     "FIELD_NO_DELETE": 2,
+     "FIELD_SAME_JSON_NAME": 7,
+     "FIELD_SAME_NAME": 7,
+     "FIELD_SAME_CARDINALITY": 2,
+     "FIELD_SAME_TYPE": 5
+    },
+    "unparsed_messages": 0
+   },
+   "agreement": {
+    "wire_both": 2,
+    "wire_vimanam_only": [],
+    "wire_buf_only": [],
+    "source_both": 4,
+    "source_vimanam_only": [
+     "v1development"
+    ],
+    "source_buf_only": []
+   }
+  },
+  {
+   "pair": "v1.9.0..v1.10.0",
+   "files": {
+    "shared": 10,
+    "changed": 3,
+    "added": [],
+    "removed": []
+   },
+   "vimanam": {
+    "wire_breaking_elements": 1,
+    "source_breaking_elements": 1
+   },
+   "buf": {
+    "wire_breaking_elements": 1,
+    "file_breaking_elements": 1,
+    "wire_rules": {
+     "FIELD_WIRE_COMPATIBLE_CARDINALITY": 2
+    },
+    "file_rules": {
+     "FIELD_SAME_JSON_NAME": 3,
+     "FIELD_SAME_TYPE": 2,
+     "FIELD_SAME_NAME": 3,
+     "FIELD_SAME_CARDINALITY": 2
+    },
+    "unparsed_messages": 0
+   },
+   "agreement": {
+    "wire_both": 1,
+    "wire_vimanam_only": [],
+    "wire_buf_only": [],
+    "source_both": 1,
+    "source_vimanam_only": [],
+    "source_buf_only": []
+   }
+  },
+  {
+   "pair": "v1.10.0..v1.11.0",
+   "files": {
+    "shared": 10,
+    "changed": 4,
+    "added": [
+     "opentelemetry/proto/processcontext/v1development/process_context.proto"
+    ],
+    "removed": []
+   },
+   "vimanam": {
+    "wire_breaking_elements": 0,
+    "source_breaking_elements": 0
+   },
+   "buf": {
+    "wire_breaking_elements": 0,
+    "file_breaking_elements": 0,
+    "wire_rules": {},
+    "file_rules": {},
+    "unparsed_messages": 0
+   },
+   "agreement": {
+    "wire_both": 0,
+    "wire_vimanam_only": [],
+    "wire_buf_only": [],
+    "source_both": 0,
+    "source_vimanam_only": [],
+    "source_buf_only": []
+   }
+  },
+  {
+   "pair": "v1.11.0..v1.11.1",
+   "files": {
+    "shared": 11,
+    "changed": 8,
+    "added": [],
+    "removed": []
+   },
+   "vimanam": {
+    "wire_breaking_elements": 0,
+    "source_breaking_elements": 0
+   },
+   "buf": {
+    "wire_breaking_elements": 0,
+    "file_breaking_elements": 0,
+    "wire_rules": {},
+    "file_rules": {},
+    "unparsed_messages": 0
+   },
+   "agreement": {
+    "wire_both": 0,
+    "wire_vimanam_only": [],
+    "wire_buf_only": [],
+    "source_both": 0,
+    "source_vimanam_only": [],
+    "source_buf_only": []
+   }
+  }
+ ]
+}
