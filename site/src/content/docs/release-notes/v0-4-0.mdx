@@ -1,0 +1,47 @@
+---
+title: "Vimanam 0.4.0"
+description: "Makes filters case-insensitive, always shows errors, orders output deterministically, and speeds up $ref resolution."
+sidebar:
+  label: "0.4.0"
+  order: 19
+---
+
+import { Badge } from '@astrojs/starlight/components';
+
+Vimanam 0.4.0, released on 2026-06-16, is a reliability release. It fixes filters that matched nothing, errors that went unseen, and output that could differ between runs.
+
+For more information, refer to the [0.4.0 changelog entry](https://github.com/noemaforge/vimanam/blob/main/CHANGELOG.md#040---2026-06-16).
+
+## Case-insensitive method and service filters
+
+<Badge text="Enhancement" variant="note" />
+
+`--method-filter` and `--service-filter` now ignore case. A lowercase value such as `--method-filter get` used to match nothing and produce empty output.
+
+## Fatal errors always print
+
+<Badge text="Enhancement" variant="note" />
+
+Fatal errors now print to stderr whatever `RUST_LOG` is set to. Before, they were hidden when logging wasn't enabled.
+
+## Deterministic ordering and anchors
+
+<Badge text="Enhancement" variant="note" />
+
+Output order and links are now consistent:
+
+- The `## Authentication` section lists schemes in spec order on every run, and Swagger 2.0 `securityDefinitions` keep their declaration order.
+- The table of contents and the body share one endpoint order in every view, so each link points to its section.
+- Runs of three or more separators in an anchor ID, as in `a///b`, collapse into a single dash.
+
+## Faster `$ref` resolution
+
+<Badge text="Enhancement" variant="note" />
+
+Vimanam now serializes the spec once per parse instead of on every `$ref`. Large specs with many references parse significantly faster.
+
+## Composition indices start at 0
+
+<Badge text="Behavior change" variant="caution" />
+
+`allOf`, `oneOf`, and `anyOf` variants are now numbered from 0, as in `allOf[0]` and `allOf[1]`. This matches JSON Pointer and jq. Expect changes in generated docs that show composed schemas.

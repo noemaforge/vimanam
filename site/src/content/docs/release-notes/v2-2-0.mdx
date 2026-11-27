@@ -1,0 +1,95 @@
+---
+title: "Vimanam 2.2.0"
+description: "Compiles .proto files without protoc, shows proto comments in Markdown, and moves GraphQL and YAML parsing to stricter, maintained parsers."
+sidebar:
+  label: "2.2.0"
+  order: 2
+---
+
+import { Badge } from '@astrojs/starlight/components';
+
+Vimanam 2.2.0, released on 2026-11-24, removes the need for an external `protoc` binary. Vimanam now compiles `.proto` files in pure Rust. GraphQL and YAML inputs use new, stricter parsers.
+
+For more information, refer to the [2.2.0 changelog entry](https://github.com/noemaforge/vimanam/blob/main/CHANGELOG.md#220---2026-11-24).
+
+## Stricter YAML parsing
+
+<Badge text="Breaking change" variant="danger" />
+
+YAML specs now go through `serde-saphyr`, a pure-Rust parser with no `unsafe` code. It rejects duplicate mapping keys, so a spec that loaded on 2.1 can now fail. It also applies parsing limits against denial-of-service input, sized for multi-MB OpenAPI specs.
+
+Scalars follow YAML 1.2 Core rules. Values such as `NO`, `yes`, `on`, and `off` stay strings, as do leading-zero and underscored scalars. The parser also expands `<<:` merge keys.
+
+## Stricter GraphQL SDL validation
+
+<Badge text="Breaking change" variant="danger" />
+
+Vimanam now parses GraphQL with `apollo-parser` instead of the unmaintained `graphql-parser`. Some schemas that loaded on 2.1 now fail, for example:
+
+- an empty or braceless `schema` block
+- an `extend schema` override that conflicts with implicit roots
+- a malformed object field or directive argument
+- a duplicate input-object field or directive argument name
+
+`ve2_` and `vc2_` IDs don't change, and SDL and introspection inputs still compare equal.
+
+For more information, see [GraphQL SDL and introspection](/vimanam/graphql/).
+
+## Proto comments in generated Markdown
+
+<Badge text="New" variant="success" />
+
+Leading and trailing comments from your `.proto` files now appear in the generated Markdown. They show on services, RPCs, messages, fields, enums, and enum values. This applies to linked, `--inline-schemas`, `--split`, and `--output-mode skill` output.
+
+Comments don't change `ve2_` or `vc2_` IDs or diff results.
+
+For more information, see [Protocol Buffers and gRPC](/vimanam/protobuf/).
+
+## More GraphQL SDL features
+
+<Badge text="New" variant="success" />
+
+Vimanam now reads `extend schema`, schema descriptions, repeatable directives, and `@oneOf` input objects.
+
+For more information, see [GraphQL SDL and introspection](/vimanam/graphql/).
+
+## Nushell completions and man pages
+
+<Badge text="New" variant="success" />
+
+`vimanam completions nushell` joins the existing bash, zsh, fish, elvish, and powershell completions. `vimanam man` writes the `vimanam(1)` roff man page to stdout. With `--out-dir <DIR>`, it writes a page for `vimanam` and each subcommand into `<DIR>`.
+
+For more information, see [Installation and completions](/vimanam/installation/).
+
+## No `protoc` needed for `.proto` files
+
+<Badge text="Enhancement" variant="note" />
+
+Vimanam compiles `.proto` sources itself, including Google well-known imports and `source_code_info`. You no longer need `protoc` on `PATH`, including for Git-ref `.proto` diffs. Protobuf Editions are still rejected before any output is created.
+
+Git-ref diffs read committed `.proto` files from Git blobs in memory. Import roots stay confined, and the symlink, regular-file, and shadowing checks still apply.
+
+For more information, see [Protocol Buffers and gRPC](/vimanam/protobuf/).
+
+## Better shell help
+
+<Badge text="Enhancement" variant="note" />
+
+Path flags now have file and directory hints for shell completion. `--help` output wraps to the terminal width.
+
+For more information, see [CLI reference](/vimanam/cli-reference/).
+
+## Security update for rustix
+
+<Badge text="Enhancement" variant="note" />
+
+Updated dependencies resolve `RUSTSEC-2026-0486` by moving `rustix` from 1.1.5 to 1.1.6.
+
+## Upgrade from 2.1
+
+Check your inputs before you update CI to 2.2:
+
+- Remove duplicate mapping keys from YAML specs.
+- Check YAML specs that rely on YAML 1.1 booleans such as `yes` or `on`. Vimanam now reads them as strings.
+- Fix GraphQL schemas that the stricter SDL validation rejects.
+- Remove `protoc` from CI images that only had it for Vimanam.

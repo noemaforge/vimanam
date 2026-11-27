@@ -1,0 +1,68 @@
+---
+title: "Release notes"
+description: "What changed in each Vimanam release, and what to check before you upgrade a CI gate, generated docs, or library code."
+sidebar:
+  label: "All releases"
+  order: 0
+---
+
+import { Badge } from '@astrojs/starlight/components';
+
+Each release has its own page that explains what changed and what you need to do when you upgrade. Start with the latest release, or with the release after the one you run today.
+
+For more information, refer to the [full changelog](https://github.com/noemaforge/vimanam/blob/main/CHANGELOG.md).
+
+## Read the badges
+
+Each change on a release page has one badge, and the page lists them in this order:
+
+- <Badge text="Breaking change" variant="danger" /> You need to change a command, a configuration, a CI setup, or library code.
+- <Badge text="New" variant="success" /> A new flag, command, input format, or capability.
+- <Badge text="Enhancement" variant="note" /> An existing feature works better, including fixes you might notice.
+- <Badge text="Behavior change" variant="caution" /> Something works differently, and you don't need to change anything.
+
+## Version 2
+
+Version 2 adds Protocol Buffers and GraphQL inputs on a format-neutral contract model.
+
+| Release | Date | Summary |
+|---|---|---|
+| [2.3.0](/vimanam/release-notes/v2-3-0/) | 2026-11-27 | More accurate breaking-change verdicts, every media type compared, fast diffs of large specs, and rules checked against Lean models. |
+| [2.2.0](/vimanam/release-notes/v2-2-0/) | 2026-11-24 | Compiles `.proto` files without `protoc`, shows `.proto` comments in Markdown, and adds stricter GraphQL and YAML parsers. |
+| [2.1.0](/vimanam/release-notes/v2-1-0/) | 2026-11-04 | Adds GraphQL schema inputs, detects moved OpenAPI endpoints, and widens pagination detection. |
+| [2.0.0](/vimanam/release-notes/v2-0-0/) | 2026-10-14 | Adds Protocol Buffers and gRPC inputs and a format-neutral contract model. JSON diffs default to contract v2. |
+
+## Version 1
+
+Version 1 adds YAML input, the `diff` command, Git-ref diffs, and output built for coding agents.
+
+| Release | Date | Summary |
+|---|---|---|
+| [1.7.0](/vimanam/release-notes/v1-7-0/) | 2026-10-07 | Diffs OpenAPI specs from Git refs, follows renames, and adds the `gitrefs::Repository` library API. |
+| [1.6.0](/vimanam/release-notes/v1-6-0/) | 2026-10-07 | Publishes Vimanam as a Rust library that you can use without the CLI dependencies. |
+| [1.5.0](/vimanam/release-notes/v1-5-0/) | 2026-10-02 | Adds `--costs`, a dry run that shows which endpoints and schemas use the most tokens. |
+| [1.4.2](/vimanam/release-notes/v1-4-2/) | 2026-09-30 | Reorganizes the source code. Output is byte-identical to 1.4.1. |
+| [1.4.1](/vimanam/release-notes/v1-4-1/) | 2026-09-30 | Refreshes transitive dependencies. Generated Markdown is unchanged. |
+| [1.4.0](/vimanam/release-notes/v1-4-0/) | 2026-09-30 | Adds `--split` pages, Skill output, `--schema` and `--schema-field` reads, and `--schema-depth`. |
+| [1.3.0](/vimanam/release-notes/v1-3-0/) | 2026-09-26 | Renders exactly the operations you name with `--operation` and `--operation-id`. |
+| [1.2.0](/vimanam/release-notes/v1-2-0/) | 2026-09-26 | Adds `diff --format json`, with stable, content-derived `vc1_` change IDs. |
+| [1.1.0](/vimanam/release-notes/v1-1-0/) | 2026-09-17 | Adds the `diff` command with a breaking-change gate, the spec hygiene report, `--stats`, and shell completions. |
+| [1.0.1](/vimanam/release-notes/v1-0-1/) | 2026-07-07 | Cleans up the response model and fixes the documented MSRV. Published on GitHub only, not on crates.io. |
+| [1.0.0](/vimanam/release-notes/v1-0-0/) | 2026-06-30 | Reads YAML for OpenAPI 3.x and Swagger 2.0, and raises the MSRV to Rust 1.96. |
+
+## Version 0
+
+Version 0 builds the OpenAPI to Markdown converter.
+
+| Release | Date | Summary |
+|---|---|---|
+| [0.6.0](/vimanam/release-notes/v0-6-0/) | 2026-06-26 | Adds Homebrew, install scripts, `cargo binstall`, and ARM64 Linux binaries. Renames release archives. |
+| [0.5.1](/vimanam/release-notes/v0-5-1/) | 2026-06-24 | Parses more real-world specs, including parameter and path-item `$ref`s and 3.1 type arrays. |
+| [0.5.0](/vimanam/release-notes/v0-5-0/) | 2026-06-22 | Adds request and response examples, `--group-by path`, and a `--max-tokens` budget. |
+| [0.4.0](/vimanam/release-notes/v0-4-0/) | 2026-06-16 | Makes filters case-insensitive, always shows errors, orders output deterministically, and speeds up `$ref` resolution. |
+| [0.3.0](/vimanam/release-notes/v0-3-0/) | 2026-06-15 | Renders request and response schemas as nested field tables with resolved `$ref`s. |
+| [0.2.2](/vimanam/release-notes/v0-2-2/) | 2026-06-11 | Adds `--version`, automatic crates.io publishing, and a changelog. |
+| [0.2.1](/vimanam/release-notes/v0-2-1/) | 2026-06-11 | Documents optional request bodies, makes output deterministic, fixes `--flat`, and removes unimplemented flags. |
+| [0.2.0](/vimanam/release-notes/v0-2-0/) | 2025-03-18 | Adds OpenAPI 3.0 support alongside Swagger 2.0. |
+| [0.1.1](/vimanam/release-notes/v0-1-1/) | 2025-03-07 | Adds release binaries for macOS on ARM64. |
+| [0.1.0](/vimanam/release-notes/v0-1-0/) | 2025-03-07 | First release: converts Swagger 2.0 JSON to Markdown with grouping, filters, sorting, and detail levels. |

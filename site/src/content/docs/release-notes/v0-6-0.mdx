@@ -1,0 +1,39 @@
+---
+title: "Vimanam 0.6.0"
+description: "Adds Homebrew, install scripts, cargo binstall, and ARM64 Linux binaries, and renames release archives."
+sidebar:
+  label: "0.6.0"
+  order: 16
+---
+
+import { Badge } from '@astrojs/starlight/components';
+
+Vimanam 0.6.0, released on 2026-06-26, adds new ways to install Vimanam. Releases are now built with `dist`, which also changes how release archives are named.
+
+For more information, refer to the [0.6.0 changelog entry](https://github.com/noemaforge/vimanam/blob/main/CHANGELOG.md#060---2026-06-26).
+
+## Release archives renamed
+
+<Badge text="Breaking change" variant="danger" />
+
+Release archives are now `.tar.xz` files named `vimanam-<target-triple>`. They used to be `.tar.gz` files named `vimanam-<version>-<target-triple>`. Update any script that downloads archives by name.
+
+Archives now also bundle `CHANGELOG.md`. Per-archive `.sha256` checksums and a combined `sha256.sum` are still published.
+
+## Install with Homebrew, install scripts, or cargo binstall
+
+<Badge text="New" variant="success" />
+
+Each release now publishes the following, alongside the crates.io package and prebuilt archives:
+
+- A Homebrew formula, installed with `brew install noemaforge/tap/vimanam`.
+- Shell and PowerShell install scripts.
+- Binaries that `cargo binstall vimanam` can install.
+
+For more information, see [Installation and completions](/vimanam/installation/).
+
+## ARM64 Linux binaries
+
+<Badge text="New" variant="success" />
+
+Releases now include `aarch64-unknown-linux-gnu` binaries for ARM64 Linux.

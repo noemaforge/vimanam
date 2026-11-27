@@ -1,0 +1,55 @@
+---
+title: "Vimanam 1.4.0"
+description: "Adds split pages, Skill output for agents, single-schema and field reads, and a schema depth limit."
+sidebar:
+  label: "1.4.0"
+  order: 10
+---
+
+import { Badge } from '@astrojs/starlight/components';
+
+Vimanam 1.4.0, released on 2026-09-30, lets you give an LLM or agent only the part of a spec it needs. You can write docs as linked pages or as a Skill, or read a single schema or field.
+
+For more information, refer to the [1.4.0 changelog entry](https://github.com/noemaforge/vimanam/blob/main/CHANGELOG.md#140---2026-09-30).
+
+## Split docs into linked pages
+
+<Badge text="New" variant="success" />
+
+`--split service|tag|endpoint -o <DIR>` writes a compact `index.md`, full guidance in `api.md`, and shared `schemas/` pages. Detail pages stay at the requested detail level.
+
+`--overview-max-tokens` budgets only `index.md`. When entries don't fit, `index-all.md` keeps full navigation. A manifest removes only unchanged generated files and refuses to overwrite edited or unmanaged paths.
+
+For more information, see [Split trees and Skill mode](/vimanam/split-and-skills/).
+
+## Skill output for agents
+
+<Badge text="New" variant="success" />
+
+`--output-mode skill -o <DIR>` writes a tree an agent can navigate. It has a `SKILL.md` with YAML frontmatter, service and schema hubs, and one shared file per operation.
+
+Each hub entry shows an approximate characters/4 read cost for that file. `--overview-max-tokens` limits only `SKILL.md`, with a default of 1600. Complete service navigation stays in `index.md`.
+
+For more information, see [Split trees and Skill mode](/vimanam/split-and-skills/).
+
+## Read a single schema or field
+
+<Badge text="New" variant="success" />
+
+`--schema <NAME>` reads a named schema. `--schema-field <NAME>#<JSON_POINTER>` reads a subtree with its ancestors, and pointers follow `$ref`s. Both flags are repeatable.
+
+Reads include types, requiredness, descriptions, and enums. They always use full schema metadata and leave out the hygiene report. Invalid selectors fail before any output file is created.
+
+For more information, see [Token budgets and selection](/vimanam/llm-context/).
+
+## Limit schema expansion depth
+
+<Badge text="New" variant="success" />
+
+`--schema-depth <N>`, from 0 to 24, limits how far properties, arrays, compositions, additional properties, and `$ref`s expand. It also applies to deferred definitions and split and Skill pages.
+
+At the limit, rows keep their type and metadata, say what was left out, and give a retrieval command. Links point only at schemas that were written.
+
+Under `--max-tokens`, explicit field selections stay intact, even at budget zero. You get an over-budget notice instead of a lower-detail fallback.
+
+For more information, see [Token budgets and selection](/vimanam/llm-context/).

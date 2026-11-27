@@ -7,8 +7,78 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.3.0] - 2026-11-27
+
+### Library API breaks
+
+This release breaks the Rust library API in a minor version; the CLI is
+unaffected. Code that only calls functions and reads fields is unaffected, as
+is code that matches with `..`. Code that builds these types as struct
+literals, or lists their fields in a pattern without `..`, must be updated.
+Details are in the entries below.
+
+- `contract::Change` has a new `uses` field (#181).
+- `diff::ChangeKind::ParameterSchemaChanged`, `RequestSchemaChanged` and
+  `ResponseSchemaChanged` have a new `fail_closed` field (#187, #188);
+  `RequestSchemaChanged` and `ResponseSchemaChanged` also have a new
+  `media_type` field (#154).
+- `ApiDocumentation` (`unparsed_schemas`), `Parameter` (`media_type`),
+  `diff::SpecDiff` (`unparsed_definitions`) and `contract::json::JsonDiff`
+  (`warnings`) each have a new field (#154, #188).
+- `diff::ChangeKind` and `diff::json::JsonChangeKind` have new variants
+  (`ComponentSchemaChanged`, and four media-type variants); both enums are
+  `#[non_exhaustive]`.
+- `diff::SpecDiff::endpoints_changed` now counts every use of a changed
+  shared component (#181).
+
 ### Behavior changes
 
+- **Protobuf: changing an RPC between unary and streaming is wire-breaking**
+  (#153). `RPC_SAME_CLIENT_STREAMING` and `RPC_SAME_SERVER_STREAMING` now
+  carry the `wire` impact as well as `source` and `wire_json`, because the
+  gRPC framing changes. `diff --breaking wire --fail-on-breaking` now exits 3
+  on them, matching buf's `WIRE` category. Impacts are not hashed, so `vc2_`
+  IDs are unchanged.
+- **GraphQL: a member repeated inside one SDL definition is checked** (#163).
+  This covers fields, arguments (including on fields added by `extend`),
+  input fields, enum values, interfaces and union members, in SDL and in
+  introspection JSON.
+  - A repeat with a different type, arguments, default or deprecation is
+    now an error, for example `Duplicate GraphQL field Query.x in a.graphql
+    with a conflicting definition`.
+  - An identical repeat (only the description may differ) keeps the first
+    occurrence and prints one stderr warning per member. `diff` labels each
+    warning `old:` or `new:`. GitHub's published schema has such repeats and
+    still loads.
+  - A member already on the type is still an error in an `extend` block,
+    even when identical.
+  - New library constructors `contract::graphql::Document::{read,
+    from_bytes, from_sdl, from_introspection}_reporting` return the
+    warnings instead of printing them.
+- **Body tables label their root row and drop the synthetic prefix** (#156).
+  An operation's request and response schema tables now start with a
+  `(request body)` / `(response body)` row and list fields by their real
+  paths: `input_file_id`, `[].id` and `allOf[1].id` instead of
+  `request.input_file_id`, `response[].id` and `response.allOf[1].id`.
+  Root-level `additionalProperties` (`*`) and composition rows follow the
+  same rule, and protobuf RPC message tables get the same labels. Named roots
+  (Schema Definitions, `--schema`, split schema pages, GraphQL argument
+  roots) keep their name prefix.
+- **Large selected slices are bounded at `--schema-depth 2` by default**
+  (#160). Without `--schema-depth`, a selected slice (`--schema`,
+  `--schema-field`, or `--operation`/`--operation-id` at `--detail full
+  --include-schemas`) whose roots reach more than 200 component schemas
+  renders at `--schema-depth 2`, with a stderr notice. Stripe `--schema
+  customer` output becomes about 90 times smaller, and GitHub GraphQL
+  `Mutation.createIssue` about 270 times smaller. Whole documents and
+  split/Skill trees are not bounded this way, and an explicit
+  `--schema-depth` is used as given. Retrieval hints include the active
+  depth.
+- **Omission notices on stderr are grouped** (#161). Omitted nested
+  expansions are summarised once per retrieval command, listing the fields,
+  instead of one line per field. Stripe `PostPaymentIntents
+  --schema-depth 2` goes from 399 stderr lines to 4. The notes in the
+  Markdown tables are unchanged.
 - **`--inline-schemas` renders are bounded at 2,000,000 schema rows**
   (#177). Whole-document `--detail full --include-schemas --inline-schemas`
   renders now finish on densely cyclic specs. Inline expansion re-expands
@@ -104,8 +174,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - A value that exists on one side only (an added property, say) keeps
     nested `$ref`s as written instead of inlining them.
 
+### Added
+
+- `diff --format json --omit-surfaces` (#159) writes contract v2 without the
+  full `old.contract`/`new.contract` entity graphs, marked
+  `"surfaces_omitted": true`. `summary`, `changes` (every ID, native location
+  and detail), `--report` deltas and the `--fail-on-breaking` exit code are
+  the same as in the default output. On a 2.9 MB spec with two changes the
+  output drops from 24 MB to 1.8 KB. The surfaces are still built, so peak
+  memory is unchanged. The flag requires `--format json` and `--contract 2`,
+  and exits 1 otherwise. Library: `contract::json::JsonDiff::without_surfaces`
+  returns the new `JsonDiffWithoutSurfaces`. Default output is unchanged.
+- `diff --old-proto-path DIR` and `--new-proto-path DIR` (#162), repeatable,
+  resolve each side's `.proto` imports against its own roots. Before, the
+  shared `-I` list served both sides, so a change inside an imported file
+  could be read from the wrong checkout and go unreported. A side's own list
+  replaces `-I` for that side, and imports never cross sides. The flags exit
+  1 with `--from-ref`/`--to-ref` or when an input is not a `.proto` source.
+- Lean models of the `diff` rules, checked in CI. `formal/` holds Lean 4
+  models of the OpenAPI severity rule table, an executable reference model
+  of `$ref`-aware schema diffs, and the Protobuf rule table and `--breaking`
+  gate. Differential oracles replay the models' cases in `cargo test`, a
+  generated-pair harness compares the reference model with the Rust, and a
+  drift check warns in CI when modelled Rust changes before the model is
+  re-read. Several fixes in this release (#184, #186, #187, #188) were
+  specified in the models first. See `formal/README.md` for what is modelled
+  and the known limits.
+
 ### Changed
 
+- `diff` resolves fewer schemas and builds each contract surface once
+  (#152). Two schemas whose roots are equal and whose `$ref` closures
+  reach no changed component are no longer resolved and compared; each
+  component is converted once per document; v2 builds each contract surface
+  once (before: four to seven times); and JSON output is buffered. OpenAI
+  `a01e367..373f26a` v2 JSON goes from 2.5 s to 0.5 s, and Stripe's
+  published benchmark pair, which timed out, now takes under 0.2 s in
+  Markdown. Output is byte-identical.
 - `diff` walks each (old, new) schema pair once, however many uses compare
   it (#196). Before, every use (each endpoint's request body and responses,
   and since #154 each media type) made its own walk with its own expansion
@@ -150,6 +255,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `diff` no longer rates writing or dropping a keyword at its default value
+  as Breaking (#184). Adding `nullable: false` to a request, removing
+  `additionalProperties: true` from a request, or removing `nullable: false`
+  from a response each reported Breaking and exited 3 under
+  `--fail-on-breaking`. These are now Non-breaking in both directions,
+  inline and through shared components; under `not` they stay Review.
+- `diff` again rates a `$ref` outside the schema grammar as before #182
+  (#186). A reference under `default`, `const`, `if`/`then`/`else`,
+  `prefixItems`, `$defs`, `dependentSchemas`, `propertyNames`, `contains` or
+  an unknown keyword was treated as a schema edge, so a change behind it was
+  rated by the root's rules: a response `default: {$ref: P}` whose `P` changed
+  type was Breaking (exit 3). Such references are now inlined and compared in
+  place, as Review at their own pointer (`/default/type`).
+  - An `enum` or `required` member holding a `$ref` is matched as written,
+    so an added or removed member keeps its set verdict. A member written
+    the same on both sides is compared inside the member, as Review. A
+    member rewritten without changing what it resolves to (retargeted to an
+    identical component, inlined, or extracted) is paired with its
+    counterpart as one Review change, not a removal plus an addition, which
+    was Breaking in a request.
+- Protobuf `diff` between a `.pb` and a `.proto` no longer reports the
+  compilers' bundled `google/protobuf/*.proto` differences (#155). A
+  descriptor set built by protoc 36.2 against the same `.proto` compiled by
+  protox reported 94 spurious changes (Editions `FeatureSet`, `EDITION_*`
+  values, new option fields). Findings whose subject is defined only in the
+  bundled files are dropped. User `extend google.protobuf.*Options`
+  definitions, applied custom option values and user fields of well-known
+  types are still reported, and inputs made only of bundled files keep every
+  finding. The v2 `old`/`new` surfaces still list the bundled entities.
+- GraphQL `--include-schemas` links and expands argument input types
+  (#170). The `#### Request Schema` section said *No request schema
+  available*. Now each argument whose type names an input object, enum or
+  custom scalar (also inside lists) is a root of that table, labelled by the
+  argument name and linked to `## Schema Definitions`. `--schema-depth`
+  counts from the argument type, `--inline-schemas` expands it in place, and
+  split and Skill pages link the same schemas.
 - `diff` compares every media type of a request body or response (#154).
   Before, only the first one was compared, so a removed second media type,
   or a breaking change in its schema, passed `--fail-on-breaking`. Media
@@ -854,7 +995,8 @@ already on `main`; only the version bump was missing.
 - Initial release: OpenAPI 2.0 (Swagger) JSON to Markdown with grouping,
   filtering, sorting, and detail levels
 
-[Unreleased]: https://github.com/noemaforge/vimanam/compare/v2.2.0...HEAD
+[Unreleased]: https://github.com/noemaforge/vimanam/compare/v2.3.0...HEAD
+[2.3.0]: https://github.com/noemaforge/vimanam/compare/v2.2.0...v2.3.0
 [2.2.0]: https://github.com/noemaforge/vimanam/compare/v2.1.0...v2.2.0
 [2.1.0]: https://github.com/noemaforge/vimanam/compare/v2.0.0...v2.1.0
 [2.0.0]: https://github.com/noemaforge/vimanam/compare/v1.7.0...v2.0.0

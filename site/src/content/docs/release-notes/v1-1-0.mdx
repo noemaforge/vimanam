@@ -1,0 +1,85 @@
+---
+title: "Vimanam 1.1.0"
+description: "Adds spec diffs with a breaking-change gate, a spec hygiene report, a --stats dry run, and shell completions."
+sidebar:
+  label: "1.1.0"
+  order: 13
+---
+
+import { Badge } from '@astrojs/starlight/components';
+
+Vimanam 1.1.0, released on 2026-09-17, helps you review specs as well as convert them. You can compare two versions of a spec, see where a spec needs cleanup, and size the output before you generate it.
+
+For more information, refer to the [1.1.0 changelog entry](https://github.com/noemaforge/vimanam/blob/main/CHANGELOG.md#110---2026-09-17).
+
+## Compare two versions of a spec
+
+<Badge text="New" variant="success" />
+
+`vimanam diff <OLD> <NEW>` compares two versions of a spec and classifies each change as breaking, non-breaking, or needing review. Endpoints match by method and path, parameters by name and location, and responses by status code.
+
+Request and response bodies are compared as fully resolved schemas. A change behind a shared `$ref` is reported on every endpoint that references it.
+
+The command has the following options:
+
+- `--fail-on-breaking` exits `3` when the diff finds a breaking change.
+- `--report` appends hygiene-count and token-estimate deltas.
+- `-o` writes the report to a file.
+
+For more information, see [Contract diff and Git refs](/vimanam/diff/).
+
+## Spec hygiene report
+
+<Badge text="New" variant="success" />
+
+Every conversion now ends with a hygiene report after a horizontal rule. The report counts and lists the following:
+
+- Operations missing a description, an `operationId`, or documented responses.
+- Deprecated and untagged operations.
+- Duplicate `operationId` values.
+- Parameters without a description.
+
+The report covers the same endpoints as the documentation, so filters narrow it too. `--no-report` turns it off.
+
+## Size output with a dry run
+
+<Badge text="New" variant="success" />
+
+`--stats` prints a plain-text table instead of Markdown. It shows visible endpoint counts and estimated token sizes (chars/4) per service, plus a whole-document `TOTAL`.
+
+`--stats` applies `--detail`, grouping, and filter flags, so you can size slices before choosing `--service-filter`, `--detail`, or `--max-tokens`. It conflicts with `-o` and `--max-tokens`, and it never includes the hygiene report.
+
+For more information, see [Token budgets and selection](/vimanam/llm-context/).
+
+## Shell completions
+
+<Badge text="New" variant="success" />
+
+`vimanam completions <SHELL>` prints a completion script to stdout for bash, zsh, fish, PowerShell, or Elvish.
+
+For more information, see [Installation and completions](/vimanam/installation/).
+
+## Explicit table of contents flag
+
+<Badge text="New" variant="success" />
+
+`--toc` is the explicit opposite of `--no-toc`. When you pass both, the later one wins.
+
+## Warning when `--required-only` has no effect
+
+<Badge text="Enhancement" variant="note" />
+
+Vimanam now warns when you combine `--required-only` with `--detail basic` or `--detail summary`. This matches the existing warnings for `--include-schemas` and `--include-examples`.
+
+## Swagger 2.0 server URLs respect schemes
+
+<Badge text="Enhancement" variant="note" />
+
+Vimanam now uses Swagger 2.0 `schemes` when it builds the server URL from `host` and `basePath`. Plain-HTTP specs used to get an assumed `https://` prefix.
+
+## Upgrade from 1.0
+
+The hygiene report is on by default, so the output of every conversion changes. Take these steps:
+
+- Expect diffs in committed docs, or pass `--no-report` to keep the previous output.
+- Pass `--no-report` when the whole output must fit `--max-tokens`, because the report isn't counted against the budget.

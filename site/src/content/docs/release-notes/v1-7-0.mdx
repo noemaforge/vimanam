@@ -1,0 +1,39 @@
+---
+title: "Vimanam 1.7.0"
+description: "Diffs OpenAPI specs straight from Git refs, follows renames, and adds a library API for committed specs."
+sidebar:
+  label: "1.7.0"
+  order: 5
+---
+
+import { Badge } from '@astrojs/starlight/components';
+
+Vimanam 1.7.0, released on 2026-10-07, diffs a spec between two Git commits without a checkout. Vimanam finds the spec at each ref, follows renames, and runs the usual report and breaking-change checks.
+
+For more information, refer to the [1.7.0 changelog entry](https://github.com/noemaforge/vimanam/blob/main/CHANGELOG.md#170---2026-10-07).
+
+## Diff specs from Git refs
+
+<Badge text="New" variant="success" />
+
+`vimanam diff --from-ref <OLD> --to-ref <NEW>` compares committed specs. Markdown and JSON output, deltas, and breaking-change checks work as they do with files. If Git input fails, existing output files stay untouched.
+
+If the newer ref has a single candidate spec, Vimanam picks it. Otherwise, pass `--spec <PATH>`. For a spec that was both moved and rewritten, pass `--from-spec` and `--to-spec` to skip filename matching.
+
+For more information, see [Contract diff and Git refs](/vimanam/diff/).
+
+## Library API for committed specs
+
+<Badge text="New" variant="success" />
+
+`gitrefs::Repository` finds the Git worktree, lists committed JSON and YAML OpenAPI candidates, and reads exact spec bytes at any ref. It uses the `git` on your `PATH`, adds no dependencies, and checks nothing out.
+
+Rename tracking works for ancestor and sibling-branch comparisons. When lineage is missing or ambiguous, it reports that instead of guessing.
+
+For more information, see [CI pipelines and Rust library](/vimanam/ci-and-library/).
+
+## Faster backward comparisons
+
+<Badge text="Enhancement" variant="note" />
+
+Comparing back along complete linear history now uses a file-focused `git log --follow` path. It checks file changes against the same rename rules. Merges, sibling branches, forward comparisons, and shallow histories keep the merge-aware traversal.

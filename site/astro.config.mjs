@@ -101,6 +101,11 @@ export default defineConfig({
           items: [{ label: 'CLI reference', slug: 'cli-reference' }],
         },
         {
+          label: 'Release notes',
+          collapsed: true,
+          items: [{ autogenerate: { directory: 'release-notes' } }],
+        },
+        {
           label: 'Benchmarks',
           items: [
             { label: 'Overview & methodology', slug: 'benchmarks' },

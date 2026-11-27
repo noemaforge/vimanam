@@ -1,0 +1,92 @@
+---
+title: "Vimanam 2.1.0"
+description: "Adds GraphQL schema inputs, detects OpenAPI endpoints that moved to a new path, and widens pagination inference."
+sidebar:
+  label: "2.1.0"
+  order: 3
+---
+
+import { Badge } from '@astrojs/starlight/components';
+
+Vimanam 2.1.0, released on 2026-11-04, adds GraphQL as a third input format next to OpenAPI and Protobuf. OpenAPI diffs now also recognize an endpoint that moved to a new path.
+
+For more information, refer to the [2.1.0 changelog entry](https://github.com/noemaforge/vimanam/blob/main/CHANGELOG.md#210---2026-11-04).
+
+## GraphQL schema inputs
+
+<Badge text="New" variant="success" />
+
+Vimanam reads GraphQL SDL files, directories of SDL files, and introspection JSON. It merges SDL directories and follows symlinked files and directories, merging each file once. Both sources map onto the neutral model with schema-coordinate identities.
+
+The diff applies directional breaking rules to removals, nullability, required arguments and input fields, type changes, union members, interfaces, and type kinds. Output enum additions and default changes are flagged for review. Relay connection pagination is reported as a fact.
+
+GraphQL works with the Markdown report, v2 JSON, `--fail-on-breaking`, Git refs, and Markdown and Skill output.
+
+For more information, see [GraphQL SDL and introspection](/vimanam/graphql/).
+
+## Focused GraphQL diff context
+
+<Badge text="New" variant="success" />
+
+`diff --context` writes focused context for the changed parts of a GraphQL schema. Add `--max-tokens <N>` to set a token budget.
+
+For more information, see [GraphQL SDL and introspection](/vimanam/graphql/).
+
+## Moved OpenAPI endpoints
+
+<Badge text="New" variant="success" />
+
+When an operation moves, for example from `/v1/items` to `/v2/items`, `diff` reports one breaking "Endpoint moved" change. The operation's own changes follow it, attributed to the new path.
+
+After exact method and path matching, leftover operations of the same method pair by `operationId`. Then they pair by path, ignoring whole `v<digits>` segments. A pair forms only when its key is unique across both specs.
+
+Pass `--exact-paths` to turn move detection off.
+
+For more information, see [Contract diff and Git refs](/vimanam/diff/).
+
+## Library functions for move detection
+
+<Badge text="New" variant="success" />
+
+The new `diff_with` and `openapi_with` functions take `diff::EndpointMatching::Moves` to pair moved endpoints. The default entry points `diff::diff`, `contract::openapi::diff`, and `contract::json::openapi` still match paths exactly.
+
+For more information, see [CI pipelines and Rust library](/vimanam/ci-and-library/).
+
+## Wider OpenAPI pagination inference
+
+<Badge text="Enhancement" variant="note" />
+
+Continuation names now match case-insensitively and ignore `_`, `-`, `@`, and `.`. Vimanam recognizes more names, such as `continuationToken`, `nextLink`, `@odata.nextLink`, `LastEvaluatedKey`, and `next_url`.
+
+It also looks one object level down, for example `response_metadata.next_cursor` or `links.next`. Generic names like `cursor`, `next`, or `after` count only with a token control or an end-of-results flag such as `has_more`.
+
+## More GraphQL pagination shapes
+
+<Badge text="Enhancement" variant="note" />
+
+Vimanam now detects backward-only Relay connections that use `last` and `before`. It also detects connections with `nodes` and `pageInfo` but no `edges`.
+
+## Fixes for grouping and JSON output
+
+<Badge text="Enhancement" variant="note" />
+
+`--group-by method` no longer drops non-HTTP operations. Protobuf `RPC` and GraphQL root-field sections now follow the HTTP methods. OpenAPI output is unchanged.
+
+`diff --format json` v2 output is now byte-deterministic. Some schema and Swagger 2 parameter keywords used to come out in random key order between runs. IDs were already stable.
+
+## Diff output for moved endpoints
+
+<Badge text="Behavior change" variant="caution" />
+
+Markdown and v2 JSON output change for specs where an operation moved path. What 2.0.0 reported as `operation_removed` plus `operation_added` is now one `operation_moved` plus the inner changes. The `vc2_` IDs and summary counts differ.
+
+Some pagination facts also get new `vc2_` IDs. This happens when only the broader 2.1 rules find evidence on one side, such as after renaming `nextPageToken` to `next_token`. Facts the 2.0.0 rule matches on both sides keep their IDs.
+
+`--format json --contract 1` output is byte-identical to 2.0.0.
+
+## Upgrade from 2.0
+
+If you keep a list of accepted change IDs, update it after your first 2.1 run:
+
+- Regenerate `vc2_` IDs for operations that moved path, or pass `--exact-paths` to keep the 2.0.0 output.
+- Check pagination facts whose continuation field was renamed or moved under another object.

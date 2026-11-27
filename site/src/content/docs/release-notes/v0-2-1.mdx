@@ -1,0 +1,49 @@
+---
+title: "Vimanam 0.2.1"
+description: "Documents optional request bodies, makes output deterministic, implements --flat, and removes unimplemented flags."
+sidebar:
+  label: "0.2.1"
+  order: 22
+---
+
+import { Badge } from '@astrojs/starlight/components';
+
+Vimanam 0.2.1, released on 2026-06-11, makes the output correct and repeatable. It also removes flags that were never implemented.
+
+For more information, refer to the [0.2.1 changelog entry](https://github.com/noemaforge/vimanam/blob/main/CHANGELOG.md#021---2026-06-11).
+
+## Unimplemented flags removed
+
+<Badge text="Breaking change" variant="danger" />
+
+`--format`, `--template`, and `--group-by path|tag` were never implemented and are removed. Remove them from any scripts that pass them.
+
+## Minimum Rust version declared as 1.85
+
+<Badge text="Breaking change" variant="danger" />
+
+The crate now declares `rust-version = "1.85"`, and CI builds on that version. You need Rust 1.85 or later to build from source.
+
+## Flat grouping
+
+<Badge text="New" variant="success" />
+
+`--flat` grouping now works. It was a placeholder before.
+
+## Optional request bodies documented
+
+<Badge text="Enhancement" variant="note" />
+
+Request bodies without `required: true` now appear in the parameter table. They used to be dropped. The Required column now reflects the spec instead of always saying Yes.
+
+## Deterministic output
+
+<Badge text="Enhancement" variant="note" />
+
+Paths, responses, and content now keep their spec order. Identical inputs produce byte-identical Markdown.
+
+## LLM context guidance in the README
+
+<Badge text="Enhancement" variant="note" />
+
+The README has a new section on preparing API context for LLMs.

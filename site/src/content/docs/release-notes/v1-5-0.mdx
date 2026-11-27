@@ -1,0 +1,30 @@
+---
+title: "Vimanam 1.5.0"
+description: "Adds --costs, a dry run that shows which endpoints and schemas use the most tokens in generated docs."
+sidebar:
+  label: "1.5.0"
+  order: 7
+---
+
+import { Badge } from '@astrojs/starlight/components';
+
+Vimanam 1.5.0, released on 2026-10-02, shows where the tokens in your generated docs come from. Use it to plan what to send to an LLM.
+
+For more information, refer to the [1.5.0 changelog entry](https://github.com/noemaforge/vimanam/blob/main/CHANGELOG.md#150---2026-10-02).
+
+## Token-cost dry run
+
+<Badge text="New" variant="success" />
+
+`--costs` prints a token-cost breakdown instead of Markdown. It includes the following sections:
+
+- per-endpoint slice costs, each with its share of the whole-document total
+- per-schema definition costs and use-site counts
+- an inline-expansion model with an amplification ratio, guarded against cycles
+- hotspot rankings
+
+Estimates use the characters/4 heuristic over rendered output. Rows overlap through the document frame and shared schemas, and the report says so.
+
+`--costs` applies your detail level, filters, and schema mode, including `--inline-schemas`. It conflicts with `-o`, `--max-tokens`, `--stats`, split and Skill output, and schema selection.
+
+For more information, see [Token budgets and selection](/vimanam/llm-context/).

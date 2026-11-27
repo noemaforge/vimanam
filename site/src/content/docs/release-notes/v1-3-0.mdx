@@ -1,0 +1,29 @@
+---
+title: "Vimanam 1.3.0"
+description: "Renders exactly the operations you name with --operation and --operation-id."
+sidebar:
+  label: "1.3.0"
+  order: 11
+---
+
+import { Badge } from '@astrojs/starlight/components';
+
+Vimanam 1.3.0, released on 2026-09-26, lets you document a precise slice of a spec. You name the operations you want, and Vimanam renders only those.
+
+For more information, refer to the [1.3.0 changelog entry](https://github.com/noemaforge/vimanam/blob/main/CHANGELOG.md#130---2026-09-26).
+
+## Select operations by method and path or by ID
+
+<Badge text="New" variant="success" />
+
+`--operation "<METHOD> <PATH>"` selects an operation by method and path, and `--operation-id <ID>` selects one by its `operationId`. Both flags are repeatable. The selection is the union of every value you pass, and the other filters still apply to it.
+
+The path must equal the spec's path template byte for byte. The method is case-insensitive, and a Swagger 2 `basePath` isn't part of the path. You can pass the endpoints that `diff --format json` reports straight back to `--operation`.
+
+Selections also handle these cases:
+
+- A value that matches no operation in the spec exits `1`, with a "did you mean" hint when one is close.
+- An operation that another filter removes produces a warning on stderr.
+- The service and summary views leave out services that the selection leaves empty.
+
+For more information, see [Token budgets and selection](/vimanam/llm-context/).

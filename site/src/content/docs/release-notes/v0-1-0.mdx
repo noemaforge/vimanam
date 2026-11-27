@@ -1,0 +1,41 @@
+---
+title: "Vimanam 0.1.0"
+description: "The first release, converting Swagger 2.0 JSON specs to Markdown."
+sidebar:
+  label: "0.1.0"
+  order: 25
+---
+
+import { Badge } from '@astrojs/starlight/components';
+
+Vimanam 0.1.0, released on 2025-03-07, is the first release. It converts an OpenAPI 2.0 (Swagger) JSON spec into Markdown documentation.
+
+For more information, refer to the [0.1.0 changelog entry](https://github.com/noemaforge/vimanam/blob/main/CHANGELOG.md#010---2025-03-07).
+
+## Swagger 2.0 JSON to Markdown
+
+<Badge text="New" variant="success" />
+
+`vimanam <FILE> -o <OUTPUT>` converts a Swagger 2.0 JSON spec to Markdown. Without `-o`, it writes to stdout.
+
+## Grouping and sorting
+
+<Badge text="New" variant="success" />
+
+Endpoints are grouped by service by default, and `--method` groups them by HTTP method instead. `--sort alpha|path-length|none` orders endpoints, and the default is `alpha`.
+
+## Filters
+
+<Badge text="New" variant="success" />
+
+The following flags narrow what the documentation shows:
+
+- `--service-filter`, `--path-filter`, and `--method-filter` select endpoints.
+- `--exclude-deprecated` hides deprecated endpoints.
+- `--required-only` shows only required parameters.
+
+## Detail levels and table of contents
+
+<Badge text="New" variant="success" />
+
+`--detail summary|basic|standard|full` controls how much information each endpoint shows, and the default is `summary`. A table of contents is included unless you pass `--no-toc`.
