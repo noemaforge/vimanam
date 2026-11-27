@@ -32,7 +32,7 @@ jobs:
       - name: Check for breaking API changes
         uses: noemaforge/vimanam-action@4599a14c84d9d7bce1ec34ed9f12f3036f06b518 # v1
         with:
-          version: v2.2.0
+          version: v2.3.0
           args: >-
             diff --from-ref origin/${{ github.base_ref }} --to-ref HEAD
             --spec api/openapi.yaml --report --fail-on-breaking
@@ -45,7 +45,7 @@ Because `--fail-on-breaking` exits with status `3` only on breaking changes, non
 ```yaml
 - uses: noemaforge/vimanam-action@4599a14c84d9d7bce1ec34ed9f12f3036f06b518 # v1
   with:
-    version: v2.2.0
+    version: v2.3.0
     spec: api/openapi.yaml
     output: docs/api-map.md
     detail: summary
