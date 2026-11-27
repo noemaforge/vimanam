@@ -59,23 +59,25 @@ Switch between OpenAPI, Protocol Buffers, and GraphQL to compare the input, comm
 Vimanam parses each input format into a shared intermediate representation for rendering, and into a neutral contract surface for semantic comparisons. Output order stays byte-deterministic so generated docs diff cleanly in Git and preserve LLM prompt caches.
 
 <Mermaid
-  caption="Vimanam v2.2.0 architecture — pure-Rust parsers, shared Markdown/Skill renderer, and neutral contract v2 differ"
+  caption="Vimanam v2.3.0 architecture — pure-Rust parsers, a shared Markdown/Skill renderer, and a neutral contract v2 differ whose verdict rules are checked against Lean models in CI"
   code={`flowchart LR
     subgraph Inputs["Contract inputs"]
         OA["OpenAPI 2.0 / 3.x<br/>JSON &amp; serde-saphyr"]
-        PB["Protobuf &amp; gRPC<br/>protox &amp; .pb sets"]
+        PB["Protobuf &amp; gRPC<br/>protox, .pb sets &amp; per-side roots"]
         GQL["GraphQL<br/>apollo-parser &amp; JSON"]
         GIT["Git refs<br/>in-memory blobs"]
     end
     subgraph Core["Vimanam Rust core"]
         IR["Renderer IR<br/>$ref links &amp; budgets"]
-        V2["Neutral contract v2<br/>ve2_ &amp; vc2_ IDs"]
+        V2["Neutral contract v2<br/>$ref edges &amp; stable IDs"]
+        LEAN["Lean 4 models<br/>oracles &amp; drift check"]
     end
     subgraph Outputs["Deliverables"]
         MD["Markdown<br/>budgets &amp; hygiene"]
         SKILL["Split &amp; SKILL.md<br/>manifest protected"]
-        DIFF["Diff &amp; CI gates<br/>JSON v2 &amp; exit 3"]
+        DIFF["Diff &amp; CI gates<br/>JSON v2, fail-closed, exit 3"]
     end
+    LEAN -. checks verdicts .-> V2
     OA --> IR
     PB --> IR
     GQL --> IR
@@ -107,29 +109,43 @@ Vimanam parses each input format into a shared intermediate representation for r
   </div>
 </div>
 
-## Capabilities in v2.2.0
+## Capabilities in v2.3.0
 
 <div class="vim-matrix not-content">
+  <div class="vim-matrix-cell">
+    <div class="vim-matrix-head">
+      <span><code>$ref</code>-aware diffs that fail closed</span>
+      <span class="vim-matrix-tag">diff</span>
+    </div>
+    <p>Compare <code>$ref</code> targets as edges, so a change in a shared component is reported once per direction with every operation that reaches it. Every media type of a body or response is compared. Recursive and malformed schemas fail closed: a breaking change hidden behind an expansion cut still exits <code>3</code>. Every recent Stripe release pair diffs in under 2 s.</p>
+  </div>
+  <div class="vim-matrix-cell">
+    <div class="vim-matrix-head">
+      <span>Verdict rules checked against Lean models</span>
+      <span class="vim-matrix-tag">formal/</span>
+    </div>
+    <p>The OpenAPI severity table, a reference model of <code>$ref</code>-aware schema diffs, and the Protobuf rules and <code>--breaking</code> gate are written as Lean 4 models. Their cases replay as oracles in <code>cargo test</code>, and CI fails when modelled Rust changes without the model being re-read.</p>
+  </div>
   <div class="vim-matrix-cell">
     <div class="vim-matrix-head">
       <span>Agent-navigable Skill trees</span>
       <span class="vim-matrix-tag">--output-mode skill</span>
     </div>
-    <p>Generate a compact <code>SKILL.md</code> router with per-file token estimates, service hubs, shared schema pages, and hash-manifest protection against overwriting manual edits.</p>
+    <p>Generate a compact <code>SKILL.md</code> router with per-file token estimates, service hubs, shared schema pages, and hash-manifest protection against overwriting manual edits. Large selected slices and inline renders of cyclic specs are bounded by default.</p>
   </div>
   <div class="vim-matrix-cell">
     <div class="vim-matrix-head">
       <span>Pure-Rust Protobuf &amp; .proto comments</span>
-      <span class="vim-matrix-tag">protox 0.10</span>
+      <span class="vim-matrix-tag">--old-proto-path</span>
     </div>
-    <p>Compile proto2 and proto3 files in memory with zero external binaries, display leading and trailing <code>.proto</code> comments across services, RPCs, fields, and enums, and gate <code>wire</code> vs <code>source</code> breaks.</p>
+    <p>Compile proto2 and proto3 files in memory with zero external binaries, display <code>.proto</code> comments, and gate <code>wire</code> vs <code>source</code> breaks. Each side of a diff can resolve imports against its own roots, and mixed <code>.pb</code>/<code>.proto</code> diffs ignore the compilers' bundled well-known files.</p>
   </div>
   <div class="vim-matrix-cell">
     <div class="vim-matrix-head">
       <span>Modern GraphQL &amp; diff context</span>
       <span class="vim-matrix-tag">diff --context</span>
     </div>
-    <p>Merge SDL directories with <code>extend schema</code>, repeatable directives, and <code>@oneOf</code>. Detect Relay <code>edges</code> and <code>nodes</code> pagination changes and emit token-budgeted context for affected root fields.</p>
+    <p>Merge SDL directories with <code>extend schema</code>, repeatable directives, and <code>@oneOf</code>, with duplicate members checked. Expand argument input types under <code>--include-schemas</code>, detect Relay <code>edges</code> and <code>nodes</code> pagination changes, and emit token-budgeted context for affected root fields.</p>
   </div>
   <div class="vim-matrix-cell">
     <div class="vim-matrix-head">
