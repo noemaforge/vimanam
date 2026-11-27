@@ -1,0 +1,49 @@
+---
+title: "Vimanam 0.5.1"
+description: "Parses more real-world specs, including OpenAPI 3.1 type arrays, and ships checksummed release archives."
+sidebar:
+  label: "0.5.1"
+  order: 17
+---
+
+import { Badge } from '@astrojs/starlight/components';
+
+Vimanam 0.5.1, released on 2026-06-24, fixes parsing problems that made some real-world specs fail or render incomplete docs. Release artifacts also change from bare binaries to archives.
+
+For more information, refer to the [0.5.1 changelog entry](https://github.com/noemaforge/vimanam/blob/main/CHANGELOG.md#051---2026-06-24).
+
+## Release artifacts are archives
+
+<Badge text="Breaking change" variant="danger" />
+
+Releases now ship `.tar.gz` archives for Linux and macOS and `.zip` archives for Windows, instead of bare binaries. Update any script that downloads the bare binary.
+
+Archives are named `vimanam-<version>-<target-triple>` and hold the binary, `README.md`, and `LICENSE`. Each archive has a matching `.sha256` checksum.
+
+## More specs parse
+
+<Badge text="Enhancement" variant="note" />
+
+Vimanam now parses the following specs, which used to fail:
+
+- Specs with parameters given as a `$ref` to `#/components/parameters/...`.
+- OpenAPI 3.1 specs with `type` arrays such as `["string", "null"]`. Several non-null types render as a union, such as `string | integer`.
+- Specs with operations that have no `responses` object.
+
+## Referenced path items render
+
+<Badge text="Enhancement" variant="note" />
+
+Path items given as a `$ref` to `#/components/pathItems/...` now contribute their operations. They used to be dropped. Vimanam logs and skips a path-item reference it can't resolve.
+
+## Operation parameters override path parameters
+
+<Badge text="Enhancement" variant="note" />
+
+An operation-level parameter now replaces a path-level parameter with the same name and location. Before, both rendered as duplicate rows.
+
+## Undeclared tags get their own service
+
+<Badge text="Behavior change" variant="caution" />
+
+An operation tagged with a value missing from the declared `tags` list now gets its own service section. It used to be moved to the first service. Vimanam also reads tags inside referenced path items.

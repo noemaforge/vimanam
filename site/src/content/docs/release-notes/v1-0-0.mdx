@@ -1,0 +1,41 @@
+---
+title: "Vimanam 1.0.0"
+description: "Reads YAML specs for OpenAPI 3.x and Swagger 2.0, and moves to the Rust 2024 edition."
+sidebar:
+  label: "1.0.0"
+  order: 15
+---
+
+import { Badge } from '@astrojs/starlight/components';
+
+Vimanam 1.0.0, released on 2026-06-30, adds YAML input. You can point Vimanam at a spec in YAML or JSON and get the same Markdown.
+
+For more information, refer to the [1.0.0 changelog entry](https://github.com/noemaforge/vimanam/blob/main/CHANGELOG.md#100---2026-06-30).
+
+## Minimum Rust version raised to 1.96
+
+<Badge text="Breaking change" variant="danger" />
+
+Vimanam now uses the Rust 2024 edition, and the minimum supported Rust version is 1.96. If you build from source, upgrade your toolchain.
+
+## YAML input
+
+<Badge text="New" variant="success" />
+
+Vimanam now reads `.yaml` and `.yml` specs as well as `.json`, for both OpenAPI 3.x and Swagger 2.0. YAML and JSON inputs produce byte-identical output.
+
+Vimanam detects the format from the file extension, ignoring case. If that parser fails, it tries the other one, so misnamed and extension-less files still load.
+
+For more information, see [OpenAPI and Swagger](/vimanam/openapi/).
+
+## Maintained YAML parser
+
+<Badge text="Enhancement" variant="note" />
+
+The deprecated `serde_yaml` dependency is replaced with the maintained `serde_norway` fork. The fork handles YAML 1.1 quoting pitfalls, known as the "Norway problem", better.
+
+## GitHub Actions pinned to commit SHAs
+
+<Badge text="Enhancement" variant="note" />
+
+Every GitHub Action in CI and the release workflow is now pinned to a full commit SHA. A `pin-check` CI job enforces the pins.

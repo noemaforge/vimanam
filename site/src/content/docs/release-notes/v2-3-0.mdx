@@ -1,0 +1,191 @@
+---
+title: "Vimanam 2.3.0"
+description: "Breaking-change verdicts you can gate CI on: more accurate rules, every media type compared, fast diffs of large specs, and rules checked against Lean models."
+sidebar:
+  label: "2.3.0"
+  order: 1
+---
+
+import { Aside, Badge } from '@astrojs/starlight/components';
+
+Vimanam 2.3.0 was released on 2026-11-27. It makes the `vimanam diff --fail-on-breaking` exit code more accurate, and diffs of large specs much faster. Diffs now compare every media type and shared component, and a set of Lean models checks the verdict rules in CI.
+
+For more information, refer to the [2.3.0 changelog entry](https://github.com/noemaforge/vimanam/blob/main/CHANGELOG.md#230---2026-11-27).
+
+## Change IDs for shared components and media types
+
+<Badge text="Breaking change" variant="danger" />
+
+`diff` now reports a change inside a shared component once per direction, not once per operation. A body or response with several media types also reports each media type separately. So `vc2_` and `vc1_` IDs changed for these changes. If you keep a list of accepted change IDs, regenerate it from a 2.3.0 run.
+
+For more information, see [Neutral JSON contract v2](/vimanam/json-contracts/).
+
+## GraphQL schemas with conflicting repeated members
+
+<Badge text="Breaking change" variant="danger" />
+
+A member repeated inside one SDL definition with a different type, arguments, default, or deprecation is now an error. Fix the duplicate in your schema. An identical repeat still loads: Vimanam keeps the first one and prints a warning, so GitHub's published SDL loads as before.
+
+For more information, see [GraphQL SDL and introspection](/vimanam/graphql/).
+
+## Rust library types with new fields
+
+<Badge text="Breaking change" variant="danger" />
+
+This minor release adds fields to a few public types. If your code builds any of these types as a struct literal, or lists their fields in a pattern without `..`, add the new fields:
+
+- `contract::Change`
+- the schema-change variants of `diff::ChangeKind`
+- `ApiDocumentation`, `Parameter`, `diff::SpecDiff`, and `contract::json::JsonDiff`
+
+Code that only reads results is unaffected. The CLI is unaffected.
+
+For more information, refer to the [library API breaks in the changelog](https://github.com/noemaforge/vimanam/blob/main/CHANGELOG.md#library-api-breaks).
+
+## Verdict rules checked against Lean models
+
+<Badge text="New" variant="success" />
+
+The rules that decide whether a change is breaking are now also written as Lean 4 models. They cover the OpenAPI severity table, how `$ref`s are followed and compared, and the Protobuf rules and `--breaking` gate. `cargo test` replays every case the models define against the Rust code, and CI warns when modelled code changes before the model is re-read.
+
+Several fixes in this release were written in the models first. The GraphQL rules aren't modelled yet.
+
+For more information, refer to the [formal models README](https://github.com/noemaforge/vimanam/blob/main/formal/README.md).
+
+## Smaller v2 JSON with `--omit-surfaces`
+
+<Badge text="New" variant="success" />
+
+`diff --format json --omit-surfaces` leaves the full old and new entity graphs out of the v2 JSON. The summary, every change with its IDs, `--report` deltas, and the exit code stay the same. On a 2.9 MB spec with two changes, the output drops from 24 MB to 1.8 KB.
+
+For more information, see [Neutral JSON contract v2](/vimanam/json-contracts/).
+
+## Separate Protobuf import roots for each diff side
+
+<Badge text="New" variant="success" />
+
+`diff --old-proto-path` and `--new-proto-path` resolve each side's `.proto` imports against its own directories. With a shared `-I`, Vimanam could read an imported file from the wrong checkout and miss a change inside it. Imports never cross between the two sides.
+
+For more information, see [Protocol Buffers and gRPC](/vimanam/protobuf/).
+
+## Shared components compared once
+
+<Badge text="Enhancement" variant="note" />
+
+`diff` compares each pair of old and new components once. A change inside a shared component appears once per direction, with every operation that reaches it listed in a new `## Affected operations` section. Before, diffs of Stripe's releases timed out. Every recent Stripe release pair now diffs in under 2 seconds.
+
+For more information, see [Contract diff and Git refs](/vimanam/diff/).
+
+## Every media type compared
+
+<Badge text="Enhancement" variant="note" />
+
+`diff` used to compare only the first media type of a request body or response. Removing a second media type, or breaking its schema, didn't fail the gate. Now each media type is compared on its own. Removing a request or response media type is breaking, and adding one isn't.
+
+For more information, see [Contract diff and Git refs](/vimanam/diff/).
+
+## Breaking changes inside recursive or invalid schemas
+
+<Badge text="Enhancement" variant="note" />
+
+Some schemas are too recursive to expand in full, and some `definitions` entries aren't valid schemas. Vimanam used to stop comparing at these points, so a breaking change behind them could exit 0. Vimanam now compares what it can and treats any change it can't rate in these regions as breaking. An invalid definition also adds a warning to the report.
+
+For more information, see [Contract diff and Git refs](/vimanam/diff/).
+
+## Faster diffs
+
+<Badge text="Enhancement" variant="note" />
+
+`diff` skips schemas that haven't changed, and compares each schema pair once however often the spec uses it. Git-ref diffs read files through one `git` process. Measured results:
+
+- The OpenAI v2 JSON diff takes 0.5 s instead of 2.5 s.
+- Adversarial recursive specs that share one schema across many endpoints diff up to 20 times faster.
+- A Git-ref diff in a 200-proto repository takes 0.27 s instead of 0.95 s.
+
+Output is unchanged.
+
+## Protobuf diffs between `.pb` and `.proto` files
+
+<Badge text="Enhancement" variant="note" />
+
+Comparing a `.pb` built by `protoc` with a `.proto` that Vimanam compiles no longer reports differences between the two compilers' copies of `google/protobuf/*.proto`. One such pair reported 94 of these changes. Your own option extensions, custom option values, and fields of well-known types are still compared.
+
+For more information, see [Protocol Buffers and gRPC](/vimanam/protobuf/).
+
+## GraphQL argument input types in schema tables
+
+<Badge text="Enhancement" variant="note" />
+
+`--include-schemas` now expands an argument's input object, enum, or custom scalar type. A mutation that takes `CreateIssueInput` gets a request schema table and a linked definition. Before, the page showed *No request schema available*.
+
+For more information, see [GraphQL SDL and introspection](/vimanam/graphql/).
+
+## Grouped omission notices
+
+<Badge text="Enhancement" variant="note" />
+
+When Vimanam leaves out nested schema detail, stderr now shows one line per retrieval command, listing the fields. Before, it showed one line per field. On one Stripe operation, that's 4 lines instead of 399.
+
+## Fewer false breaking changes
+
+<Badge text="Behavior change" variant="caution" />
+
+These changes no longer fail `--fail-on-breaking`, because they can't break a client:
+
+- removing a value from a response `enum`
+- writing or dropping a keyword at its default, such as `nullable: false` or `additionalProperties: true`
+- removing a request `enum`
+
+Changes under `not`, or behind a `$ref` in a position like `default` or `if`, are now marked for review. On one OpenAI spec pair, the breaking findings dropped from 62 to the 4 genuine ones.
+
+## Streaming RPC changes are wire-breaking
+
+<Badge text="Behavior change" variant="caution" />
+
+Changing an RPC between unary and streaming changes the gRPC framing, so it's now a wire break. `--breaking wire --fail-on-breaking` exits 3 on it, which matches buf's `WIRE` category. Change IDs are unchanged.
+
+For more information, see [Protocol Buffers and gRPC](/vimanam/protobuf/).
+
+## OpenAPI 3.1 `null` in type arrays
+
+<Badge text="Behavior change" variant="caution" />
+
+An OpenAPI 3.1 type array such as `["string", "null"]` now reads as a nullable `string`. Markdown shows it as `string | null`, and `diff` rates it like OpenAPI 3.0 `nullable`. A response that gains `null` or a request that loses it is breaking. Reordering the members of a type array no longer reports a change.
+
+For more information, see [OpenAPI and Swagger](/vimanam/openapi/).
+
+## Clearer body tables
+
+<Badge text="Behavior change" variant="caution" />
+
+Request and response schema tables now start with a `(request body)` or `(response body)` row. Fields use their real paths, such as `input_file_id` and `[].id`, instead of `request.input_file_id`. Protobuf RPC message tables use the same labels.
+
+For more information, see [Token budgets and selection](/vimanam/llm-context/).
+
+## Bounded schema depth for large output
+
+<Badge text="Behavior change" variant="caution" />
+
+Two kinds of output now stop at `--schema-depth 2` when you don't set a depth, with a notice on stderr:
+
+- A selected schema or operation that reaches more than 200 component schemas. Stripe's `customer` schema output is about 90 times smaller.
+- An `--inline-schemas` render above 2,000,000 schema rows. Densely linked specs used to grow without limit.
+
+Pass `--schema-depth <N>` to choose a deeper limit. `--costs` reports a bounded schema's figures as lower bounds.
+
+For more information, see [Token budgets and selection](/vimanam/llm-context/).
+
+## Upgrade from 2.2
+
+<Aside type="caution">
+Verdicts changed in both directions. A build that passed on 2.2.0 can fail on 2.3.0, and a build that failed can pass.
+</Aside>
+
+Before you upgrade a CI gate, run 2.3.0 on a recent change and check the following items:
+
+1. Compare the exit code with your 2.2.0 run, and review any new breaking findings.
+2. Regenerate any list of accepted change IDs.
+3. Commit the updated generated Markdown, because body-table labels, OpenAPI 3.1 nullable types, and default depths changed.
+4. Fix any conflicting repeated members in your GraphQL schemas.
+
+If you use the Rust library, update any struct literals of the types listed under [Rust library types with new fields](#rust-library-types-with-new-fields).

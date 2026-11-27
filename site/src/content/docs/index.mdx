@@ -124,7 +124,7 @@ Vimanam parses each input format into a shared intermediate representation for r
       <span>Verdict rules checked against Lean models</span>
       <span class="vim-matrix-tag">formal/</span>
     </div>
-    <p>The OpenAPI severity table, a reference model of <code>$ref</code>-aware schema diffs, and the Protobuf rules and <code>--breaking</code> gate are written as Lean 4 models. Their cases replay as oracles in <code>cargo test</code>, and CI fails when modelled Rust changes without the model being re-read.</p>
+    <p>The OpenAPI severity table, a reference model of <code>$ref</code>-aware schema diffs, and the Protobuf rules and <code>--breaking</code> gate are written as Lean 4 models. Their cases replay as oracles in <code>cargo test</code>, and CI warns when modelled Rust changes before the model is re-read.</p>
   </div>
   <div class="vim-matrix-cell">
     <div class="vim-matrix-head">

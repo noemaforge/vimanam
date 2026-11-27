@@ -69,8 +69,8 @@ Details are in the entries below.
   `--schema-field`, or `--operation`/`--operation-id` at `--detail full
   --include-schemas`) whose roots reach more than 200 component schemas
   renders at `--schema-depth 2`, with a stderr notice. Stripe `--schema
-  customer` drops from about 1.4M estimated tokens to 16k, and GitHub
-  GraphQL `Mutation.createIssue` from 1.2M to 4.4k. Whole documents and
+  customer` output becomes about 90 times smaller, and GitHub GraphQL
+  `Mutation.createIssue` about 270 times smaller. Whole documents and
   split/Skill trees are not bounded this way, and an explicit
   `--schema-depth` is used as given. Retrieval hints include the active
   depth.
@@ -196,7 +196,7 @@ Details are in the entries below.
   of `$ref`-aware schema diffs, and the Protobuf rule table and `--breaking`
   gate. Differential oracles replay the models' cases in `cargo test`, a
   generated-pair harness compares the reference model with the Rust, and a
-  drift check fails CI when modelled Rust changes without the model being
+  drift check warns in CI when modelled Rust changes before the model is
   re-read. Several fixes in this release (#184, #186, #187, #188) were
   specified in the models first. See `formal/README.md` for what is modelled
   and the known limits.

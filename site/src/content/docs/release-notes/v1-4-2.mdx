@@ -1,0 +1,19 @@
+---
+title: "Vimanam 1.4.2"
+description: "Reorganizes the source code with no change to generated output."
+sidebar:
+  label: "1.4.2"
+  order: 8
+---
+
+import { Badge } from '@astrojs/starlight/components';
+
+Vimanam 1.4.2, released on 2026-09-30, changes only the internal layout. Generated output matches 1.4.1 byte for byte.
+
+For more information, refer to the [1.4.2 changelog entry](https://github.com/noemaforge/vimanam/blob/main/CHANGELOG.md#142---2026-09-30).
+
+## Internal code layout
+
+<Badge text="Enhancement" variant="note" />
+
+The diff implementation now lives in `src/diff/`, and CLI tests live in `tests/cli/`. Schema composition rendering uses one shared loop.

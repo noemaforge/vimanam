@@ -1,0 +1,41 @@
+---
+title: "Vimanam 1.6.0"
+description: "Publishes Vimanam as a Rust library that you can use without the command-line dependencies."
+sidebar:
+  label: "1.6.0"
+  order: 6
+---
+
+import { Badge } from '@astrojs/starlight/components';
+
+Vimanam 1.6.0, released on 2026-10-07, publishes Vimanam as a Rust library. The CLI now runs on top of the library. Its Markdown, JSON contract data, and exit codes are unchanged.
+
+For more information, refer to the [1.6.0 changelog entry](https://github.com/noemaforge/vimanam/blob/main/CHANGELOG.md#160---2026-10-07).
+
+## Rust library
+
+<Badge text="New" variant="success" />
+
+The library parses OpenAPI files or bytes into the normalized `ApiDocumentation` model. It computes typed contract diffs and deltas. It renders focused operation or schema context with the CLI's detail and token-budget options.
+
+Rendering takes a writer and an optional notice callback, and library code never writes to stdout or stderr. Growing enums, such as change kinds, schema targets, and schema operations, are non-exhaustive.
+
+For more information, see [CI pipelines and Rust library](/vimanam/ci-and-library/).
+
+## Library without CLI dependencies
+
+<Badge text="New" variant="success" />
+
+The CLI dependencies and the binary now sit behind a default `cli` feature. To use the library without `clap`, `clap_complete`, or `env_logger`, turn default features off:
+
+```toml
+vimanam = { version = "1.6", default-features = false }
+```
+
+For more information, see [Installation and completions](/vimanam/installation/).
+
+## Deserializable JSON contract types
+
+<Badge text="Enhancement" variant="note" />
+
+JSON contract types now support owned `Deserialize` as well as `Serialize`. They keep a missing value distinct from an explicit JSON `null`. Change IDs and `schema_version` are unchanged.

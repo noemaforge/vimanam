@@ -1,0 +1,45 @@
+---
+title: "Vimanam 0.5.0"
+description: "Renders request and response examples, groups endpoints by path, and fits output to a token budget."
+sidebar:
+  label: "0.5.0"
+  order: 18
+---
+
+import { Badge } from '@astrojs/starlight/components';
+
+Vimanam 0.5.0, released on 2026-06-22, gives you more control over the shape of the output. It renders real examples, adds grouping by path, and fits output to a token budget.
+
+For more information, refer to the [0.5.0 changelog entry](https://github.com/noemaforge/vimanam/blob/main/CHANGELOG.md#050---2026-06-22).
+
+## Fit output to a token budget
+
+<Badge text="New" variant="success" />
+
+`--max-tokens <N>` renders at the requested `--detail` level and estimates the token count as chars/4. If the estimate is over budget, Vimanam steps down through `full`, `standard`, `basic`, and `summary` until the output fits. It reports any reduction on stderr.
+
+## Group endpoints by path
+
+<Badge text="New" variant="success" />
+
+`--group-by path` emits one section per path, with its methods listed underneath, in spec order.
+
+## Request and response examples
+
+<Badge text="Enhancement" variant="note" />
+
+`--include-examples` now renders request and response examples as fenced JSON blocks at `--detail full`. It used to print only a placeholder.
+
+Examples come from the media type's `example` and `examples`, with `$ref`s resolved into `components/examples`. They keep their spec order, and unknown `x-*` fields on examples and media types are kept.
+
+## Referenced request bodies parse
+
+<Badge text="Enhancement" variant="note" />
+
+A `requestBody` given as a `$ref` to `#/components/requestBodies/...` is now resolved. Such specs used to fail to parse.
+
+## `--required-only` drops unspecified parameters
+
+<Badge text="Behavior change" variant="caution" />
+
+`--required-only` now also drops parameters whose `required` isn't specified. Before, it dropped only parameters marked `required: false`.

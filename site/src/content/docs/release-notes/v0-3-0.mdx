@@ -1,0 +1,27 @@
+---
+title: "Vimanam 0.3.0"
+description: "Renders request and response schemas as nested field tables."
+sidebar:
+  label: "0.3.0"
+  order: 20
+---
+
+import { Badge } from '@astrojs/starlight/components';
+
+Vimanam 0.3.0, released on 2026-06-15, shows what's inside request and response bodies. With `--detail full --include-schemas`, schemas now render as field tables.
+
+For more information, refer to the [0.3.0 changelog entry](https://github.com/noemaforge/vimanam/blob/main/CHANGELOG.md#030---2026-06-15).
+
+## Schemas render as field tables
+
+<Badge text="Enhancement" variant="note" />
+
+At `--detail full --include-schemas`, request and response schemas now render as nested `| Field | Type | Required | Description |` tables. They used to render as a one-line `// Schema type:` or `// Reference:` comment. Expect changes in generated docs.
+
+The schema model now reads the following keywords: `title`, `description`, `format`, `properties`, `items`, `required`, `allOf`, `oneOf`, `anyOf`, `enum`, `nullable`, and `additionalProperties`.
+
+## References resolve in schemas
+
+<Badge text="Enhancement" variant="note" />
+
+Schema `$ref`s now resolve against `components.schemas` in OpenAPI 3 and `definitions` in OpenAPI 2. Cycle detection and a depth guard make self-referential schemas end cleanly.

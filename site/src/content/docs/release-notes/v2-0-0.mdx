@@ -1,0 +1,56 @@
+---
+title: "Vimanam 2.0.0"
+description: "Adds Protocol Buffers and gRPC inputs on a new format-neutral contract model, and makes JSON contract v2 the default diff output."
+sidebar:
+  label: "2.0.0"
+  order: 4
+---
+
+import { Badge } from '@astrojs/starlight/components';
+
+Vimanam 2.0.0, released on 2026-10-14, takes the diff beyond OpenAPI. A new format-neutral contract model sits under the diff, and Protocol Buffers is the first format built on it. GraphQL isn't part of this release.
+
+For more information, refer to the [2.0.0 changelog entry](https://github.com/noemaforge/vimanam/blob/main/CHANGELOG.md#200---2026-10-14).
+
+## JSON diff output defaults to contract v2
+
+<Badge text="Breaking change" variant="danger" />
+
+`vimanam diff --format json` now emits JSON contract v2 by default, including for OpenAPI inputs. Scripts that parse the v1 envelope break.
+
+Pass `--contract 1` to keep the v1 shape, change IDs, and verdicts. Markdown output and the library entry points `diff::diff` and `diff::json::to_json` are unchanged.
+
+For more information, see [Neutral JSON contract v2](/vimanam/json-contracts/).
+
+## Protocol Buffers and gRPC inputs
+
+<Badge text="New" variant="success" />
+
+Vimanam reads `.proto` sources and descriptor sets, including imported proto2 and proto3 symbols. Fields and enum values keep native identities. Verdicts are split into source and wire compatibility, and `--breaking` scopes which ones fail the gate.
+
+Protobuf works with v2 JSON, the Markdown report, token-budgeted output, and Skill output. Git-ref diffs use committed snapshots of imported files. In this release, `.proto` sources need `protoc`, and Protobuf Editions are rejected.
+
+For more information, see [Protocol Buffers and gRPC](/vimanam/protobuf/).
+
+## Format-neutral contract model
+
+<Badge text="New" variant="success" />
+
+Changes are now described the same way for every format, with stable entity and change IDs and native locations. Each format's adapter owns its compatibility verdicts. OpenAPI runs through its own adapter.
+
+Contract v2 adds facts for named types, independent of the operations that use them. It reports changes to an operation's service membership and infers pagination conservatively.
+
+For more information, see [Neutral JSON contract v2](/vimanam/json-contracts/).
+
+## Contract v2 fixes
+
+<Badge text="Enhancement" variant="note" />
+
+Contract v2 now classifies `deprecated` on single-schema keywords. It attributes request-body schema changes to the first body argument. It sorts pagination continuation names, so their declaration order no longer counts as a change.
+
+## Upgrade from 1.7
+
+Update any script that reads `vimanam diff --format json`:
+
+- Parse the v2 contract, or
+- Add `--contract 1` to keep the v1 output.

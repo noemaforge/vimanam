@@ -1,0 +1,28 @@
+---
+title: "Vimanam 1.2.0"
+description: "Adds machine-readable diffs with diff --format json and stable change IDs."
+sidebar:
+  label: "1.2.0"
+  order: 12
+---
+
+import { Badge } from '@astrojs/starlight/components';
+
+Vimanam 1.2.0, released on 2026-09-26, lets CI tools and coding agents read a diff as JSON. Each change has a stable ID, so tools can track it across runs.
+
+For more information, refer to the [1.2.0 changelog entry](https://github.com/noemaforge/vimanam/blob/main/CHANGELOG.md#120---2026-09-26).
+
+## JSON output for diff
+
+<Badge text="New" variant="success" />
+
+`vimanam diff --format json` writes a machine-readable diff document instead of the Markdown report. The document has the following:
+
+- A stable `vc1_` change ID for each record, derived from its content.
+- A one-to-one `kind` and `details` contract for every change.
+- A `target` and `member` classification for schema changes, with `before` and `after` presence encoding.
+- A `file_sha256` for each spec, computed over the raw input bytes.
+
+The JSON is pretty-printed and ends with a newline. Later releases made a newer contract the default, and this format remains available as the v1 contract.
+
+For more information, see [Legacy OpenAPI v1 contract](/vimanam/json-contracts/#legacy-openapi-v1-contract---contract-1).
