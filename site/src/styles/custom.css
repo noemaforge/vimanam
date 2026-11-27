@@ -218,6 +218,40 @@ header.header {
   font-weight: 600;
 }
 
+/* Widen the reading pane on desktop and pin "On this page" to the right
+   gutter. 72rem is Starlight 0.43's breakpoint for the desktop table of
+   contents (`lg:sl-flex` in TwoColumnContent); below it, the mobile table of
+   contents and the 54rem cap above are unchanged, and print is unaffected. */
+@media screen and (min-width: 72rem) {
+  [data-has-sidebar][data-has-toc] {
+    --sl-content-width: 72rem;
+    --vim-toc-width: clamp(12.5rem, 16vw, 16rem);
+  }
+
+  [data-has-sidebar][data-has-toc] .main-pane {
+    flex: 1;
+    min-width: 0;
+    --sl-content-margin-inline: auto;
+  }
+
+  [data-has-sidebar][data-has-toc] .right-sidebar-container {
+    flex-shrink: 0;
+    width: var(--vim-toc-width);
+  }
+
+  [data-has-sidebar][data-has-toc] .right-sidebar {
+    inset-inline-end: 0;
+    width: var(--vim-toc-width);
+  }
+
+  /* The panel keeps Starlight's 1rem (16px) padding; let its contents use the
+     pinned width instead of Starlight's viewport-based cap. */
+  [data-has-sidebar][data-has-toc] .right-sidebar-panel .sl-container {
+    width: auto;
+    max-width: none;
+  }
+}
+
 /* ==========================================================================
    Hero — Architectural Aviation Grid
    ========================================================================== */
@@ -493,7 +527,11 @@ header.header {
 
 .sl-markdown-content table {
   display: block;
-  width: 100%;
+  /* Fit the frame to its columns, so the header shading reaches the right
+     border instead of leaving a blank strip, and scroll horizontally when
+     the columns are wider than the article. */
+  width: fit-content;
+  max-width: 100%;
   overflow-x: auto;
   border-collapse: separate;
   border-spacing: 0;
